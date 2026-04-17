@@ -1,0 +1,317 @@
+[
+  {
+    "root_claim_id": "claim_4d659997",
+    "cascade_size": 104,
+    "tce": 104,
+    "num_contributing_agents": 8,
+    "top_10pct": 0.16346153846153846,
+    "top_25pct": 0.3173076923076923,
+    "top_50pct": 0.5865384615384616
+  },
+  {
+    "root_claim_id": "claim_0d99d0be",
+    "cascade_size": 4,
+    "tce": 4,
+    "num_contributing_agents": 3,
+    "top_10pct": 0.5,
+    "top_25pct": 0.75,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_f95acd65",
+    "cascade_size": 3,
+    "tce": 3,
+    "num_contributing_agents": 3,
+    "top_10pct": 0.3333333333333333,
+    "top_25pct": 0.6666666666666666,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_cf627ee2",
+    "cascade_size": 3,
+    "tce": 3,
+    "num_contributing_agents": 3,
+    "top_10pct": 0.3333333333333333,
+    "top_25pct": 0.6666666666666666,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_261533e5",
+    "cascade_size": 8,
+    "tce": 8,
+    "num_contributing_agents": 5,
+    "top_10pct": 0.375,
+    "top_25pct": 0.625,
+    "top_50pct": 0.875
+  },
+  {
+    "root_claim_id": "claim_dd8f824a",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_c71a5f0e",
+    "cascade_size": 6,
+    "tce": 6,
+    "num_contributing_agents": 4,
+    "top_10pct": 0.3333333333333333,
+    "top_25pct": 0.6666666666666666,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_ab7484b5",
+    "cascade_size": 7,
+    "tce": 7,
+    "num_contributing_agents": 4,
+    "top_10pct": 0.42857142857142855,
+    "top_25pct": 0.7142857142857143,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_63fc2556",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_cb983a8d",
+    "cascade_size": 2,
+    "tce": 2,
+    "num_contributing_agents": 2,
+    "top_10pct": 0.5,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_d6213d31",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_0d083e48",
+    "cascade_size": 2,
+    "tce": 2,
+    "num_contributing_agents": 2,
+    "top_10pct": 0.5,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_c2520fe8",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_8c69557e",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_e65b54c3",
+    "cascade_size": 2,
+    "tce": 2,
+    "num_contributing_agents": 2,
+    "top_10pct": 0.5,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_ee4e6c80",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_e6bd30a1",
+    "cascade_size": 3,
+    "tce": 3,
+    "num_contributing_agents": 3,
+    "top_10pct": 0.3333333333333333,
+    "top_25pct": 0.6666666666666666,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_e91a206b",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_26d14e36",
+    "cascade_size": 2,
+    "tce": 2,
+    "num_contributing_agents": 2,
+    "top_10pct": 0.5,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_953f6746",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_aba1bb3f",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_20d1e8d3",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_f1fd7be5",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_0c076a23",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_d96419d4",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_6e676798",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_8e6c3b4a",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_c17fdd32",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_6bf57378",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_54fc75de",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_e77d590f",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_6a0df224",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_3a356b01",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_85dd0fa8",
+    "cascade_size": 1,
+    "tce": 1,
+    "num_contributing_agents": 1,
+    "top_10pct": 1.0,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  },
+  {
+    "root_claim_id": "claim_eb058a99",
+    "cascade_size": 2,
+    "tce": 2,
+    "num_contributing_agents": 2,
+    "top_10pct": 0.5,
+    "top_25pct": 1.0,
+    "top_50pct": 1.0
+  }
+]

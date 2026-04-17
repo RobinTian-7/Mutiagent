@@ -1,0 +1,14 @@
+{
+    "num_agents": 8,
+    "topology": "chain",
+    "max_rounds": 20,
+    "beta": 0.15,
+    "dti_enabled": false,
+    "dti_config": {
+        "beta_c": 1.0,
+        "a_c": 0.5,
+        "delta_c": 2.0
+    },
+    "seed": 42,
+    "_comment": "ASSUMPTION (A9): beta=0.15 matches empirical beta-hat for GPT-4o-mini"
+}
