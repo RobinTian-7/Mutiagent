@@ -1,5 +1,54 @@
+# macOS
 .DS_Store
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+
+# Virtual environments
 .venv/
 venv/
+env/
+ENV/
+
+# Packaging and build outputs
 *.egg-info/
-.pytest_cache/
+.eggs/
+build/
+dist/
+site/
+pip-wheel-metadata/
+
+# Test and coverage outputs
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project-generated example outputs
+examples/output/
+
+# Local reference files and large assets
+files/
