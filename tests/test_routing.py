@@ -5,7 +5,7 @@ import random
 from src.schemas.claims import Claim
 from src.routing.claim_router import ReinforcedRouter, UniformRouter
 from src.routing.topology_filter import get_visible_claims
-from src.topology import ChainTopology
+from src.topology import ChainTopology, OnePeerExponentialTopology
 
 
 def _make_claims(n: int = 5) -> list[Claim]:
@@ -64,3 +64,20 @@ def test_topology_filter():
     assert "c0" in visible_ids  # own claim
     assert "c1" in visible_ids  # neighbor
     assert "c2" not in visible_ids  # not neighbor in chain
+
+
+def test_topology_filter_uses_round_idx_for_time_varying_topology():
+    agents = ["agent_0", "agent_1", "agent_2", "agent_3"]
+    topo = OnePeerExponentialTopology(agents)
+
+    claims = [
+        Claim(claim_id="c0", agent_id="agent_0", root_claim_id="c0"),
+        Claim(claim_id="c1", agent_id="agent_1", root_claim_id="c1"),
+        Claim(claim_id="c2", agent_id="agent_2", root_claim_id="c2"),
+    ]
+
+    visible_round_0 = get_visible_claims("agent_0", claims, topo, round_idx=0)
+    visible_round_1 = get_visible_claims("agent_0", claims, topo, round_idx=1)
+
+    assert {c.claim_id for c in visible_round_0} == {"c0", "c1"}
+    assert {c.claim_id for c in visible_round_1} == {"c0", "c2"}

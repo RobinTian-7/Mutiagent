@@ -63,6 +63,17 @@ def mock_agent_action(
         weights = [effective_probs[a] for a in actions]
         action = random.choices(actions, weights=weights, k=1)[0]
 
+        # ASSUMPTION: regular demo merges are restricted to the selected
+        # claim's cascade. The paper defines DTI integration over branch heads
+        # for a root claim; cross-root merge semantics are not specified.
+        if action == EventType.MERGE_CLAIMS and selected_claim is not None:
+            same_root_candidates = [
+                c for c in visible_claims
+                if c.root_claim_id == selected_claim.root_claim_id
+            ]
+            if len(same_root_candidates) < 2:
+                action = EventType.REVISE_CLAIM
+
     claim_id = f"claim_{uuid.uuid4().hex[:8]}"
     event_id = f"evt_{uuid.uuid4().hex[:8]}"
 
@@ -131,9 +142,14 @@ def mock_agent_action(
         )
 
     elif action == EventType.MERGE_CLAIMS:
-        # Select 2-3 claims to merge from visible claims
-        n_merge = min(random.randint(2, 3), len(visible_claims))
-        merge_parents = random.sample(visible_claims, n_merge)
+        # Select 2-3 claims to merge from the selected claim's cascade.
+        # This preserves root-local cascade interpretation.
+        merge_candidates = [
+            c for c in visible_claims
+            if c.root_claim_id == selected_claim.root_claim_id
+        ]
+        n_merge = min(random.randint(2, 3), len(merge_candidates))
+        merge_parents = random.sample(merge_candidates, n_merge)
         parent_ids = [c.claim_id for c in merge_parents]
         # Root is inherited from the first parent (conservative assumption)
         root_id = merge_parents[0].root_claim_id

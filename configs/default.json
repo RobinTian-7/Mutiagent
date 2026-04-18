@@ -1,6 +1,13 @@
 {
     "num_agents": 8,
     "topology": "chain",
+    "topology_options": [
+        "chain",
+        "star",
+        "mesh",
+        "static_exponential",
+        "one_peer_exponential"
+    ],
     "max_rounds": 20,
     "beta": 0.15,
     "dti_enabled": false,

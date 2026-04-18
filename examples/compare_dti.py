@@ -30,13 +30,9 @@ from src.routing.claim_router import ReinforcedRouter
 from src.schemas.claims import Claim
 from src.schemas.events import Event
 from src.simulation.workflow import run_simulation
-from src.topology import ChainTopology, MeshTopology, StarTopology
+from src.topology import create_topology, topology_names
 
-TOPOLOGIES = {
-    "chain": ChainTopology,
-    "star": StarTopology,
-    "mesh": MeshTopology,
-}
+TOPOLOGIES = topology_names()
 
 
 def run_condition(topo_name: str, dti: bool, seed: int = 42) -> dict:
@@ -44,7 +40,7 @@ def run_condition(topo_name: str, dti: bool, seed: int = 42) -> dict:
     np.random.seed(seed)
 
     agent_ids = [f"agent_{i}" for i in range(8)]
-    topology = TOPOLOGIES[topo_name](agent_ids)
+    topology = create_topology(topo_name, agent_ids)
 
     dti_monitor = None
     if dti:
@@ -102,8 +98,10 @@ def main() -> None:
             row += f"{m['mean_top10']:<8.3f}"
             print(row)
 
-    print("\nPaper prediction: DTI should increase merge count and fan-in,")
-    print("reduce top-k concentration, and preserve cascade structure.")
+    print("\nStructural sanity check:")
+    print("- DTI should increase realized merge count and merge fan-in.")
+    print("- Top-k concentration may vary in this mock simulation; do not treat")
+    print("  this script as a reproduction of the paper's benchmark results.")
 
 
 if __name__ == "__main__":

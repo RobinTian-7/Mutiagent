@@ -38,6 +38,7 @@ def _build_state_dict(
     claim_activity: dict,
     current_round: int,
     dti_state: dict,
+    neighbor_trace: list | None = None,
     **kwargs: Any,
 ) -> dict:
     """Build a state dict for LangGraph."""
@@ -47,6 +48,7 @@ def _build_state_dict(
         "claim_activity": claim_activity,
         "current_round": current_round,
         "dti_state": dti_state,
+        "neighbor_trace": neighbor_trace or [],
         **kwargs,
     }
 
@@ -76,22 +78,40 @@ def create_workflow(
         claims = list(state.get("claims", []))
         claim_activity = dict(state.get("claim_activity", {}))
         dti_state = dict(state.get("dti_state", {}))
+        neighbor_trace = list(state.get("neighbor_trace", []))
         current_round = state.get("current_round", 0)
 
         new_events = []
         new_claims = []
+        new_neighbor_trace = []
         step_counter = current_round * len(agent_ids)
 
         for agent_id in agent_ids:
-            # 1. Filter visible claims by topology
-            visible = get_visible_claims(agent_id, claims, topology)
+            # 1. Resolve physical communication neighbors for this round.
+            neighbors = topology.get_neighbors(agent_id, round_idx=current_round)
 
-            # 2. Select claim via reinforced routing
+            # 2. Read structured Claim records from visible neighbors.
+            visible = get_visible_claims(
+                agent_id,
+                claims,
+                topology,
+                round_idx=current_round,
+            )
+            new_neighbor_trace.append(
+                {
+                    "round": current_round,
+                    "agent_id": agent_id,
+                    "neighbors": neighbors,
+                    "visible_claim_ids": [claim.claim_id for claim in visible],
+                }
+            )
+
+            # 3. Select claim via reinforced routing
             selected = None
             if visible:
                 selected = router.select_claim(visible, claim_activity)
 
-            # 3. Agent acts
+            # 4. Agent acts
             event, claim = mock_agent_action(
                 agent_id=agent_id,
                 visible_claims=visible,
@@ -100,7 +120,7 @@ def create_workflow(
             event.step_id = step_counter
             step_counter += 1
 
-            # 4. Update activity counts
+            # 5. Update activity counts
             # Paper: x_i(t) = number of downstream events referencing c_i
             for parent_id in event.parent_claim_ids:
                 claim_activity[parent_id] = claim_activity.get(parent_id, 0) + 1
@@ -113,7 +133,7 @@ def create_workflow(
             new_claims.append(claim)
             claims.append(claim)
 
-            # 5. DTI check (if enabled)
+            # 6. DTI check (if enabled)
             if dti_enabled and dti_monitor is not None:
                 root_id = event.root_claim_id
                 if root_id:
@@ -151,6 +171,7 @@ def create_workflow(
             "claim_activity": claim_activity,
             "current_round": current_round + 1,
             "dti_state": dti_state,
+            "neighbor_trace": neighbor_trace + new_neighbor_trace,
         }
 
     def should_continue(state: dict) -> str:
@@ -198,6 +219,7 @@ def run_simulation(
         "claim_activity": {},
         "current_round": 0,
         "dti_state": {},
+        "neighbor_trace": [],
     }
 
     result = app.invoke(initial_state)

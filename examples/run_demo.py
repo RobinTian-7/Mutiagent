@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal runnable demo: 8 agents, chain/star/mesh, DTI on/off.
+"""Minimal runnable demo: 8 agents, configurable topology, DTI on/off.
 
 Outputs to examples/output/:
   - event_trace.jsonl
   - claims.jsonl
+  - neighbor_trace.json
   - reconstructed_claim_dag.json
   - cascade_summary.json
   - top_k_contribution_metrics.json
@@ -11,7 +12,7 @@ Outputs to examples/output/:
 Usage:
     python examples/run_demo.py
     python examples/run_demo.py --topology mesh --dti
-    python examples/run_demo.py --topology star --rounds 10
+    python examples/run_demo.py --topology one_peer_exponential --rounds 4 --print-neighbors
 """
 
 from __future__ import annotations
@@ -40,26 +41,25 @@ from src.routing.claim_router import ReinforcedRouter
 from src.schemas.claims import Claim
 from src.schemas.events import Event
 from src.simulation.workflow import run_simulation
-from src.topology import ChainTopology, MeshTopology, StarTopology
-
-TOPOLOGY_MAP = {
-    "chain": ChainTopology,
-    "star": StarTopology,
-    "mesh": MeshTopology,
-}
+from src.topology import create_topology, topology_names
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run coordination cascade demo")
     parser.add_argument("--agents", type=int, default=8, help="Number of agents")
     parser.add_argument(
-        "--topology", choices=["chain", "star", "mesh"], default="chain"
+        "--topology", choices=topology_names(), default="chain"
     )
     parser.add_argument("--rounds", type=int, default=20, help="Execution rounds")
     parser.add_argument("--beta", type=float, default=0.15, help="Reinforcement β")
     parser.add_argument("--dti", action="store_true", help="Enable DTI")
     parser.add_argument("--output-dir", default="examples/output", help="Output directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--print-neighbors",
+        action="store_true",
+        help="Print per-round physical topology neighbors",
+    )
     return parser.parse_args()
 
 
@@ -76,8 +76,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     agent_ids = [f"agent_{i}" for i in range(args.agents)]
-    topology_cls = TOPOLOGY_MAP[args.topology]
-    topology = topology_cls(agent_ids)
+    topology = create_topology(args.topology, agent_ids)
     router = ReinforcedRouter(beta=args.beta)
 
     dti_monitor = None
@@ -107,6 +106,13 @@ def main() -> None:
 
     print(f"Generated {len(events)} events, {len(claims)} claims")
 
+    neighbor_trace = result.get("neighbor_trace", [])
+    if args.print_neighbors:
+        print("\n--- Physical Neighbors ---")
+        for row in neighbor_trace:
+            neighbor_list = ", ".join(row["neighbors"]) or "-"
+            print(f"round={row['round']} {row['agent_id']} -> [{neighbor_list}]")
+
     # Write event_trace.jsonl
     with open(output_dir / "event_trace.jsonl", "w") as f:
         for e in events:
@@ -116,6 +122,9 @@ def main() -> None:
     with open(output_dir / "claims.jsonl", "w") as f:
         for c in claims:
             f.write(c.model_dump_json() + "\n")
+
+    with open(output_dir / "neighbor_trace.json", "w") as f:
+        json.dump(neighbor_trace, f, indent=2, default=str)
 
     # Reconstruct claim DAG
     dag = reconstruct_claim_dag(claims)

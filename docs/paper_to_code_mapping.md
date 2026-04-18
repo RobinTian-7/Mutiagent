@@ -2,6 +2,8 @@
 
 Source: arXiv 2604.02674v1 — "Laws of Collective Cognition in LLM Multi-Agent Systems"
 
+Inspected local TeX source path: `files/arXiv-2604.02674v1/sec/`.
+
 This document maps paper concepts to code components, identifies ambiguities,
 and registers implementation assumptions.
 
@@ -132,8 +134,10 @@ and registers implementation assumptions.
   - Pluggable interface for alternative policies
 
 ### B4. Topology Modules (`src/topology/`)
-- Interface: get_neighbors(agent_id) → list of visible agent_ids
-- Implementations: chain, star, mesh (minimum viable)
+- Interface: get_neighbors(agent_id, round_idx=0) → list of visible agent_ids
+- Implementations from the original reproduction scope: chain, star, mesh
+- Additional physical topology implementations from arXiv 2110.13363:
+  static_exponential and one_peer_exponential
 - Extensible to: tree, hierarchical, fully connected, sparse mesh, dynamic reputation
 
 ### B5. Reconstruction Modules (`src/reconstruction/`)
@@ -204,6 +208,16 @@ For DTI, a_c "captures the empirical relationship between cascade growth and
 merge activity" — the exact computation is not specified beyond being estimated
 from baseline traces.
 
+### C11. Cross-Root Merge Semantics
+The paper defines cascades by shared `root_claim_id`, and DTI integrates active
+branch heads for one root claim. It does not fully specify whether ordinary
+merge events may combine claims from different root cascades.
+
+### C12. Exponential Graph Transfer
+arXiv 2110.13363 defines exponential graphs for decentralized deep training and
+averaging. It does not claim that the same averaging theorem directly applies
+to LLM claim propagation.
+
 ---
 
 ## D. Assumption Registry
@@ -222,3 +236,6 @@ from baseline traces.
 | A10 | C10: DTI a_c | Estimate a_c = (mean merge count) / (mean cascade length)^{β̂_c} from a short baseline run. Default to a_c = 0.1 if no baseline. | Conservative: uses paper's described estimation procedure. |
 | A11 | C7: Step definition | One "step" = one agent performing one coordination action (producing one event). 20 steps = 20 rounds × N agents = 20N total events maximum. | Consistent with "execution steps per run" at 20, treating as rounds. |
 | A12 | - | For simulation without real LLM calls, provide a mock agent that selects actions stochastically with biases matching paper's observed distributions (delegation and contradiction dominate expansion, merge is rarer). | Needed for runnable demo without API keys. |
+| A13 | C11: Cross-root merge semantics | Restrict regular demo merges to claims sharing the selected claim's root. If fewer than two same-root claims are visible, fall back to revision. | Conservative: preserves cascade-local interpretation and matches DTI's root-local integration description. |
+| A14 | C12: Exponential graph transfer | Use static/one-peer exponential graphs only as physical neighbor visibility schedules. Do not couple them to claim routing, Claim DAG edges, or DTI trigger logic. | Keeps physical communication topology separate from logical coordination. |
+| A15 | C12: Non-power-of-two one-peer schedule | For non-power-of-two agent counts, keep the one-peer rotating exponential schedule as a heuristic and do not claim periodic exact averaging. | The exact averaging result in arXiv 2110.13363 is clean for powers of two; the simulator still needs a runnable topology for arbitrary N. |

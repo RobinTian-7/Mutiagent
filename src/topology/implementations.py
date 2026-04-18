@@ -17,7 +17,7 @@ class ChainTopology(Topology):
     Paper: "locally connected structure" with restricted propagation.
     """
 
-    def get_neighbors(self, agent_id: str) -> list[str]:
+    def get_neighbors(self, agent_id: str, round_idx: int = 0) -> list[str]:
         idx = self.agent_ids.index(agent_id)
         neighbors = []
         if idx > 0:
@@ -38,7 +38,7 @@ class StarTopology(Topology):
     def hub(self) -> str:
         return self.agent_ids[0]
 
-    def get_neighbors(self, agent_id: str) -> list[str]:
+    def get_neighbors(self, agent_id: str, round_idx: int = 0) -> list[str]:
         if agent_id == self.hub:
             return [a for a in self.agent_ids if a != self.hub]
         return [self.hub]
@@ -51,7 +51,7 @@ class MeshTopology(Topology):
     longer-lived cascades."
     """
 
-    def get_neighbors(self, agent_id: str) -> list[str]:
+    def get_neighbors(self, agent_id: str, round_idx: int = 0) -> list[str]:
         return [a for a in self.agent_ids if a != agent_id]
 
 
