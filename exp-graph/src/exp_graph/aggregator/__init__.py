@@ -1,5 +1,10 @@
 """Runtime consensus and final aggregation."""
 
+from exp_graph.aggregator.cf_final import (
+    CFHeadResult,
+    CFProtocolFinalResult,
+    run_cf_final_aggregation,
+)
 from exp_graph.aggregator.final_reducer import (
     AgentFinalState,
     FinalResult,
@@ -23,6 +28,8 @@ from exp_graph.aggregator.runtime_consensus import (
 
 __all__ = [
     "AgentFinalState",
+    "CFHeadResult",
+    "CFProtocolFinalResult",
     "FinalResult",
     "GroupSummary",
     "OptionalAdjudicationResult",
@@ -37,5 +44,6 @@ __all__ = [
     "normalize_key_if_needed",
     "rule_based_select",
     "run_final_reducer",
+    "run_cf_final_aggregation",
     "summarize_group",
 ]

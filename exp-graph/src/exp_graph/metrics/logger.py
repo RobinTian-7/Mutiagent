@@ -21,6 +21,7 @@ class MetricsSummary(BaseModel):
     max_rounds: int
     final_accuracy: bool
     consensus_reached: bool
+    stop_round_idx: int | None = None
     rounds_to_consensus: int | None = None
     total_model_calls: int
     total_prompt_tokens: int
@@ -30,6 +31,7 @@ class MetricsSummary(BaseModel):
     per_round_top_key: list[str | None] = Field(default_factory=list)
     per_round_top_ratio: list[float] = Field(default_factory=list)
     per_round_active_key_count: list[int] = Field(default_factory=list)
+    stop_reason: str | None = None
 
 
 def build_metrics_summary(
@@ -39,6 +41,7 @@ def build_metrics_summary(
     task_adapter: TaskAdapter,
     final_result: FinalResult,
     round_logs: list[Any],
+    stop_reason: str | None = None,
 ) -> MetricsSummary:
     """Build a metrics summary from immutable experiment outputs."""
     total_prompt_tokens = sum(int(log.prompt_tokens) for log in round_logs)
@@ -49,9 +52,10 @@ def build_metrics_summary(
         global_task,
         final_result.final_key,
     )
+    stop_round_idx = final_result.round_idx if final_result.round_idx >= 0 else None
     rounds_to_consensus = (
-        final_result.round_idx
-        if final_result.consensus_reached
+        final_result.round_idx + 1
+        if final_result.consensus_reached and final_result.round_idx >= 0
         else None
     )
 
@@ -63,6 +67,7 @@ def build_metrics_summary(
         max_rounds=config.max_rounds,
         final_accuracy=final_accuracy,
         consensus_reached=final_result.consensus_reached,
+        stop_round_idx=stop_round_idx,
         rounds_to_consensus=rounds_to_consensus,
         total_model_calls=total_model_calls,
         total_prompt_tokens=total_prompt_tokens,
@@ -74,4 +79,5 @@ def build_metrics_summary(
         per_round_active_key_count=[
             len(log.consensus.active_keys) for log in round_logs
         ],
+        stop_reason=stop_reason,
     )

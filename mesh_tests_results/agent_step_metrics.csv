@@ -1,0 +1,9 @@
+step_idx,phase,topology,agent_id,active_sender,active_receiver,known_sources,known_source_count,known_item_count,coverage_ratio,local_normalized_l1_error,global_normalized_l1_error,normalized_l1_error,local_rmse,global_rmse,rmse,local_exact_match,global_exact_match,exact_match,sent_count,received_count,Topology,Agents,Seed,MergeMode,InitMode
+-1,initial,mesh,0,False,False,[0],1,1250,0.25,0.02,0.7526,0.02,5.196152422706632,133.3979010329623,5.196152422706632,False,False,False,0,0,mesh,4,1,llm_full_merge,llm_local_solve
+-1,initial,mesh,1,False,False,[1],1,1250,0.25,0.0272,0.7556,0.0272,6.164414002968976,134.38749941865873,6.164414002968976,False,False,False,0,0,mesh,4,1,llm_full_merge,llm_local_solve
+-1,initial,mesh,2,False,False,[2],1,1250,0.25,0.0304,0.756,0.0304,6.324555320336759,133.9104178172856,6.324555320336759,False,False,False,0,0,mesh,4,1,llm_full_merge,llm_local_solve
+-1,initial,mesh,3,False,False,[3],1,1250,0.25,0.02,0.7542,0.02,5.196152422706632,133.36791218280356,5.196152422706632,False,False,False,0,0,mesh,4,1,llm_full_merge,llm_local_solve
+0,after_step,mesh,0,True,True,"[0, 1, 2, 3]",4,5000,1.0,0.0866,0.0866,0.0866,27.0,27.0,27.0,False,False,False,3,3,mesh,4,1,llm_full_merge,llm_local_solve
+0,after_step,mesh,1,True,True,"[0, 1, 2, 3]",4,5000,1.0,0.0946,0.0946,0.0946,27.622454633866266,27.622454633866266,27.622454633866266,False,False,False,3,3,mesh,4,1,llm_full_merge,llm_local_solve
+0,after_step,mesh,2,True,True,"[0, 1, 2, 3]",4,5000,1.0,0.0968,0.0968,0.0968,28.635642126552707,28.635642126552707,28.635642126552707,False,False,False,3,3,mesh,4,1,llm_full_merge,llm_local_solve
+0,after_step,mesh,3,True,True,"[0, 1, 2, 3]",4,5000,1.0,0.0804,0.0804,0.0804,25.45584412271571,25.45584412271571,25.45584412271571,False,False,False,3,3,mesh,4,1,llm_full_merge,llm_local_solve

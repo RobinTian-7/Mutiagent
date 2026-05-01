@@ -1,0 +1,39 @@
+{
+  "task_name": "distributed_array_search",
+  "topology_name": "one_peer_exponential",
+  "n_agents": 64,
+  "seed": 42,
+  "max_rounds": 3,
+  "final_accuracy": false,
+  "consensus_reached": false,
+  "stop_round_idx": 2,
+  "rounds_to_consensus": null,
+  "total_model_calls": 192,
+  "total_prompt_tokens": 120606,
+  "total_completion_tokens": 390014,
+  "total_token_cost": 510620,
+  "final_result_summary": {
+    "final_key": null,
+    "final_answer_text": "No stable consensus was reached.",
+    "consensus_ratio": 0.0,
+    "consensus_reached": false,
+    "supporting_agents": [],
+    "round_idx": 2,
+    "aggregation_method": "no_consensus"
+  },
+  "per_round_top_key": [
+    "UNKNOWN",
+    "UNKNOWN",
+    "UNKNOWN"
+  ],
+  "per_round_top_ratio": [
+    0.96875,
+    0.90625,
+    0.78125
+  ],
+  "per_round_active_key_count": [
+    2,
+    3,
+    3
+  ]
+}

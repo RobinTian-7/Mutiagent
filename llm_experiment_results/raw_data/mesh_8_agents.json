@@ -1,0 +1,41 @@
+{
+  "task_name": "distributed_array_search",
+  "topology_name": "mesh",
+  "n_agents": 8,
+  "seed": 42,
+  "max_rounds": 3,
+  "final_accuracy": true,
+  "consensus_reached": true,
+  "rounds_to_consensus": 0,
+  "total_model_calls": 8,
+  "total_prompt_tokens": 9094,
+  "total_completion_tokens": 9388,
+  "total_token_cost": 18482,
+  "final_result_summary": {
+    "final_key": "FOUND:14",
+    "final_answer_text": "Target 89 found at global index 14 by agent 3.",
+    "consensus_ratio": 1.0,
+    "consensus_reached": true,
+    "supporting_agents": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "round_idx": 0,
+    "aggregation_method": "runtime_consensus"
+  },
+  "per_round_top_key": [
+    "FOUND:14"
+  ],
+  "per_round_top_ratio": [
+    1.0
+  ],
+  "per_round_active_key_count": [
+    1
+  ]
+}

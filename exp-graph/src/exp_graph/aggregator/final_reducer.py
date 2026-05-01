@@ -131,19 +131,11 @@ def summarize_group(
         max_len=160,
     )
 
-    confidences = [
-        state.confidence
-        for state in agent_states_in_group
-        if state.confidence is not None
-    ]
-    final_status_ratio = status_counts.get("final", 0) / size if size else 0.0
-    average_confidence = (
-        sum(confidences) / len(confidences) if confidences else None
-    )
-
+    # Keep the first reducer score intentionally simple and continuous across
+    # groups. Optional confidence values are logged in agent states, but they do
+    # not change the scoring formula unless the experiment explicitly opts into
+    # a new reducer.
     score = size_ratio
-    if average_confidence is not None:
-        score = 0.7 * size_ratio + 0.2 * final_status_ratio + 0.1 * average_confidence
 
     return GroupSummary(
         group_key=group_key,
@@ -219,6 +211,7 @@ def maybe_run_llm_adjudicator(
     global_task: dict[str, Any],
     config: Any,
     llm_client: LLMClient | None = None,
+    task_adapter: TaskAdapter | None = None,
 ) -> OptionalAdjudicationResult | None:
     """Optionally run one final LLM adjudication over compact group summaries."""
     if not bool(getattr(config, "use_llm_adjudicator", False)):
@@ -229,20 +222,26 @@ def maybe_run_llm_adjudicator(
             reason="LLM adjudication requested but no LLM client was provided.",
         )
 
+    adjudication_context = (
+        task_adapter.format_adjudication_context(global_task)
+        if task_adapter is not None
+        else _safe_adjudication_context(global_task)
+    )
     prompt = (
         "You are the final adjudicator for a multi-agent experiment.\n"
         "Choose one candidate group only if the summaries justify it.\n"
         "Return only JSON with keys: selected_group_key, decision, reason, confidence.\n"
         "decision must be accept, reject, or no_consensus.\n"
-        f"GLOBAL_TASK_JSON:\n{json.dumps(_compact_global_task(global_task), sort_keys=True)}\n"
+        f"GLOBAL_TASK_JSON:\n{json.dumps(adjudication_context, sort_keys=True)}\n"
         f"TOP_GROUPS_JSON:\n{json.dumps([group.model_dump() for group in top_groups[:3]], sort_keys=True)}\n"
     )
     response = llm_client.complete(
         prompt,
         model_name=str(getattr(config, "model_name", "default")),
+        temperature=float(getattr(config, "temperature", 0.0)),
     )
     try:
-        raw = json.loads(extract_json_object(response.text))
+        raw = extract_json_object(response.text)
     except (TypeError, ValueError):
         return OptionalAdjudicationResult(
             decision="no_consensus",
@@ -353,6 +352,7 @@ def run_final_reducer(
             global_task=global_task,
             config=config,
             llm_client=llm_client,
+            task_adapter=task_adapter,
         )
         if (
             adjudication is not None
@@ -409,8 +409,20 @@ def _first_unique(items: list[str], *, limit: int, max_len: int) -> list[str]:
     return result
 
 
-def _compact_global_task(global_task: dict[str, Any]) -> dict[str, Any]:
-    compact = dict(global_task)
+def _safe_adjudication_context(global_task: dict[str, Any]) -> dict[str, Any]:
+    blocked_keys = {
+        "answer",
+        "answer_index",
+        "answer_key",
+        "expected_answer",
+        "ground_truth",
+        "label",
+    }
+    compact = {
+        key: value
+        for key, value in global_task.items()
+        if key not in blocked_keys
+    }
     if "array" in compact:
         array = list(compact["array"])
         compact["array_length"] = len(array)

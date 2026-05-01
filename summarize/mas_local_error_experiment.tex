@@ -1,0 +1,383 @@
+\documentclass[UTF8,11pt,a4paper,fontset=fandol]{ctexart}
+
+\usepackage[margin=2.35cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{fancyhdr}
+\usepackage{hyperref}
+\usepackage{caption}
+
+\definecolor{Ink}{HTML}{172033}
+\definecolor{Muted}{HTML}{5B6475}
+\definecolor{DeepBlue}{HTML}{0B3D91}
+\definecolor{SoftBlue}{HTML}{EEF5FF}
+\definecolor{SoftGreen}{HTML}{EEF9F2}
+\definecolor{SoftAmber}{HTML}{FFF7E6}
+\definecolor{RuleGray}{HTML}{D8DEE9}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=DeepBlue,
+  urlcolor=DeepBlue,
+  citecolor=DeepBlue
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\setlength{\headheight}{24pt}
+\lhead{\textcolor{Muted}{MAS Local Error Experiment}}
+\rhead{\textcolor{Muted}{\thepage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{RuleGray}\leaders\hrule height \headrulewidth\hfill}}
+
+\setlist[itemize]{leftmargin=1.8em,itemsep=0.25em,topsep=0.35em}
+\setlist[enumerate]{leftmargin=2em,itemsep=0.35em,topsep=0.35em}
+\captionsetup{font=small,labelfont=bf}
+
+\newtcolorbox{summarybox}[1]{
+  colback=SoftBlue,
+  colframe=DeepBlue,
+  boxrule=0.6pt,
+  arc=2mm,
+  left=1.1em,
+  right=1.1em,
+  top=0.8em,
+  bottom=0.8em,
+  title=\textbf{#1}
+}
+
+\newtcolorbox{notebox}[1]{
+  colback=SoftAmber,
+  colframe=orange!65!black,
+  boxrule=0.5pt,
+  arc=2mm,
+  left=1.1em,
+  right=1.1em,
+  top=0.7em,
+  bottom=0.7em,
+  title=\textbf{#1}
+}
+
+\title{\vspace{-1.8em}\textbf{\Huge 多智能体系统的局部分类误差实验方案}\\[0.35em]
+\Large Agent 数量与通信轮数对 MAS 局部 Error Rate 的影响}
+\author{Agent Expressional Graph}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{summarybox}{核心设定}
+本实验把每个 agent 的局部 error rate 定义为：该 agent 在自己的本地数组 shard 上，对每个样本做分类预测后，与本地数组对应的真实类别逐项比较得到的错误比例。实验控制 agent 数量
+\[
+N \in \{2,4,8,16,32,\ldots\}
+\]
+并观察 MAS 运行若干通信轮后的误差变化，例如
+\[
+R \in \{2,3,5\}.
+\]
+重点问题是：随着 agent 数量增加、通信轮数增加，局部分类误差是否下降，下降速度是否取决于通信拓扑，以及误差是否在 agents 之间变得更均匀。
+\end{summarybox}
+
+\section{实验目标}
+
+设一个全局分类任务被切分给多个 agents。每个 agent 只直接观测自己的本地数组 shard，并在多轮通信中接收邻居 agents 的消息。实验希望回答三个问题：
+
+\begin{enumerate}
+  \item \textbf{局部性能：} 每个 agent 在自己 shard 上的分类 error rate 如何随通信轮数下降？
+  \item \textbf{规模效应：} 当 agent 数量从 \(2,4,8,16,\ldots\) 增加时，MAS 的平均误差、最差误差和误差方差如何变化？
+  \item \textbf{通信效应：} 固定任务和 agent 数量时，更多通信轮数 \(R=2,3,5\) 是否带来稳定收益？
+\end{enumerate}
+
+\section{符号与数据切分}
+
+全局数据集记为
+\[
+\mathcal{D}=\{(x_m,y_m)\}_{m=1}^{M},
+\]
+其中 \(x_m\) 是数组中的第 \(m\) 个样本或元素，\(y_m \in \{1,\ldots,K\}\) 是该样本的真实类别。将 \(\mathcal{D}\) 划分为 \(N\) 个不重叠 shard：
+\[
+\mathcal{D}=\bigcup_{i=1}^{N}\mathcal{D}_i,\qquad
+\mathcal{D}_i\cap\mathcal{D}_j=\varnothing \quad (i\neq j).
+\]
+
+第 \(i\) 个 agent 只直接看到自己的局部数组：
+\[
+\mathcal{D}_i=\{(x_{ij},y_{ij})\}_{j=1}^{n_i},
+\]
+其中 \(n_i=|\mathcal{D}_i|\)。真实标签 \(y_{ij}\) 只用于评估，不应泄露给需要盲测的 LLM agent。
+
+\begin{table}[h]
+\centering
+\caption{主要实验变量}
+\begin{tabularx}{0.92\linewidth}{>{\bfseries}lX}
+\toprule
+符号 & 含义 \\
+\midrule
+\(N\) & agent 数量，推荐 sweep 为 \(\{2,4,8,16,32,\ldots\}\) \\
+\(R\) & MAS 通信轮数，推荐 sweep 为 \(\{2,3,5\}\) \\
+\(K\) & 分类类别数 \\
+\(\mathcal{D}_i\) & 第 \(i\) 个 agent 的本地数组 shard \\
+\(n_i\) & 第 \(i\) 个 shard 的样本数 \\
+\(\hat{y}_{ij}^{(r)}\) & 第 \(r\) 轮后 agent \(i\) 对本地样本 \(x_{ij}\) 的预测类别 \\
+\(e_i^{(r)}\) & 第 \(r\) 轮后 agent \(i\) 的局部分类错误率 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{局部 Error Rate 的定义}
+
+在第 \(r\) 轮通信结束后，第 \(i\) 个 agent 对自己的本地数组输出预测标签：
+\[
+\hat{\mathbf{y}}_{i}^{(r)} =
+\bigl(\hat{y}_{i1}^{(r)},\hat{y}_{i2}^{(r)},\ldots,\hat{y}_{in_i}^{(r)}\bigr).
+\]
+
+逐样本分类错误定义为
+\[
+\ell_{ij}^{(r)}
+=
+\mathbf{1}\!\left[\hat{y}_{ij}^{(r)}\neq y_{ij}\right],
+\]
+其中 \(\mathbf{1}[\cdot]\) 是指示函数。于是，第 \(i\) 个 agent 的局部 error rate 为
+\[
+\boxed{
+e_i^{(r)}
+=
+\frac{1}{n_i}\sum_{j=1}^{n_i}
+\mathbf{1}\!\left[\hat{y}_{ij}^{(r)}\neq y_{ij}\right]
+}
+\]
+
+\begin{notebox}{解释}
+这个定义只比较 agent 自己本地数组上的分类结果，不要求 agent 对全局数组给出完整预测。因此它能直接衡量：通信是否帮助每个 agent 改善自身局部判断。
+\end{notebox}
+
+如果 agent 输出的是类别概率 \(p_i^{(r)}(y\mid x_{ij})\)，则先取最大概率类别：
+\[
+\hat{y}_{ij}^{(r)}=\arg\max_{c\in\{1,\ldots,K\}} p_i^{(r)}(c\mid x_{ij}).
+\]
+
+如果系统只保存了局部混淆矩阵 \(C_i^{(r)}\)，也可以等价计算：
+\[
+e_i^{(r)}
+=
+1-\frac{\operatorname{tr}(C_i^{(r)})}{n_i}.
+\]
+
+\section{MAS 运行设置}
+
+每次实验由三组核心条件确定：
+\[
+(N,R,\tau),
+\]
+其中 \(N\) 是 agent 数量，\(R\) 是通信轮数，\(\tau\) 是通信拓扑或邻居可见性策略。推荐的最小实验矩阵如下：
+
+\begin{table}[h]
+\centering
+\caption{推荐实验 sweep}
+\begin{tabular}{lll}
+\toprule
+因素 & 推荐取值 & 目的 \\
+\midrule
+Agent 数量 \(N\) & \(2,4,8,16,32\) & 观察规模效应 \\
+通信轮数 \(R\) & \(2,3,5\) & 观察早期通信收益 \\
+Topology \(\tau\) & chain, mesh, star, one-peer exponential & 比较信息传播结构 \\
+随机种子 & 至少 5 个 seeds & 降低单次运行偶然性 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+第 \(r\) 轮的同步 MAS 更新过程为：
+
+\begin{enumerate}
+  \item 每个 agent \(a_i\) 从自己的局部数组 \(\mathcal{D}_i\) 形成初始预测或 belief state。
+  \item 根据 topology \(\tau\) 计算第 \(r\) 轮 agent \(a_i\) 能读取的邻居集合 \(\mathcal{N}_i^{(r)}\)。
+  \item 每个 agent 接收邻居上一轮的结构化消息或 belief state。
+  \item agent 更新自己的预测 \(\hat{\mathbf{y}}_i^{(r)}\)。
+  \item 评估器在本地 shard 上计算 \(e_i^{(r)}\)，但不把真实标签反馈给 agent。
+\end{enumerate}
+
+\section{聚合指标}
+
+为了同时观察整体趋势和 agent 间不均衡，建议记录以下指标。
+
+\subsection{样本加权平均误差}
+
+当各 shard 大小可能不同，主报告指标使用样本加权平均：
+\[
+\boxed{
+E_{\mathrm{weighted}}^{(r)}
+=
+\frac{\sum_{i=1}^{N} n_i e_i^{(r)}}{\sum_{i=1}^{N}n_i}
+}
+\]
+它等价于所有本地样本合并后的总体分类错误率。
+
+\subsection{Agent 平均误差}
+
+如果关注每个 agent 作为一个独立决策单元的表现，使用 agent 等权平均：
+\[
+E_{\mathrm{agent}}^{(r)}
+=
+\frac{1}{N}\sum_{i=1}^{N}e_i^{(r)}.
+\]
+
+\subsection{最差 Agent 误差}
+
+为了观察系统短板：
+\[
+E_{\max}^{(r)}
+=
+\max_{1\leq i\leq N} e_i^{(r)}.
+\]
+
+\subsection{Agent 间误差离散度}
+
+为了衡量 MAS 是否让不同 agents 的表现更均匀：
+\[
+S_e^{(r)}
+=
+\sqrt{\frac{1}{N}\sum_{i=1}^{N}
+\left(e_i^{(r)}-E_{\mathrm{agent}}^{(r)}\right)^2}.
+\]
+
+\subsection{通信收益}
+
+以第 \(0\) 轮本地初始预测为 baseline，定义第 \(r\) 轮通信收益：
+\[
+G^{(r)}
+=
+E_{\mathrm{weighted}}^{(0)}
+-
+E_{\mathrm{weighted}}^{(r)}.
+\]
+若 \(G^{(r)}>0\)，说明通信后整体局部分类误差下降。
+
+\section{实验记录格式}
+
+建议每一行记录一个 agent 在一个 run 的一个通信轮数终点上的局部误差：
+
+\begin{table}[h]
+\centering
+\caption{逐 agent 记录表模板}
+\small
+\begin{tabularx}{\linewidth}{llllllX}
+\toprule
+run & \(N\) & \(R\) & topology & agent & \(n_i\) & metrics \\
+\midrule
+001 & 8 & 3 & one-peer-exp & 0 & 128 &
+\(\,e_i^{(0)}, e_i^{(1)}, e_i^{(2)}, e_i^{(3)}, \Delta e_i\,\) \\
+001 & 8 & 3 & one-peer-exp & 1 & 128 &
+\(\,e_i^{(0)}, e_i^{(1)}, e_i^{(2)}, e_i^{(3)}, \Delta e_i\,\) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+聚合表则以一个 run 为单位：
+
+\begin{table}[h]
+\centering
+\caption{聚合结果表模板}
+\small
+\begin{tabular}{llllllll}
+\toprule
+run & seed & \(N\) & \(R\) & topology &
+\(E_{\mathrm{weighted}}\) & \(E_{\max}\) & \(S_e\) \\
+\midrule
+001 & 42 & 8 & 3 & mesh & 0.128 & 0.219 & 0.041 \\
+002 & 42 & 8 & 3 & one-peer-exp & 0.147 & 0.250 & 0.052 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{分析与可视化}
+
+推荐输出四类图：
+
+\begin{enumerate}
+  \item \textbf{误差随轮数变化：}
+  横轴为通信轮数 \(r\)，纵轴为 \(E_{\mathrm{weighted}}^{(r)}\)，不同线条表示不同 topology 或不同 \(N\)。
+  \item \textbf{规模热力图：}
+  横轴为 \(N\)，纵轴为 \(R\)，颜色为最终误差 \(E_{\mathrm{weighted}}^{(R)}\)。
+  \item \textbf{Agent 间 box plot：}
+  对每个实验条件绘制 \(\{e_i^{(R)}\}_{i=1}^{N}\)，观察不均衡和 outlier agents。
+  \item \textbf{通信收益曲线：}
+  绘制 \(G^{(r)}\)，判断额外通信轮是否仍有边际收益。
+\end{enumerate}
+
+如果需要统计检验，可以拟合以下回归模型：
+\[
+E_{\mathrm{weighted}}^{(R)}
+=
+\beta_0
++\beta_1\log_2 N
++\beta_2 R
++\beta_3 \mathbb{I}[\tau=\mathrm{mesh}]
++\beta_4 \mathbb{I}[\tau=\mathrm{onepeer}]
++\varepsilon.
+\]
+其中 \(\beta_2<0\) 表示更多通信轮数降低误差，\(\beta_1>0\) 表示规模增大带来更高协调难度。
+
+\section{最终报告结构}
+
+最终论文式报告建议采用如下结构：
+
+\begin{enumerate}
+  \item \textbf{Problem Setup：} 说明全局数组分类任务、局部 shard、agent 只能访问本地数组。
+  \item \textbf{Local Error Metric：} 给出 \(e_i^{(r)}\)、\(E_{\mathrm{weighted}}^{(r)}\)、\(E_{\max}^{(r)}\) 的公式。
+  \item \textbf{Experimental Grid：} 报告 \(N\in\{2,4,8,16,\ldots\}\)、\(R\in\{2,3,5\}\)、topologies 和 seeds。
+  \item \textbf{Results：} 展示误差曲线、热力图、box plot 和聚合表。
+  \item \textbf{Discussion：} 分析通信是否改善局部分类，是否存在规模瓶颈，以及不同 topology 的差异。
+  \item \textbf{Reproducibility：} 记录模型、随机种子、数组生成方式、分类标签生成方式和 trace 保存策略。
+\end{enumerate}
+
+\section{复现实验的最小伪代码}
+
+\begin{tcolorbox}[
+  colback=SoftGreen,
+  colframe=green!45!black,
+  boxrule=0.5pt,
+  arc=2mm,
+  left=1em,
+  right=1em,
+  top=0.8em,
+  bottom=0.8em
+]
+\small
+\begin{verbatim}
+for seed in seeds:
+    build global labeled array D
+    for N in [2, 4, 8, 16, 32]:
+        split D into N local shards
+        for topology in topologies:
+            initialize MAS agents
+            evaluate local errors at round 0
+            for r in range(1, R + 1):
+                exchange messages under topology
+                update each agent's local predictions
+                evaluate each local error e_i^(r)
+            aggregate weighted error, max error, variance
+\end{verbatim}
+\end{tcolorbox}
+
+\section{注意事项}
+
+\begin{itemize}
+  \item 真实标签只用于 evaluator。若实验要求 blind evaluation，不要把 \(y_{ij}\) 放入 agent prompt。
+  \item 若保存 prompt 和 raw response trace，需要确认其中没有 API key、私人数据或测试标签。
+  \item 当 \(n_i\) 不相等时，主结果优先报告样本加权平均 \(E_{\mathrm{weighted}}\)，同时补充 agent 平均 \(E_{\mathrm{agent}}\)。
+  \item 若只比较 topology，应固定模型、prompt、temperature、seed、数组生成方式和分类器输出格式。
+  \item 若观察 \(R=2,3,5\)，建议同时保存每一轮的中间误差，而不是只保存最终轮，方便估计通信的边际收益。
+\end{itemize}
+
+\section{一句话总结}
+
+本实验的核心是把 MAS 的全局协作效果落到每个 agent 自己本地数组上的逐样本分类正确性：先测每个 agent 的局部 error rate，再跨 agents、轮数和规模聚合。这样既能观察整体分类性能，也能看到通信是否真正改善了局部判断，以及大规模 MAS 中哪些 agents 仍然是误差瓶颈。
+
+\end{document}

@@ -115,6 +115,26 @@ class OnePeerExponentialTopology(Topology):
         return [neighbor]
 
 
+class RingTopology(Topology):
+    """Undirected ring (cyclic chain): each agent connects to its two neighbours,
+    wrapping around so agent 0 and agent n-1 are also adjacent."""
+
+    name = "ring"
+
+    def get_neighbors(
+        self,
+        agent_id: int,
+        round_idx: int,
+        n_agents: int,
+    ) -> list[int]:
+        validate_agent_id(agent_id, n_agents)
+        if n_agents == 1:
+            return []
+        if n_agents == 2:
+            return [1 - agent_id]
+        return [(agent_id - 1) % n_agents, (agent_id + 1) % n_agents]
+
+
 def is_power_of_two(value: int) -> bool:
     """Return whether ``value`` is a positive power of two."""
     return value > 0 and (value & (value - 1)) == 0

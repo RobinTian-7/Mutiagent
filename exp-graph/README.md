@@ -4,11 +4,12 @@
 
 当前第一阶段只研究一件事：在同一个同步多轮 multi-agent 解题协议中，只改变 agents 的 neighbor communication topology，观察最终正确率、达成共识速度、模型调用/token 成本，以及 agent 数规模变化下的表现。
 
-当前内置任务是 `distributed_array_search`：所有 agents 共享同一个全局数组搜索任务，每个 agent 只看到自己的数组 shard 和全局 offset。系统需要判断 target 是否存在，并在存在时返回第一个全局位置。
+当前内置任务包括：
+
+- `distributed_array_search`：所有 agents 共享同一个全局数组搜索任务，每个 agent 只看到自己的数组 shard 和全局 offset。系统需要判断 target 是否存在，并在存在时返回第一个全局位置。
+- `count_frequency` / CF：所有 agents 共享同一个全局整数数组，每个 agent 只看到自己的 shard。系统需要统计每个不同整数在全局数组中的出现频率。
 
 ## Scope
-
-本仓库当前不复现 claim graph、cascade、DTI 或 coordination law。Exponential graph 在这里只控制物理通信层：
 
 - 每一轮每个 agent 能看到哪些 neighbors
 - 每一轮哪些 neighbor outbox 会进入当前 agent 的 inbox
@@ -90,6 +91,7 @@ j = (agent_id + 2^(round_idx mod ceil(log2(n_agents)))) mod n_agents
 - `normalize_consensus_key(...)`
 - `evaluate_final_answer(...)`
 - `format_task_prompt_context(...)`
+- `format_consensus_key_instructions(...)`
 
 核心 agent、runner、topology、runtime consensus 和 final reducer 不写死 array search 细节。后续添加新任务时，优先新增 adapter，而不是改 runner。
 
@@ -105,7 +107,7 @@ runner 是同步轮式调度，每轮固定执行：
 6. 执行 cheap runtime consensus detection
 7. 达到阈值或最大轮数后停止
 
-运行时共识检测只统计 `belief_state.consensus_key`，不调用 LLM，不做复杂文本聚合。最终停机后才运行 final reducer。
+运行时共识检测只统计 `belief_state.consensus_key`，不调用 LLM，不做复杂文本聚合。达到 `max_rounds` 或 runtime consensus 后，runner 会自动调用 final reducer，把最后一轮所有 agent 的 `belief_state` merge 成唯一 `FinalResult`。
 
 ## Install
 
@@ -126,6 +128,25 @@ pip install -e ".[dev]"
 python examples/run_array_search.py --topology one_peer_exponential --n-agents 8 --max-rounds 5 --seed 7
 ```
 
+运行 CF / count-frequency：
+
+```bash
+python examples/run_count_frequency.py \
+  --topology one_peer_exponential \
+  --n-agents 8 \
+  --max-rounds 5 \
+  --array-size 1000 \
+  --seed 7
+```
+
+CF 也可以使用论文常见规模：
+
+```bash
+python examples/run_count_frequency.py --array-size 1000
+python examples/run_count_frequency.py --array-size 5000
+python examples/run_count_frequency.py --array-size 10000
+```
+
 切换 topology：
 
 ```bash
@@ -136,11 +157,104 @@ python examples/run_array_search.py --topology static_exponential
 python examples/run_array_search.py --topology one_peer_exponential
 ```
 
+同样可以把 `run_array_search.py` 换成 `run_count_frequency.py` 来比较 CF 任务下的 topology effect。
+
+有限步 CF protocol 实验脚本：
+
+```bash
+python ../run_cf_protocol_experiments.py \
+  --array-size 5000 \
+  --value-min 1 \
+  --value-max 1000 \
+  --agent-counts 8 16 32 \
+  --seeds 1 2 3 \
+  --topologies mesh static_exponential one_peer_exponential \
+  --merge-mode deterministic \
+  --output-dir ../cf_protocol_results
+```
+
+`run_cf_protocol_experiments.py` 支持三种 merge mode：
+
+- `deterministic`: 程序按 source-agent partials 做完美合并，是 topology 信息传播上限 baseline。
+- `llm_belief_merge`: LLM 更新 proposal/support/uncertainty 等 belief 文本字段；程序保留已验证的 CF `structured_state`，防止重复计数和格式幻觉。
+- `llm_full_merge`: LLM 自己输出最终 CF `structured_state.merged_counts`，程序只做 JSON/schema/domain 校验和评估，不从 `partials` 重新计算答案。若要让最终数组频数字典来自 LLM 自己的合并结果，用这个模式。
+
+真实 LLM protocol merge 示例：
+
+```bash
+export OPENAI_API_KEY=...
+
+python ../run_cf_protocol_experiments.py \
+  --array-size 5000 \
+  --value-min 1 \
+  --value-max 1000 \
+  --agent-counts 8 \
+  --seeds 1 \
+  --topologies mesh one_peer_exponential \
+  --merge-mode llm_full_merge \
+  --llm-provider openai \
+  --model-name gpt-4o-mini \
+  --temperature 0.0 \
+  --json-retry-attempts 2 \
+  --max-parallel-agents 4 \
+  --trace \
+  --output-dir ../cf_protocol_llm_results
+```
+
+默认情况下，LLM protocol merge 如果在重试后仍输出非法 JSON 或非法 CF `structured_state`，会 fallback 到 deterministic merge，并在结果中记录 `TotalDeterministicFallbacks`。如果你要严格测试“LLM 独立给出最后答案”，加：
+
+```bash
+--merge-mode llm_full_merge --no-deterministic-repair
+```
+
 使用 OpenAI client：
 
 ```bash
 OPENAI_API_KEY=... python examples/run_array_search.py --llm-provider openai --model-name gpt-4o-mini
 ```
+
+控制真实 LLM sampling temperature：
+
+```bash
+python examples/run_array_search.py \
+  --llm-provider openai \
+  --model-name gpt-4o-mini \
+  --temperature 0.2
+```
+
+主实验建议先固定 `--temperature 0.0` 降低随机性；如果要报告稳健性，再额外 sweep `0.2`、`0.7` 等设置。
+
+真实 LLM 如果返回非法 JSON，agent 会进行结构化重试。默认最多重试 2 次，可通过参数调整：
+
+```bash
+python examples/run_array_search.py \
+  --llm-provider openai \
+  --model-name gpt-4o-mini \
+  --json-retry-attempts 2
+```
+
+retry 发生时，系统会把 schema、validation error、上一次坏响应和原始任务 prompt 发回模型，要求只重新生成一个合法 `belief_state` JSON。retry 的模型调用和 token 会计入 metrics。
+
+保存真实 LLM 调试 trace：
+
+```bash
+python examples/run_array_search.py \
+  --llm-provider openai \
+  --model-name gpt-4o-mini \
+  --trace-dir outputs/traces
+```
+
+trace 是 JSONL，每行记录一个 agent 在一个通信轮次中的 prompt、raw response、解析后的 belief_state、outbox、neighbors、inbox、token 和 retry 次数。`llm_calls` 会逐次保存该 step 中每一次真实 LLM 调用的 input prompt 和 output response，因此 retry 调用也可审计。`round_idx` 仍然是内部 0-based 索引；metrics 中的 `rounds_to_consensus` 是对外报告用的 1-based 通信轮数。
+
+批量实验时，trace 会按轮追加到磁盘，不默认常驻 `ExperimentResult` 内存。需要在交互式 debug 中同时保留内存副本时，加：
+
+```bash
+python examples/run_array_search.py \
+  --trace-dir outputs/traces \
+  --retain-traces
+```
+
+如果打开可选 LLM final adjudicator，输入只包含 task adapter 提供的无标签 adjudication context 和少量 `GroupSummary`。Array search 不会把 `array`、`answer_key` 或 `answer_index` 传给 adjudicator。
 
 ## Test
 
@@ -149,4 +263,3 @@ pytest
 ```
 
 测试覆盖 topology neighbor correctness、one-peer global round alignment、array shard splitting、initial local solve、outbox derivation、runtime consensus、final reducer 和 minimal end-to-end smoke。
-

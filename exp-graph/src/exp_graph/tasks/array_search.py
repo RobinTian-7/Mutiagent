@@ -164,7 +164,21 @@ class ArraySearchTaskAdapter(TaskAdapter):
             f"Your shard global range: "
             f"[{local_observation['shard_start']}, "
             f"{local_observation['shard_end_exclusive']})\n"
-            f"Your array_shard: {local_observation['array_shard']}\n"
+            f"Your array_shard: {local_observation['array_shard']}"
+        )
+
+    def format_consensus_key_instructions(self) -> str:
+        """Return array-search consensus-key rules for solver prompts."""
+        return (
             "Consensus keys for this task must be one of: "
             "FOUND:<global_index>, NOT_FOUND, UNKNOWN."
         )
+
+    def format_adjudication_context(self, global_task: dict[str, Any]) -> dict[str, Any]:
+        """Return task context for adjudication without ground-truth labels."""
+        return {
+            "task_name": self.task_name,
+            "description": global_task["description"],
+            "target": global_task["target"],
+            "array_length": len(global_task["array"]),
+        }

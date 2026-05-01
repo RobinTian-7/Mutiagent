@@ -23,6 +23,7 @@ def build_solver_prompt(
         global_task=global_task,
         local_observation=local_observation,
     )
+    consensus_key_instructions = task_adapter.format_consensus_key_instructions()
     inbox_payload = [message.model_dump() for message in inbox]
     return f"""You are a solver agent in a synchronous LLM multi-agent experiment.
 
@@ -34,17 +35,26 @@ This round you received neighbor messages in inbox.
 Treat inbox as new context, not guaranteed truth. Continue solving the task.
 Do not summarize mechanically. Update your own belief_state.
 
+Reason explicitly inside the JSON `analysis` field before producing the
+answer fields. Walk through what you observed, what changed in inbox, and
+how you arrived at the new proposal. Do not put reasoning prose outside
+the JSON object.
+
 Rules:
-- Output only one JSON object.
+- Output exactly one JSON object and nothing outside it (no markdown fences,
+  no prose before or after).
 - Output only the next belief_state.
 - Do not output outbox.
-- Do not output chain-of-thought or extra explanation.
-- Keep proposal, support, uncertainty, and open_questions concise.
-- consensus_key should be cheap to group. For this task prefer:
-  FOUND:<global_index>, NOT_FOUND, or UNKNOWN.
+- Keep proposal, support, uncertainty, and open_questions concise; put longer
+  reasoning in `analysis`.
+- {consensus_key_instructions}
 
 Required JSON schema:
 {{
+  "analysis": {{
+    "reasoning": "step-by-step reasoning that led to this belief",
+    "key_observations": ["...", "..."]
+  }},
   "status": "unknown | candidate | final",
   "proposal": "...",
   "consensus_key": "... | UNKNOWN | null",

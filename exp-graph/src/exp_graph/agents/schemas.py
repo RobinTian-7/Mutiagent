@@ -29,6 +29,8 @@ class BeliefState(BaseModel):
     open_questions: list[str] = Field(default_factory=list)
     private_notes: str = ""
     confidence: float | None = None
+    structured_state: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] | None = None
 
     @field_validator("support", "open_questions", mode="before")
     @classmethod
@@ -54,6 +56,8 @@ class AgentConfig(BaseModel):
     role: str = "solver"
     model_name: str
     prompt_template_name: str = "solver_v1"
+    json_retry_attempts: int = 2
+    temperature: float = 0.0
 
 
 class AgentState(BaseModel):

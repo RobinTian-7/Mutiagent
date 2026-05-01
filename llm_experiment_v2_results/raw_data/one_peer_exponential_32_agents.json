@@ -1,0 +1,47 @@
+{
+  "task_name": "distributed_array_search",
+  "topology_name": "one_peer_exponential",
+  "n_agents": 32,
+  "seed": 42,
+  "max_rounds": 3,
+  "final_accuracy": true,
+  "consensus_reached": true,
+  "stop_round_idx": 2,
+  "rounds_to_consensus": 3,
+  "total_model_calls": 96,
+  "total_prompt_tokens": 59941,
+  "total_completion_tokens": 162816,
+  "total_token_cost": 222757,
+  "final_result_summary": {
+    "final_key": "FOUND:14",
+    "final_answer_text": "Target 89 found at global index 14; local shard [7,8) contains 142, not target.",
+    "consensus_ratio": 0.21875,
+    "consensus_reached": true,
+    "supporting_agents": [
+      7,
+      8,
+      9,
+      10,
+      12,
+      13,
+      14
+    ],
+    "round_idx": 2,
+    "aggregation_method": "rule_based_final"
+  },
+  "per_round_top_key": [
+    "UNKNOWN",
+    "UNKNOWN",
+    "UNKNOWN"
+  ],
+  "per_round_top_ratio": [
+    0.9375,
+    0.875,
+    0.78125
+  ],
+  "per_round_active_key_count": [
+    2,
+    2,
+    2
+  ]
+}

@@ -1,0 +1,23 @@
+[
+  {
+    "Agents": 4,
+    "ExactMatchRate": 0.0,
+    "InitMode": "llm_local_solve",
+    "MeanAverageRMSE": 22.715633383201094,
+    "MeanDeterministicFallbacks": 0.0,
+    "MeanFinalNormalizedL1Error": 0.0866,
+    "MeanFinalRMSE": 27.0,
+    "MeanTotalCompletionTokens": 64840.0,
+    "MeanTotalMessages": 12.0,
+    "MeanTotalModelCalls": 8.0,
+    "MeanTotalPromptTokens": 88388.0,
+    "MeanTotalSteps": 1.0,
+    "MeanVoteAverageDisagreementRMSE": 18.33030277982336,
+    "MeanVoteRMSE": 27.0,
+    "MeanVoteTopRatio": 0.25,
+    "MergeMode": "llm_full_merge",
+    "Runs": 1,
+    "StdFinalRMSE": 0.0,
+    "Topology": "mesh"
+  }
+]
