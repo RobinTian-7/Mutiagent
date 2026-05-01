@@ -16,6 +16,7 @@ class OutboxMessage(BaseModel):
     support: list[str] = Field(default_factory=list)
     uncertainty: str = ""
     request: str = ""
+    structured_payload: dict = Field(default_factory=dict)
 
     @classmethod
     def from_belief_state(
@@ -38,4 +39,5 @@ class OutboxMessage(BaseModel):
             support=[str(item) for item in getattr(belief_state, "support", [])[:3]],
             uncertainty=str(getattr(belief_state, "uncertainty", "")),
             request=str(request),
+            structured_payload=dict(getattr(belief_state, "structured_state", {}) or {}),
         )

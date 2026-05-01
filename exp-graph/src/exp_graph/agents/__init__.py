@@ -1,6 +1,7 @@
 """Agent configs, state schemas, and agent runtime."""
 
-from exp_graph.agents.agent import SolverAgent
+from typing import TYPE_CHECKING
+
 from exp_graph.agents.schemas import (
     AgentConfig,
     AgentState,
@@ -8,6 +9,9 @@ from exp_graph.agents.schemas import (
     BeliefStatus,
     make_initial_agent_state,
 )
+
+if TYPE_CHECKING:
+    from exp_graph.agents.agent import SolverAgent
 
 __all__ = [
     "SolverAgent",
@@ -17,3 +21,11 @@ __all__ = [
     "BeliefStatus",
     "make_initial_agent_state",
 ]
+
+
+def __getattr__(name: str):
+    if name == "SolverAgent":
+        from exp_graph.agents.agent import SolverAgent
+
+        return SolverAgent
+    raise AttributeError(name)

@@ -8,6 +8,7 @@ This subproject is a lightweight LLM multi-agent experiment harness for testing 
 - Do not introduce Claim DAG, cascades, DTI, reinforced claim routing, or coordination-law reproduction here.
 - Keep task logic pluggable through `TaskAdapter`.
 - Keep topology routing, task logic, runtime consensus, and final aggregation as separate modules.
+- For task initialization, prompts, runtime consensus, final merge/reducer, LLM adjudication, and trace/audit changes, follow the local skill at `.codex/skills/exp-graph-multiagent/SKILL.md`.
 
 ## Agent State Rules
 

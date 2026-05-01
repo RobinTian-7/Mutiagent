@@ -7,6 +7,7 @@ from exp_graph.topology.implementations import (
     ChainTopology,
     MeshTopology,
     OnePeerExponentialTopology,
+    RingTopology,
     StarTopology,
     StaticExponentialTopology,
 )
@@ -14,6 +15,7 @@ from exp_graph.topology.implementations import (
 
 TOPOLOGIES: dict[str, type[Topology]] = {
     "chain": ChainTopology,
+    "ring": RingTopology,
     "star": StarTopology,
     "mesh": MeshTopology,
     "static_exponential": StaticExponentialTopology,

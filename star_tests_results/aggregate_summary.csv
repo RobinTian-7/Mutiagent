@@ -1,0 +1,2 @@
+Topology,Agents,MergeMode,InitMode,Runs,MeanFinalRMSE,StdFinalRMSE,MeanVoteRMSE,MeanAverageRMSE,MeanFinalNormalizedL1Error,ExactMatchRate,MeanTotalSteps,MeanTotalMessages,MeanTotalModelCalls,MeanTotalPromptTokens,MeanTotalCompletionTokens,MeanDeterministicFallbacks,MeanVoteTopRatio,MeanVoteAverageDisagreementRMSE
+star,4,llm_full_merge,llm_local_solve,1,0.867179335547152,0.0,0.867179335547152,0.867179335547152,0.0928,0.0,1.0,3.0,5.0,34652.0,32082.0,0.0,1.0,0.0

@@ -43,6 +43,18 @@ def parse_args() -> argparse.Namespace:
         help="fake is deterministic and offline; openai uses OPENAI_API_KEY.",
     )
     parser.add_argument("--model-name", default="gpt-4o-mini")
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature for real LLM providers.",
+    )
+    parser.add_argument(
+        "--json-retry-attempts",
+        type=int,
+        default=2,
+        help="Number of retry calls after invalid belief_state JSON.",
+    )
     parser.add_argument("--consensus-threshold", type=float, default=0.8)
     parser.add_argument("--final-accept-threshold", type=float, default=0.7)
     parser.add_argument("--adjudication-margin", type=float, default=0.1)
@@ -50,6 +62,26 @@ def parse_args() -> argparse.Namespace:
         "--use-llm-adjudicator",
         action="store_true",
         help="Allow one compact final LLM adjudication when top groups are close.",
+    )
+    parser.add_argument(
+        "--trace-dir",
+        default=None,
+        help="Optional directory for per-agent prompt/response JSONL traces.",
+    )
+    parser.add_argument(
+        "--no-trace",
+        action="store_true",
+        help="Disable in-memory agent prompt/response traces.",
+    )
+    parser.add_argument(
+        "--no-save-prompts",
+        action="store_true",
+        help="Keep trace metadata and responses but omit raw prompts.",
+    )
+    parser.add_argument(
+        "--retain-traces",
+        action="store_true",
+        help="Also keep full agent traces in ExperimentResult memory.",
     )
     return parser.parse_args()
 
@@ -73,10 +105,16 @@ def main() -> None:
         seed=args.seed,
         model_name=args.model_name,
         llm_provider=args.llm_provider,
+        temperature=args.temperature,
+        json_retry_attempts=args.json_retry_attempts,
         consensus_threshold=args.consensus_threshold,
         final_accept_threshold=args.final_accept_threshold,
         adjudication_margin=args.adjudication_margin,
         use_llm_adjudicator=args.use_llm_adjudicator,
+        trace_enabled=not args.no_trace,
+        save_prompts=not args.no_save_prompts,
+        retain_traces=args.retain_traces,
+        trace_dir=args.trace_dir,
     )
     result = SynchronousRunner(
         config=config,
@@ -91,11 +129,15 @@ def main() -> None:
     print(f"expected_key: {global_task['answer_key']}")
     print(f"final_key: {result.final_result.final_key}")
     print(f"final_answer: {result.final_result.final_answer_text}")
+    print(f"stop_reason: {result.stop_reason}")
+    print(f"aggregation_method: {result.final_result.aggregation_method}")
     print(f"consensus_reached: {result.final_result.consensus_reached}")
     print(f"rounds_to_consensus: {result.metrics.rounds_to_consensus}")
     print(f"final_accuracy: {result.metrics.final_accuracy}")
     print(f"total_model_calls: {result.metrics.total_model_calls}")
     print(f"total_token_cost: {result.metrics.total_token_cost}")
+    if result.trace_path:
+        print(f"trace_path: {result.trace_path}")
     print("round_summary:")
     for log in result.round_logs:
         print(

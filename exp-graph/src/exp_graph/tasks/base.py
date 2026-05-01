@@ -56,3 +56,31 @@ class TaskAdapter(ABC):
     ) -> str:
         """Format task context for an agent prompt."""
         ...
+
+    def format_consensus_key_instructions(self) -> str:
+        """Return task-specific consensus-key guidance for solver prompts."""
+        return (
+            "consensus_key should be a short task-specific key suitable for "
+            "cheap grouping. Use UNKNOWN when the current evidence is insufficient."
+        )
+
+    def format_adjudication_context(self, global_task: dict[str, Any]) -> dict[str, Any]:
+        """Return the task context allowed in final LLM adjudication.
+
+        This context must not include labels or ground-truth answers. Concrete
+        adapters should override this when the task dictionary contains private
+        evaluation fields.
+        """
+        blocked_keys = {
+            "answer",
+            "answer_index",
+            "answer_key",
+            "expected_answer",
+            "ground_truth",
+            "label",
+        }
+        return {
+            key: value
+            for key, value in global_task.items()
+            if key not in blocked_keys
+        }

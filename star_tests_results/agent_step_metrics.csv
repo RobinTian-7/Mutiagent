@@ -1,0 +1,9 @@
+step_idx,phase,topology,agent_id,active_sender,active_receiver,known_sources,known_source_count,coverage_ratio,normalized_l1_error,rmse,exact_match,sent_count,received_count,Topology,Agents,Seed,MergeMode,InitMode
+-1,initial,star,0,False,False,[0],1,0.25,0.7414,4.174805384685614,False,0,0,star,4,1,llm_full_merge,llm_local_solve
+-1,initial,star,1,False,False,[1],1,0.25,0.7544,4.244997055358225,False,0,0,star,4,1,llm_full_merge,llm_local_solve
+-1,initial,star,2,False,False,[2],1,0.25,0.7552,4.231075513389001,False,0,0,star,4,1,llm_full_merge,llm_local_solve
+-1,initial,star,3,False,False,[3],1,0.25,0.7534,4.212481453965109,False,0,0,star,4,1,llm_full_merge,llm_local_solve
+0,after_step,star,0,False,True,"[0, 1, 2, 3]",4,1.0,0.0928,0.867179335547152,False,0,3,star,4,1,llm_full_merge,llm_local_solve
+0,after_step,star,1,True,False,[1],1,0.25,0.7544,4.244997055358225,False,1,0,star,4,1,llm_full_merge,llm_local_solve
+0,after_step,star,2,True,False,[2],1,0.25,0.7552,4.231075513389001,False,1,0,star,4,1,llm_full_merge,llm_local_solve
+0,after_step,star,3,True,False,[3],1,0.25,0.7534,4.212481453965109,False,1,0,star,4,1,llm_full_merge,llm_local_solve

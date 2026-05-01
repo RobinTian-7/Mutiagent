@@ -1,0 +1,9 @@
+__pycache__/
+.DS_Store
+*.dot
+*.jsonl
+log/
+archive/
+experiment_results/
+experiment_results_newsgroup/
+venv/

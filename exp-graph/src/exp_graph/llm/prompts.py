@@ -23,6 +23,7 @@ def build_solver_prompt(
         global_task=global_task,
         local_observation=local_observation,
     )
+    consensus_key_instructions = task_adapter.format_consensus_key_instructions()
     inbox_payload = [message.model_dump() for message in inbox]
     return f"""You are a solver agent in a synchronous LLM multi-agent experiment.
 
@@ -40,8 +41,7 @@ Rules:
 - Do not output outbox.
 - Do not output chain-of-thought or extra explanation.
 - Keep proposal, support, uncertainty, and open_questions concise.
-- consensus_key should be cheap to group. For this task prefer:
-  FOUND:<global_index>, NOT_FOUND, or UNKNOWN.
+- {consensus_key_instructions}
 
 Required JSON schema:
 {{

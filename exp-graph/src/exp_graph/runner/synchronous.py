@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from time import time_ns
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -27,6 +30,7 @@ from exp_graph.metrics.logger import MetricsSummary, build_metrics_summary
 from exp_graph.messaging import OutboxMessage
 from exp_graph.tasks.base import TaskAdapter
 from exp_graph.topology import create_topology
+from exp_graph.tracing import AgentStepTrace, append_traces_jsonl, reset_trace_jsonl
 
 
 class RoundLog(BaseModel):
@@ -43,12 +47,16 @@ class RoundLog(BaseModel):
 class ExperimentResult(BaseModel):
     """Full result of one experiment run."""
 
+    run_id: str
     config: ExperimentConfig
     global_task: dict[str, Any]
     final_result: FinalResult
     metrics: MetricsSummary
     round_logs: list[RoundLog] = Field(default_factory=list)
     final_agent_states: list[AgentState] = Field(default_factory=list)
+    agent_step_traces: list[AgentStepTrace] = Field(default_factory=list)
+    trace_path: str | None = None
+    stop_reason: str
 
 
 class SynchronousRunner:
@@ -70,9 +78,16 @@ class SynchronousRunner:
 
     def run(self) -> ExperimentResult:
         """Run the experiment to consensus or max_rounds."""
+        run_id = self._make_run_id()
         agent_states = self._initialize_agent_states()
         agents = self._initialize_agents()
         round_logs: list[RoundLog] = []
+        agent_step_traces: list[AgentStepTrace] = []
+        trace_path = None
+        if self.config.trace_enabled and self.config.trace_dir:
+            trace_path = reset_trace_jsonl(
+                Path(self.config.trace_dir) / f"{run_id}.jsonl"
+            )
         stopped_by_runtime_consensus = False
         last_consensus = self._detect_consensus(agent_states)
 
@@ -89,31 +104,71 @@ class SynchronousRunner:
                 for agent_id in range(self.config.n_agents)
             }
 
-            staged: list[tuple[BeliefState, OutboxMessage]] = []
+            staged: list[tuple[BeliefState, OutboxMessage] | None] = [
+                None for _ in range(self.config.n_agents)
+            ]
             prompt_tokens = 0
             completion_tokens = 0
             model_calls = 0
+            round_traces: list[AgentStepTrace] = []
 
-            for agent_id, state in enumerate(agent_states):
+            def process_agent(agent_id, state, current_round_idx):
                 inbox = [
                     previous_outboxes[neighbor_id]
                     for neighbor_id in neighbors_by_agent[agent_id]
                     if previous_outboxes[neighbor_id] is not None
                 ]
                 staged_state = state.model_copy(update={"inbox": inbox})
-                new_belief, new_outbox, llm_response = agents[agent_id].step(
-                    global_task=self.global_task,
-                    state=staged_state,
-                    round_idx=round_idx,
-                )
-                staged.append((new_belief, new_outbox))
-                model_calls += 1
-                prompt_tokens += llm_response.usage.prompt_tokens
-                completion_tokens += llm_response.usage.completion_tokens
+                if self.config.trace_enabled:
+                    (
+                        new_belief,
+                        new_outbox,
+                        llm_response,
+                        trace,
+                    ) = agents[agent_id].step_with_trace(
+                        global_task=self.global_task,
+                        state=staged_state,
+                        round_idx=current_round_idx,
+                        run_id=run_id,
+                        topology_name=self.config.topology_name,
+                        neighbors=neighbors_by_agent[agent_id],
+                        include_prompt=self.config.save_prompts,
+                    )
+                else:
+                    new_belief, new_outbox, llm_response = agents[agent_id].step(
+                        global_task=self.global_task,
+                        state=staged_state,
+                        round_idx=current_round_idx,
+                    )
+                    trace = None
+                return agent_id, new_belief, new_outbox, llm_response, trace
+
+            with ThreadPoolExecutor(max_workers=self._max_parallel_agents()) as executor:
+                futures = [
+                    executor.submit(process_agent, i, s, round_idx)
+                    for i, s in enumerate(agent_states)
+                ]
+                for future in as_completed(futures):
+                    agent_id, new_belief, new_outbox, llm_response, trace = future.result()
+                    staged[agent_id] = (new_belief, new_outbox)
+                    if trace is not None:
+                        if self.config.retain_traces:
+                            agent_step_traces.append(trace)
+                        if trace_path is not None:
+                            round_traces.append(trace)
+                    model_calls += llm_response.usage.model_calls
+                    prompt_tokens += llm_response.usage.prompt_tokens
+                    completion_tokens += llm_response.usage.completion_tokens
+
+            if trace_path is not None and round_traces:
+                append_traces_jsonl(round_traces, trace_path)
 
             committed_states = []
             for agent_id, state in enumerate(agent_states):
-                new_belief, new_outbox = staged[agent_id]
+                staged_update = staged[agent_id]
+                if staged_update is None:
+                    raise RuntimeError(f"agent {agent_id} did not produce a staged update")
+                new_belief, new_outbox = staged_update
                 committed_states.append(
                     state.model_copy(
                         update={
@@ -141,6 +196,13 @@ class SynchronousRunner:
                 stopped_by_runtime_consensus = True
                 break
 
+        stop_reason = (
+            "runtime_consensus"
+            if stopped_by_runtime_consensus
+            else "max_rounds"
+            if round_logs
+            else "no_rounds"
+        )
         final_result = run_final_reducer(
             agent_states=agent_states,
             global_task=self.global_task,
@@ -157,14 +219,19 @@ class SynchronousRunner:
             task_adapter=self.task_adapter,
             final_result=final_result,
             round_logs=round_logs,
+            stop_reason=stop_reason,
         )
         return ExperimentResult(
+            run_id=run_id,
             config=self.config,
             global_task=self.global_task,
             final_result=final_result,
             metrics=metrics,
             round_logs=round_logs,
             final_agent_states=agent_states,
+            agent_step_traces=agent_step_traces,
+            trace_path=trace_path,
+            stop_reason=stop_reason,
         )
 
     def _initialize_agent_states(self) -> list[AgentState]:
@@ -197,6 +264,8 @@ class SynchronousRunner:
                     role="solver",
                     model_name=self.config.model_name,
                     prompt_template_name=self.config.prompt_template_name,
+                    json_retry_attempts=self.config.json_retry_attempts,
+                    temperature=self.config.temperature,
                 ),
                 task_adapter=self.task_adapter,
                 llm_client=self.llm_client,
@@ -211,4 +280,23 @@ class SynchronousRunner:
             key_counts=key_counts,
             num_agents=self.config.n_agents,
             threshold=self.config.consensus_threshold,
+        )
+
+    def _max_parallel_agents(self) -> int:
+        configured = self.config.max_parallel_agents
+        if configured is None:
+            return self.config.n_agents
+        if configured < 1:
+            raise ValueError("max_parallel_agents must be positive when set")
+        return min(self.config.n_agents, configured)
+
+    def _make_run_id(self) -> str:
+        if self.config.run_id:
+            return self.config.run_id
+        return (
+            f"{self.config.topology_name}_"
+            f"n{self.config.n_agents}_"
+            f"r{self.config.max_rounds}_"
+            f"seed{self.config.seed}_"
+            f"{time_ns()}"
         )
