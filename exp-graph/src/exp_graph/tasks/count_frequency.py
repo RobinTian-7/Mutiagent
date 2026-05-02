@@ -386,10 +386,22 @@ class CountFrequencyTaskAdapter(TaskAdapter):
 
 Count the frequency of each integer in LOCAL_CONTEXT_JSON.array_shard. This is only your local shard, not the global answer.
 
-Rules: output JSON only; no markdown; no chain-of-thought. Put your local count dictionary in structured_state.merged_counts. Do not output partials or source_sizes.
+Reason inside the JSON `analysis` field before filling the answer fields:
+record the shard size, list the distinct values you saw, and verify that
+sum(merged_counts.values()) equals the shard length. Keep all reasoning
+inside the JSON; do not emit prose or markdown outside it.
+
+Rules: output exactly one JSON object and nothing outside it. Put your local
+count dictionary in structured_state.merged_counts. Do not output partials or
+source_sizes.
 
 Return belief_state:
 {{
+  "analysis": {{
+    "shard_length": 0,
+    "distinct_values": [],
+    "arithmetic_check": "sum(merged_counts.values()) == shard_length"
+  }},
   "status": "candidate",
   "proposal": "short local count summary",
   "consensus_key": "UNKNOWN",
@@ -527,7 +539,8 @@ INBOX_JSON:
             mode_instructions = (
                 "Mode=llm_belief_merge. Use VERIFIED_MERGE_BELIEF_JSON as factual. "
                 "Only improve proposal/support/uncertainty/open_questions/private_notes. "
-                "Do not invent counts or sources."
+                "Do not invent counts or sources. In `analysis`, briefly note which "
+                "verified facts you relied on; leave the structured CF fields untouched."
             )
             verified_merge = _compact_protocol_belief(deterministic_belief)
         elif merge_mode == "llm_full_merge":
@@ -540,7 +553,8 @@ INBOX_JSON:
                 "when provenance overlaps. Output only the updated belief_state "
                 "with structured_state.merged_counts as your current answer. "
                 "The runtime keeps hidden scoring provenance separately; "
-                "evaluation uses your merged_counts."
+                "evaluation uses your merged_counts. Use the `analysis` field to "
+                "show your provenance bookkeeping before producing merged_counts."
             )
             verified_merge = None
         else:
@@ -550,8 +564,15 @@ INBOX_JSON:
 
 {mode_instructions}
 
+Reason inside the JSON `analysis` field before producing the answer.
+Walk through provenance: list the source agent ids already covered by your
+old belief, list the source agent ids each neighbor message covers, mark
+which neighbor sources overlap with what you already had, state your merge
+plan, and verify the arithmetic. Keep reasoning inside the JSON object.
+
 Rules:
-- Output JSON only; no markdown; no chain-of-thought.
+- Output exactly one JSON object and nothing outside it (no markdown fences,
+  no prose before or after).
 - Read neighbor messages as answer artifacts, not as chat history.
 - Do not copy INBOX_JSON or outbox envelopes into your response.
 - Always set consensus_key to "UNKNOWN" in your JSON response.
@@ -560,6 +581,13 @@ Rules:
 
 Return belief_state:
 {{
+  "analysis": {{
+    "sources_in_old_belief": [0, 1],
+    "sources_in_inbox": {{"agent_2": [2], "agent_3": [1, 3]}},
+    "overlap_check": "agent_3 overlaps on source 1; only sources [3] are new",
+    "merge_plan": "add agent_2 partial; from agent_3 take only source 3",
+    "arithmetic_check": "sum(merged_counts) == sum of source_sizes for covered sources"
+  }},
   "status": "unknown|candidate|final",
   "proposal": "short",
   "consensus_key": "UNKNOWN",
