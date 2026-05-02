@@ -69,6 +69,68 @@ def test_dag_mesh_schedule_sweeps_destinations_in_topological_order() -> None:
     ]
 
 
+def test_static_exponential_dag_sweeps_sparse_predecessors() -> None:
+    schedule = build_protocol_schedule("static_exponential_dag", n_agents=8)
+
+    assert [step.transmissions for step in schedule] == [
+        [(0, 1)],
+        [(1, 2), (0, 2)],
+        [(2, 3), (1, 3)],
+        [(3, 4), (2, 4), (0, 4)],
+        [(4, 5), (3, 5), (1, 5)],
+        [(5, 6), (4, 6), (2, 6)],
+        [(6, 7), (5, 7), (3, 7)],
+    ]
+    assert all(
+        src < dst and (dst - src) & (dst - src - 1) == 0
+        for step in schedule
+        for src, dst in step.transmissions
+    )
+
+
+def test_one_peer_exponential_dag_vote_wraps_around_on_each_phase() -> None:
+    schedule = build_protocol_schedule("one_peer_exponential_dag_vote", n_agents=5)
+
+    assert [step.transmissions for step in schedule] == [
+        [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
+        [(0, 2), (1, 3), (2, 4), (3, 0), (4, 1)],
+        [(0, 4), (1, 0), (2, 1), (3, 2), (4, 3)],
+    ]
+
+
+def test_one_peer_exponential_dag_tree_appends_tree_reduction() -> None:
+    schedule = build_protocol_schedule("one_peer_exponential_dag_tree", n_agents=5)
+
+    assert [step.transmissions for step in schedule] == [
+        [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0)],
+        [(0, 2), (1, 3), (2, 4), (3, 0), (4, 1)],
+        [(0, 4), (1, 0), (2, 1), (3, 2), (4, 3)],
+        [(0, 1), (2, 3)],
+        [(1, 3)],
+        [(3, 4)],
+    ]
+    assert [step.step_idx for step in schedule] == list(range(len(schedule)))
+
+
+def test_one_peer_exponential_dag_star_appends_sink_gather() -> None:
+    schedule = build_protocol_schedule("one_peer_exponential_dag_star", n_agents=5)
+
+    assert schedule[-1].transmissions == [(0, 4), (1, 4), (2, 4), (3, 4)]
+    assert [step.step_idx for step in schedule] == list(range(len(schedule)))
+
+
+def test_one_peer_exponential_dag_static_appends_static_dag_reduction() -> None:
+    schedule = build_protocol_schedule("one_peer_exponential_dag_static", n_agents=5)
+
+    assert [step.transmissions for step in schedule[-4:]] == [
+        [(0, 1)],
+        [(1, 2), (0, 2)],
+        [(2, 3), (1, 3)],
+        [(3, 4), (2, 4), (0, 4)],
+    ]
+    assert [step.step_idx for step in schedule] == list(range(len(schedule)))
+
+
 def test_two_stage_layer_schedule_uses_hidden_aggregation_layer() -> None:
     schedule = build_protocol_schedule("two_stage_layer", n_agents=8)
 

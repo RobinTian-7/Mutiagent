@@ -88,6 +88,39 @@ def build_protocol_schedule(
     if topology == "dag_mesh":
         return _build_dag_mesh_schedule(n_agents)
 
+    if topology == "static_exponential_dag":
+        return _build_static_exponential_dag_schedule(n_agents)
+
+    if topology in {
+        "one_peer_exponential_dag",
+        "one_peer_exponential_dag_vote",
+    }:
+        return _build_one_peer_exponential_dag_protocol(
+            n_agents,
+            aggregation="vote",
+        )
+
+    if topology == "one_peer_exponential_dag_tree":
+        return _build_one_peer_exponential_dag_protocol(
+            n_agents,
+            aggregation="tree",
+        )
+
+    if topology == "one_peer_exponential_dag_star":
+        return _build_one_peer_exponential_dag_protocol(
+            n_agents,
+            aggregation="star",
+        )
+
+    if topology in {
+        "one_peer_exponential_dag_static",
+        "one_peer_exponential_dag_static_exponential_dag",
+    }:
+        return _build_one_peer_exponential_dag_protocol(
+            n_agents,
+            aggregation="static_exponential_dag",
+        )
+
     if topology in {"two_stage_layer", "layer_two_stage", "two_stage"}:
         return _build_two_stage_layer_schedule(n_agents)
 
@@ -182,6 +215,93 @@ def _build_dag_mesh_schedule(n_agents: int) -> list[CommunicationStep]:
     ]
 
 
+def _build_static_exponential_dag_schedule(n_agents: int) -> list[CommunicationStep]:
+    """Build sparse exponential predecessor layers in destination order."""
+    tau = _tau(n_agents)
+    schedule: list[CommunicationStep] = []
+    for dst in range(1, n_agents):
+        transmissions = [
+            (dst - 2**phase, dst)
+            for phase in range(tau)
+            if dst - 2**phase >= 0
+        ]
+        if transmissions:
+            schedule.append(
+                CommunicationStep(
+                    step_idx=len(schedule),
+                    transmissions=transmissions,
+                    description=(
+                        "static_exponential_dag: exponential predecessors "
+                        f"send to agent {dst}"
+                    ),
+                )
+            )
+    return schedule
+
+
+def _build_one_peer_exponential_dag_propagation(
+    n_agents: int,
+) -> list[CommunicationStep]:
+    """Build wrapping one-peer exponential propagation phases.
+
+    Each phase uses distance 2^k (mod n_agents), so high-index agents wrap
+    around and send to low-index agents (e.g. round 0: 7→0; round 1: 6→0,
+    7→1).  After ceil(log2(n)) phases every agent holds all n agents' data.
+    """
+    schedule: list[CommunicationStep] = []
+    for phase in range(_tau(n_agents)):
+        distance = 2**phase
+        transmissions = [
+            (src, (src + distance) % n_agents)
+            for src in range(n_agents)
+        ]
+        schedule.append(
+            CommunicationStep(
+                step_idx=len(schedule),
+                transmissions=transmissions,
+                description=(
+                    "one_peer_exponential_dag: "
+                    f"distance {distance} propagation"
+                ),
+            )
+        )
+    return schedule
+
+
+def _build_one_peer_exponential_dag_protocol(
+    n_agents: int,
+    *,
+    aggregation: str,
+) -> list[CommunicationStep]:
+    """Build one-peer DAG propagation followed by an optional final reducer."""
+    schedule = _build_one_peer_exponential_dag_propagation(n_agents)
+    if aggregation == "vote":
+        return schedule
+    if aggregation == "tree":
+        tail = _build_binary_reduce_tree_schedule(n_agents)
+    elif aggregation == "star":
+        sink = n_agents - 1
+        tail = [
+            CommunicationStep(
+                step_idx=0,
+                transmissions=[
+                    (src, sink)
+                    for src in range(n_agents)
+                    if src != sink
+                ],
+                description=(
+                    "one_peer_exponential_dag aggregation: "
+                    f"star gather to agent {sink}"
+                ),
+            )
+        ]
+    elif aggregation == "static_exponential_dag":
+        tail = _build_static_exponential_dag_schedule(n_agents)
+    else:
+        raise ValueError(f"unsupported one-peer DAG aggregation: {aggregation}")
+    return _renumber_schedule([*schedule, *tail])
+
+
 def _build_two_stage_layer_schedule(n_agents: int) -> list[CommunicationStep]:
     """Build input -> hidden -> final-sink dense layered communication."""
     sink = n_agents - 1
@@ -264,6 +384,14 @@ def _partition_contiguous(items: list[int], layer_count: int) -> list[list[int]]
         layers.append(items[cursor : cursor + size])
         cursor += size
     return layers
+
+
+def _renumber_schedule(schedule: list[CommunicationStep]) -> list[CommunicationStep]:
+    """Return a schedule with contiguous step indices."""
+    return [
+        step.model_copy(update={"step_idx": step_idx})
+        for step_idx, step in enumerate(schedule)
+    ]
 
 
 def _dedupe_edges(edges) -> list[tuple[int, int]]:

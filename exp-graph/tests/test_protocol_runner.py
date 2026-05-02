@@ -38,8 +38,12 @@ def test_protocol_runner_chain_uses_last_agent_as_answer_holder() -> None:
     [
         ("tree", 3, 7),
         ("dag_mesh", 7, 28),
+        ("static_exponential_dag", 7, 17),
         ("two_stage_layer", 2, 15),
         ("balanced_log_layer", 3, 12),
+        ("one_peer_exponential_dag_tree", 6, 31),
+        ("one_peer_exponential_dag_star", 4, 31),
+        ("one_peer_exponential_dag_static", 10, 41),
     ],
 )
 def test_protocol_runner_dag_style_topologies_use_last_agent_as_answer_holder(
@@ -68,6 +72,23 @@ def test_protocol_runner_dag_style_topologies_use_last_agent_as_answer_holder(
         6,
         7,
     ]
+
+
+def test_protocol_runner_one_peer_dag_vote_uses_all_agents_as_answer_holders() -> None:
+    adapter, global_task = _global_task()
+    result = ProtocolRunner(
+        config=ProtocolRunnerConfig(
+            topology_name="one_peer_exponential_dag_vote",
+            n_agents=4,
+        ),
+        task_adapter=adapter,
+        global_task=global_task,
+    ).run()
+
+    assert result.total_steps == 2
+    assert result.total_messages == 8
+    assert result.final_result.answer_agent_ids == [0, 1, 2, 3]
+    assert result.final_result.exact_match is True
 
 
 def test_protocol_runner_mesh_records_vote_and_average_heads() -> None:

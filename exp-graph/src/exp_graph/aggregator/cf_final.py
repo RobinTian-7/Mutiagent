@@ -242,6 +242,7 @@ def answer_agents_for_topology(
         "chain",
         "tree",
         "dag_mesh",
+        "static_exponential_dag",
         "two_stage",
         "two_stage_layer",
         "layer_two_stage",
@@ -251,8 +252,14 @@ def answer_agents_for_topology(
         "balance_log_layer",
         "layer_balanced_log",
         "layer_balance_log",
+        "one_peer_exponential_dag_tree",
+        "one_peer_exponential_dag_star",
+        "one_peer_exponential_dag_static",
+        "one_peer_exponential_dag_static_exponential_dag",
     }:
         return [n_agents - 1]
+    if topology in {"one_peer_exponential_dag", "one_peer_exponential_dag_vote"}:
+        return list(range(n_agents))
     if topology == "star":
         return [star_center]
     return list(range(n_agents))
