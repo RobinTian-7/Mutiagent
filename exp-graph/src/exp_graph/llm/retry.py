@@ -4,6 +4,10 @@ from __future__ import annotations
 
 
 BELIEF_STATE_SCHEMA_HINT = """{
+  "analysis": {
+    "reasoning": "step-by-step reasoning leading to this belief",
+    "key_observations": ["short observation"]
+  },
   "status": "unknown | candidate | final",
   "proposal": "short answer proposal",
   "consensus_key": "task-specific grouping key | UNKNOWN | null",
@@ -26,8 +30,9 @@ def build_json_retry_prompt(
     return (
         "Your previous response could not be parsed as a valid belief_state JSON object.\n"
         f"Retry attempt: {attempt_idx}\n"
-        "Return ONLY one valid JSON object. Do not include markdown fences, prose, "
-        "comments, or chain-of-thought.\n"
+        "Return exactly one JSON object and nothing outside it. No markdown "
+        "fences, no prose before or after. Reasoning belongs inside the "
+        "`analysis` field of the JSON, not outside.\n"
         "Required schema:\n"
         f"{BELIEF_STATE_SCHEMA_HINT}\n"
         "Validation error:\n"

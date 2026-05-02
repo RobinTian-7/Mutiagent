@@ -30,6 +30,7 @@ class BeliefState(BaseModel):
     private_notes: str = ""
     confidence: float | None = None
     structured_state: dict[str, Any] = Field(default_factory=dict)
+    analysis: dict[str, Any] | None = None
 
     @field_validator("support", "open_questions", mode="before")
     @classmethod
