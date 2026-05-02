@@ -312,21 +312,32 @@ class CountFrequencyTaskAdapter(TaskAdapter):
         agent_id = int(local_observation["agent_id"])
         n_agents = int(local_observation["n_agents"])
         shard = [int(value) for value in local_observation["array_shard"]]
+        role = str(local_observation.get("role") or "").strip().lower()
         local_counts = local_frequency_counts(shard)
-        partials = {agent_id: local_counts}
+        owns_source_shard = role != "emperor"
+        partials = {agent_id: local_counts} if owns_source_shard else {}
         structured_state = build_cf_structured_state(
             partials=partials,
-            source_sizes={agent_id: len(shard)},
+            source_sizes={agent_id: len(shard)} if owns_source_shard else {},
             n_agents=n_agents,
         )
         state_payload = encode_cf_state(partials)
 
-        if n_agents == 1:
+        if owns_source_shard and n_agents == 1:
             status = "final"
             consensus_key = count_frequency_consensus_key(local_counts)
             proposal = f"Global frequency counts are {counts_to_json(local_counts)}. {state_payload}"
             uncertainty = ""
             open_questions: list[str] = []
+        elif not owns_source_shard:
+            status = "candidate"
+            consensus_key = "UNKNOWN"
+            proposal = (
+                "Hierarchy emperor holds no local shard yet. "
+                f"{state_payload}"
+            )
+            uncertainty = "Need partial counts from soldier agents."
+            open_questions = ["Soldiers should share their CF partial counts."]
         else:
             status = "candidate"
             consensus_key = "UNKNOWN"
@@ -346,7 +357,11 @@ class CountFrequencyTaskAdapter(TaskAdapter):
                 f"[{local_observation['shard_start']}, "
                 f"{local_observation['shard_end_exclusive']})",
                 f"local_counts_json={counts_to_json(local_counts)}",
-                f"covered_agents=[{agent_id}]",
+                (
+                    f"covered_agents=[{agent_id}]"
+                    if owns_source_shard
+                    else "covered_agents=[]"
+                ),
             ],
             "uncertainty": uncertainty,
             "open_questions": open_questions,
@@ -936,7 +951,7 @@ VERIFIED_MERGE_BELIEF_JSON:
         global_task: dict[str, Any],
         local_observation: dict[str, Any],
     ) -> str:
-        return (
+        base = (
             f"Task: {global_task['description']}\n"
             f"Global array length: {global_task['array_length']}\n"
             f"Integer value range for generated data: "
@@ -949,6 +964,57 @@ VERIFIED_MERGE_BELIEF_JSON:
             "Maintain a machine-readable CF_STATE_JSON payload in proposal. "
             "It must contain partials, covered_agents, and merged counts."
         )
+        role = str(local_observation.get("role") or "").strip().lower()
+        if role:
+            n_soldiers = int(
+                local_observation.get(
+                    "hierarchy_n_soldiers",
+                    local_observation.get("n_agents", 0),
+                )
+            )
+            children_ids = local_observation.get("hierarchy_children_ids") or []
+            parent_id = local_observation.get("hierarchy_parent_id")
+            if role == "emperor":
+                base += (
+                    "\nHierarchy role: emperor. You hold no local shard. Your "
+                    "ministers (agent ids "
+                    f"{children_ids}) report aggregated partials via inbox. "
+                    "Merge their reports until covered_agents covers all "
+                    f"{n_soldiers} soldier ids, then publish the merged "
+                    "FREQ_JSON answer."
+                )
+            elif role == "minister":
+                base += (
+                    "\nHierarchy role: minister. You hold no local shard. "
+                    f"Your soldiers (agent ids {children_ids}) report partials "
+                    f"to you and your emperor (agent id {parent_id}) is "
+                    "upstream. Merge child partials, forward the running "
+                    "aggregate upward, and forward the emperor's broadcast "
+                    "downward to your soldiers."
+                )
+            elif role == "sub_manager":
+                base += (
+                    "\nHierarchy role: sub_manager. You hold no local shard. "
+                    f"Your sub-tree (agent ids {children_ids}) reports to you "
+                    f"and your manager (agent id {parent_id}) is upstream. "
+                    "Aggregate sub-tree partials and propagate the running "
+                    "merge in both directions."
+                )
+            elif role == "soldier":
+                base += (
+                    "\nHierarchy role: soldier. Count your own shard and "
+                    "report your partial in proposal. Your manager (agent id "
+                    f"{parent_id}) aggregates across the sub-tree."
+                )
+        assignment = local_observation.get("assignment")
+        if isinstance(assignment, dict):
+            instruction = str(assignment.get("instruction") or "").strip()
+            source = str(assignment.get("source") or "static").strip()
+            if instruction:
+                base += (
+                    f"\nEmperor's dispatch ({source}): {instruction}"
+                )
+        return base
 
     def format_consensus_key_instructions(self) -> str:
         """Return counting-frequency consensus-key rules for solver prompts."""

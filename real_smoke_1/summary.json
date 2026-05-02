@@ -1,0 +1,78 @@
+[
+  {
+    "Agents": 9,
+    "AggregationMethod": "no_consensus",
+    "ArraySize": 1000,
+    "ConsensusReached": false,
+    "Depth": 2,
+    "Error": "",
+    "ExactMatch": false,
+    "ExpectedCounts": {
+      "0": 91,
+      "1": 108,
+      "2": 85,
+      "3": 116,
+      "4": 113,
+      "5": 82,
+      "6": 102,
+      "7": 105,
+      "8": 103,
+      "9": 95
+    },
+    "ExpectedKey": "FREQ_JSON:{\"0\":91,\"1\":108,\"2\":85,\"3\":116,\"4\":113,\"5\":82,\"6\":102,\"7\":105,\"8\":103,\"9\":95}",
+    "FallbackUsed": true,
+    "FanoutSchedule": [
+      8
+    ],
+    "FinalKey": "FREQ_JSON:{\"0\":190,\"1\":223,\"2\":180,\"3\":232,\"4\":230,\"5\":195,\"6\":209,\"7\":203,\"8\":212,\"9\":198}",
+    "FinalKeyValid": true,
+    "Layers": [
+      1,
+      8
+    ],
+    "MaxRounds": 12,
+    "Model": "gpt-4o-mini",
+    "NormalizedRMSE": 0.10747464817341809,
+    "Planner": "llm_fallback",
+    "PlannerCalls": 1,
+    "PlannerFallbackReason": "n_total=1057 exceeds max_n_agents=128",
+    "PlannerRationale": "This schedule allows for efficient distribution of the counting task across agents while adhering to the constraints.",
+    "PlannerTokens": 344,
+    "PredictedCounts": {
+      "0": 190,
+      "1": 223,
+      "2": 180,
+      "3": 232,
+      "4": 230,
+      "5": 195,
+      "6": 209,
+      "7": 203,
+      "8": 212,
+      "9": 198
+    },
+    "Provider": "openai",
+    "RMSE": 107.47464817341809,
+    "RecursiveCalls": 0,
+    "RecursiveDispatch": false,
+    "RecursiveFallbackCalls": 0,
+    "RoleCounts": {
+      "emperor": 1,
+      "soldier": 8
+    },
+    "RoundsToConsensus": -1,
+    "RunCompleted": true,
+    "Seed": 42,
+    "Shape": "8",
+    "Soldiers": 8,
+    "Status": "ok",
+    "StopReason": "max_rounds",
+    "StopRoundIdx": 11,
+    "Task": "count_frequency",
+    "Temperature": 0.0,
+    "Topology": "hierarchy_8",
+    "TotalModelCalls": 108,
+    "TotalTokenCost": 332954,
+    "ValueMax": 9,
+    "ValueMin": 0
+  }
+]

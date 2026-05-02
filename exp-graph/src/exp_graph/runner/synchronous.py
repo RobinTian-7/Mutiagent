@@ -24,13 +24,22 @@ from exp_graph.aggregator.runtime_consensus import (
     detect_runtime_consensus,
 )
 from exp_graph.configs.runtime import ExperimentConfig
-from exp_graph.llm.base import LLMClient
+from exp_graph.hierarchy import HierarchyPlan, build_hierarchy_local_observations
+from exp_graph.hierarchy.dispatch import DispatchTree
+from exp_graph.llm.base import LLMClient, LLMResponse
 from exp_graph.llm.factory import create_llm_client
 from exp_graph.metrics.logger import MetricsSummary, build_metrics_summary
 from exp_graph.messaging import OutboxMessage
 from exp_graph.tasks.base import TaskAdapter
-from exp_graph.topology import create_topology
+from exp_graph.topology import Topology, create_topology
 from exp_graph.tracing import AgentStepTrace, append_traces_jsonl, reset_trace_jsonl
+
+
+def _truncate_key(value: str | None, *, limit: int = 64) -> str:
+    text = "" if value is None else str(value)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
 
 
 class RoundLog(BaseModel):
@@ -69,11 +78,27 @@ class SynchronousRunner:
         task_adapter: TaskAdapter,
         global_task: dict[str, Any],
         llm_client: LLMClient | None = None,
+        topology: Topology | None = None,
+        hierarchy_plan: HierarchyPlan | None = None,
+        hierarchy_dispatch: DispatchTree | None = None,
     ) -> None:
         self.config = config
         self.task_adapter = task_adapter
         self.global_task = global_task
-        self.topology = create_topology(config.topology_name)
+        self.hierarchy_plan = hierarchy_plan
+        self.hierarchy_dispatch = hierarchy_dispatch
+        if topology is not None:
+            self.topology = topology
+        else:
+            self.topology = create_topology(config.topology_name)
+        if hierarchy_plan is not None:
+            if hierarchy_plan.n_total != self.config.n_agents:
+                raise ValueError(
+                    "ExperimentConfig.n_agents="
+                    f"{self.config.n_agents} does not match "
+                    f"HierarchyPlan.n_total={hierarchy_plan.n_total}; "
+                    "the runner expects them to be equal so agent ids align."
+                )
         self.llm_client = llm_client or create_llm_client(config.llm_provider)
 
     def run(self) -> ExperimentResult:
@@ -90,6 +115,15 @@ class SynchronousRunner:
             )
         stopped_by_runtime_consensus = False
         last_consensus = self._detect_consensus(agent_states)
+
+        if self.config.verbose_events:
+            self._log(
+                "runner.start",
+                f"run_id={run_id} n_agents={self.config.n_agents} "
+                f"max_rounds={self.config.max_rounds} "
+                f"max_parallel={self._max_parallel_agents()} "
+                f"topology={self.config.topology_name}",
+            )
 
         for round_idx in range(self.config.max_rounds):
             previous_outboxes = {
@@ -111,6 +145,13 @@ class SynchronousRunner:
             completion_tokens = 0
             model_calls = 0
             round_traces: list[AgentStepTrace] = []
+
+            if self.config.verbose_events:
+                self._log(
+                    "round.start",
+                    f"round={round_idx + 1}/{self.config.max_rounds} "
+                    f"agents={self.config.n_agents}",
+                )
 
             def process_agent(agent_id, state, current_round_idx):
                 inbox = [
@@ -141,7 +182,7 @@ class SynchronousRunner:
                         round_idx=current_round_idx,
                     )
                     trace = None
-                return agent_id, new_belief, new_outbox, llm_response, trace
+                return agent_id, new_belief, new_outbox, llm_response, trace, len(inbox)
 
             with ThreadPoolExecutor(max_workers=self._max_parallel_agents()) as executor:
                 futures = [
@@ -149,7 +190,14 @@ class SynchronousRunner:
                     for i, s in enumerate(agent_states)
                 ]
                 for future in as_completed(futures):
-                    agent_id, new_belief, new_outbox, llm_response, trace = future.result()
+                    (
+                        agent_id,
+                        new_belief,
+                        new_outbox,
+                        llm_response,
+                        trace,
+                        inbox_size,
+                    ) = future.result()
                     staged[agent_id] = (new_belief, new_outbox)
                     if trace is not None:
                         if self.config.retain_traces:
@@ -159,6 +207,15 @@ class SynchronousRunner:
                     model_calls += llm_response.usage.model_calls
                     prompt_tokens += llm_response.usage.prompt_tokens
                     completion_tokens += llm_response.usage.completion_tokens
+                    if self.config.verbose_events:
+                        self._log_agent_step(
+                            round_idx=round_idx,
+                            agent_id=agent_id,
+                            agent_states=agent_states,
+                            inbox_size=inbox_size,
+                            new_belief=new_belief,
+                            llm_response=llm_response,
+                        )
 
             if trace_path is not None and round_traces:
                 append_traces_jsonl(round_traces, trace_path)
@@ -181,6 +238,16 @@ class SynchronousRunner:
             agent_states = committed_states
 
             last_consensus = self._detect_consensus(agent_states)
+            if self.config.verbose_events:
+                self._log(
+                    "round.end",
+                    f"round={round_idx + 1}/{self.config.max_rounds} "
+                    f"top_key={_truncate_key(last_consensus.top_key)} "
+                    f"top_ratio={last_consensus.top_ratio:.2f} "
+                    f"reached={last_consensus.consensus_reached} "
+                    f"prompt_tokens={prompt_tokens} "
+                    f"completion_tokens={completion_tokens}",
+                )
             round_logs.append(
                 RoundLog(
                     round_idx=round_idx,
@@ -235,10 +302,18 @@ class SynchronousRunner:
         )
 
     def _initialize_agent_states(self) -> list[AgentState]:
-        observations = self.task_adapter.split_into_local_observations(
-            global_task=self.global_task,
-            n_agents=self.config.n_agents,
-        )
+        if self.hierarchy_plan is not None:
+            observations = build_hierarchy_local_observations(
+                plan=self.hierarchy_plan,
+                task_adapter=self.task_adapter,
+                global_task=self.global_task,
+                dispatch=self.hierarchy_dispatch,
+            )
+        else:
+            observations = self.task_adapter.split_into_local_observations(
+                global_task=self.global_task,
+                n_agents=self.config.n_agents,
+            )
         states = []
         for agent_id, observation in enumerate(observations):
             raw_belief = self.task_adapter.initial_local_solve(observation)
@@ -289,6 +364,37 @@ class SynchronousRunner:
         if configured < 1:
             raise ValueError("max_parallel_agents must be positive when set")
         return min(self.config.n_agents, configured)
+
+    def _log(self, event_type: str, message: str) -> None:
+        print(f"[{event_type}] {message}", flush=True)
+
+    def _log_agent_step(
+        self,
+        *,
+        round_idx: int,
+        agent_id: int,
+        agent_states: list[AgentState],
+        inbox_size: int,
+        new_belief: BeliefState,
+        llm_response: LLMResponse,
+    ) -> None:
+        observation = agent_states[agent_id].local_observation
+        role = str(observation.get("role") or "agent")
+        status = (
+            new_belief.status.value
+            if hasattr(new_belief.status, "value")
+            else str(new_belief.status)
+        )
+        usage = llm_response.usage
+        self._log(
+            "agent.step",
+            f"round={round_idx + 1} agent={agent_id} role={role} "
+            f"inbox={inbox_size} prompt_tokens={usage.prompt_tokens} "
+            f"completion_tokens={usage.completion_tokens} "
+            f"calls={usage.model_calls} "
+            f"-> status={status} "
+            f"key={_truncate_key(new_belief.consensus_key)}",
+        )
 
     def _make_run_id(self) -> str:
         if self.config.run_id:

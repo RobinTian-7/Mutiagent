@@ -1,0 +1,63 @@
+{
+  "Agents": 5,
+  "AggregationMethod": "runtime_consensus",
+  "ArraySize": 5000,
+  "ConsensusReached": true,
+  "Error": "",
+  "ExactMatch": true,
+  "ExpectedCounts": {
+    "0": 462,
+    "1": 523,
+    "2": 501,
+    "3": 484,
+    "4": 495,
+    "5": 501,
+    "6": 507,
+    "7": 509,
+    "8": 512,
+    "9": 506
+  },
+  "ExpectedKey": "FREQ_JSON:{\"0\":462,\"1\":523,\"2\":501,\"3\":484,\"4\":495,\"5\":501,\"6\":507,\"7\":509,\"8\":512,\"9\":506}",
+  "FallbackUsed": false,
+  "FanoutSchedule": [
+    4
+  ],
+  "FinalKey": "FREQ_JSON:{\"0\":462,\"1\":523,\"2\":501,\"3\":484,\"4\":495,\"5\":501,\"6\":507,\"7\":509,\"8\":512,\"9\":506}",
+  "FinalKeyValid": true,
+  "Layers": [
+    1,
+    4
+  ],
+  "MaxRounds": 6,
+  "Model": "moonshotai/Kimi-K2.5",
+  "NormalizedRMSE": 0.0,
+  "Planner": "static",
+  "PredictedCounts": {
+    "0": 462,
+    "1": 523,
+    "2": 501,
+    "3": 484,
+    "4": 495,
+    "5": 501,
+    "6": 507,
+    "7": 509,
+    "8": 512,
+    "9": 506
+  },
+  "Provider": "fake",
+  "RMSE": 0.0,
+  "RoundsToConsensus": 2,
+  "RunCompleted": true,
+  "Seed": 42,
+  "Soldiers": 4,
+  "Status": "ok",
+  "StopReason": "runtime_consensus",
+  "StopRoundIdx": 1,
+  "Task": "count_frequency",
+  "Temperature": 0.0,
+  "Topology": "hierarchy_static_1+N",
+  "TotalModelCalls": 10,
+  "TotalTokenCost": 25564,
+  "ValueMax": 9,
+  "ValueMin": 0
+}

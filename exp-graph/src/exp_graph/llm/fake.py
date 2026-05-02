@@ -19,6 +19,11 @@ from exp_graph.tasks.count_frequency import (
 )
 
 
+EMPEROR_PROMPT_MARKER = "EMPEROR_PLANNING_PROMPT_V1"
+EMPEROR_RETRY_PROMPT_MARKER = "EMPEROR_PLANNING_RETRY_PROMPT_V1"
+SUBORDINATE_PROMPT_MARKER = "SUBORDINATE_DISPATCH_PROMPT_V1"
+
+
 class FakeLLMClient:
     """A deterministic client for offline topology and runner smoke tests."""
 
@@ -28,6 +33,11 @@ class FakeLLMClient:
         model_name: str,
         temperature: float | None = None,
     ) -> LLMResponse:
+        if EMPEROR_PROMPT_MARKER in prompt or EMPEROR_RETRY_PROMPT_MARKER in prompt:
+            return _build_emperor_planning_response(prompt)
+        if SUBORDINATE_PROMPT_MARKER in prompt:
+            return _build_subordinate_dispatch_response(prompt)
+
         local_observation = _extract_first_json_block(
             prompt,
             [
@@ -59,6 +69,179 @@ class FakeLLMClient:
                 completion_tokens=estimate_tokens(text),
             ),
         )
+
+
+def _build_emperor_planning_response(prompt: str) -> LLMResponse:
+    """Produce a deterministic emperor plan from a planning prompt."""
+    constraints = _extract_optional_json_block(
+        prompt, "PLANNING_CONSTRAINTS_JSON:"
+    ) or {}
+    task = _extract_optional_json_block(
+        prompt, "TASK_DESCRIPTION_JSON:"
+    ) or {}
+
+    array_length = 0
+    for key in ("array_length", "array_size", "n_items", "length"):
+        if key in task:
+            try:
+                array_length = int(task[key])
+                break
+            except (TypeError, ValueError):
+                pass
+    if not array_length and isinstance(task.get("array"), list):
+        array_length = len(task["array"])
+
+    max_depth = int(constraints.get("max_depth", 4))
+    max_n_agents = int(constraints.get("max_n_agents", 64))
+    max_fanout_per_layer = int(constraints.get("max_fanout_per_layer", 32))
+
+    if array_length <= 0:
+        candidate_fanout = [4]
+        rationale = "no array length found; defaulting to a small flat star"
+    elif array_length <= 256:
+        candidate_fanout = [4]
+        rationale = (
+            f"array_length={array_length} is small; one flat layer of "
+            "soldiers minimises rounds"
+        )
+    elif array_length <= 2048:
+        candidate_fanout = [8]
+        rationale = (
+            f"array_length={array_length} is moderate; flat layer of 8 "
+            "soldiers balances rounds and cost"
+        )
+    elif array_length <= 8192:
+        candidate_fanout = [2, 4]
+        rationale = (
+            f"array_length={array_length} is larger; one minister layer "
+            "groups 8 soldiers and limits emperor fan-in"
+        )
+    else:
+        candidate_fanout = [4, 4]
+        rationale = (
+            f"array_length={array_length} is large; deeper hierarchy keeps "
+            "per-node fan-in manageable"
+        )
+
+    candidate_fanout = _clamp_fanout(
+        candidate_fanout,
+        max_depth=max_depth,
+        max_n_agents=max_n_agents,
+        max_fanout_per_layer=max_fanout_per_layer,
+    )
+
+    payload = {
+        "fanout_schedule": candidate_fanout,
+        "split_strategy": "equal_shard_by_index",
+        "rationale": rationale,
+        "dispatch": None,
+    }
+    text = json.dumps(payload)
+    return LLMResponse(
+        text=text,
+        usage=LLMUsage(
+            prompt_tokens=estimate_tokens(prompt),
+            completion_tokens=estimate_tokens(text),
+        ),
+    )
+
+
+def _clamp_fanout(
+    fanout: list[int],
+    *,
+    max_depth: int,
+    max_n_agents: int,
+    max_fanout_per_layer: int,
+) -> list[int]:
+    """Clip fanout to satisfy the emperor planning constraints."""
+    if max_depth < 2:
+        max_depth = 2
+    cleaned = [
+        max(1, min(int(value), max(1, max_fanout_per_layer)))
+        for value in fanout
+    ]
+    cleaned = cleaned[: max(1, max_depth - 1)]
+    while cleaned and _expected_total(cleaned) > max_n_agents:
+        last = cleaned[-1]
+        if last > 1:
+            cleaned[-1] = last - 1
+        else:
+            cleaned.pop()
+    if not cleaned:
+        cleaned = [1]
+    return cleaned
+
+
+def _expected_total(fanout: list[int]) -> int:
+    sizes = [1]
+    for value in fanout:
+        sizes.append(sizes[-1] * int(value))
+    return sum(sizes)
+
+
+def _build_subordinate_dispatch_response(prompt: str) -> LLMResponse:
+    """Produce a deterministic equal-split subordinate dispatch."""
+    parent = _extract_optional_json_block(prompt, "AGENT_SELF_JSON:") or {}
+    parent_slice = _extract_optional_json_block(prompt, "ASSIGNED_SLICE_JSON:") or {}
+    children = _extract_optional_json_block(prompt, "CHILDREN_JSON:") or []
+
+    start = int(parent_slice.get("start", 0))
+    end = int(parent_slice.get("end", 0))
+    length = max(0, end - start)
+    n_children = len(children) if isinstance(children, list) else 0
+
+    children_payload: dict[str, Any] = {}
+    if n_children > 0:
+        base, remainder = divmod(length, n_children)
+        cursor = start
+        for idx, child in enumerate(children):
+            size = base + (1 if idx < remainder else 0)
+            child_start = cursor
+            child_end = cursor + size
+            cursor = child_end
+            agent_id = int(child.get("agent_id"))
+            is_leaf = bool(child.get("is_leaf"))
+            entry: dict[str, Any] = {
+                "instruction": (
+                    f"Count array[{child_start}:{child_end})."
+                    if is_leaf
+                    else f"Oversee array[{child_start}:{child_end})."
+                ),
+            }
+            if is_leaf:
+                entry["shard"] = [child_start, child_end]
+            else:
+                entry["slice"] = [child_start, child_end]
+            children_payload[f"agent_{agent_id}"] = entry
+
+    parent_id = parent.get("agent_id", "?")
+    payload = {
+        "rationale": (
+            f"agent {parent_id} splits [{start}:{end}) evenly across "
+            f"{n_children} subordinate(s)"
+        ),
+        "children": children_payload,
+    }
+    text = json.dumps(payload)
+    return LLMResponse(
+        text=text,
+        usage=LLMUsage(
+            prompt_tokens=estimate_tokens(prompt),
+            completion_tokens=estimate_tokens(text),
+        ),
+    )
+
+
+def _extract_optional_json_block(prompt: str, marker: str) -> Any:
+    if marker not in prompt:
+        return None
+    start = prompt.index(marker) + len(marker)
+    raw = prompt[start:].lstrip()
+    try:
+        payload, _ = json.JSONDecoder().raw_decode(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload
 
 
 def _extract_json_block(prompt: str, start_marker: str, end_marker: str | None) -> Any:
