@@ -1,0 +1,59 @@
+{
+  "counterexamples": [
+    {
+      "condition": "tight communication budget",
+      "recommendation": "fall back to cf_budget_tree"
+    }
+  ],
+  "evidence": [
+    {
+      "mean_messages": 31.0,
+      "mean_rmse": 0.02,
+      "mean_token_cost": 3100.0,
+      "n_agents": 8,
+      "source": "cf_protocol_paper_agent_scaling_agents",
+      "std_rmse": 0.01,
+      "topology_name": "one_peer_exponential_dag_star"
+    }
+  ],
+  "expected_tradeoff": {
+    "lesson": "Peer propagation followed by a final star sink gives strong coverage before final aggregation.",
+    "mean_messages": 31.0,
+    "mean_rmse": 0.02,
+    "mean_token_cost": 3100.0,
+    "std_rmse": 0.01,
+    "strength": "accuracy and full-coverage propagation",
+    "weakness": "higher message and token budget than tree reduction"
+  },
+  "fallback": {
+    "budget_first": "cf_budget_tree",
+    "balanced": "cf_middle_ground_mesh_star"
+  },
+  "objective": "accuracy_first",
+  "organization_policy": {
+    "operators": [
+      "local_solve",
+      "peer_propagate",
+      "star_sink"
+    ],
+    "planner_mode": "topology_select",
+    "protocol_spec": null,
+    "selected_primary": "topology_default",
+    "topology_name": "one_peer_exponential_dag_star"
+  },
+  "skill_id": "cf_accuracy_peer_star",
+  "tags": [
+    "mas",
+    "emperor-skill",
+    "count-frequency",
+    "accuracy_first"
+  ],
+  "task_family": "count_frequency",
+  "trigger": {
+    "max_agents": 64,
+    "min_agents": 4,
+    "task_family": "count_frequency"
+  },
+  "update_rule": "batch_consolidate",
+  "version": "0.1.0"
+}

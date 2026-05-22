@@ -3,6 +3,12 @@ from pathlib import Path
 
 import pytest
 
+from exp_graph.mas.graph_generation import (
+    GeneratedGraphPlan,
+    GeneratedGraphStep,
+    GraphValidationOptions,
+    compile_generated_graph,
+)
 from exp_graph.llm.base import LLMResponse, LLMUsage
 from exp_graph.runner import ProtocolRunner, ProtocolRunnerConfig
 from exp_graph.tasks import CountFrequencyTaskAdapter
@@ -38,12 +44,15 @@ def test_protocol_runner_chain_uses_last_agent_as_answer_holder() -> None:
     [
         ("tree", 3, 7),
         ("dag_mesh", 7, 28),
+        ("random", 7, 12),
         ("static_exponential_dag", 7, 17),
         ("two_stage_layer", 2, 15),
         ("balanced_log_layer", 3, 12),
         ("one_peer_exponential_dag_tree", 6, 31),
         ("one_peer_exponential_dag_star", 4, 31),
         ("one_peer_exponential_dag_static", 10, 41),
+        ("static_exponential_star", 4, 79),
+        ("mesh_star", 2, 63),
     ],
 )
 def test_protocol_runner_dag_style_topologies_use_last_agent_as_answer_holder(
@@ -72,6 +81,37 @@ def test_protocol_runner_dag_style_topologies_use_last_agent_as_answer_holder(
         6,
         7,
     ]
+
+
+def test_protocol_runner_generated_graph_uses_selected_primary_answer_holder() -> None:
+    adapter, global_task = _global_task()
+    graph = GeneratedGraphPlan(
+        candidate_id="g1",
+        name="balanced_tree_flow",
+        n_agents=4,
+        selected_primary=3,
+        steps=[
+            GeneratedGraphStep(edges=[(0, 1), (2, 3)]),
+            GeneratedGraphStep(edges=[(1, 3)]),
+        ],
+    )
+    spec = compile_generated_graph(graph, GraphValidationOptions(n_agents=4))
+
+    result = ProtocolRunner(
+        config=ProtocolRunnerConfig(
+            topology_name="generated:balanced_tree_flow",
+            n_agents=4,
+            protocol_spec=spec,
+        ),
+        task_adapter=adapter,
+        global_task=global_task,
+    ).run()
+
+    assert result.total_steps == 2
+    assert result.total_messages == 3
+    assert result.final_result.answer_agent_ids == [3]
+    assert result.final_result.exact_match is True
+    assert result.final_result.vote.top_ratio == 1.0
 
 
 def test_protocol_runner_one_peer_dag_vote_uses_all_agents_as_answer_holders() -> None:

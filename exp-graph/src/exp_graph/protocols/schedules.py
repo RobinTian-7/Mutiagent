@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +30,7 @@ def build_protocol_schedule(
     *,
     star_center: int = 0,
     include_star_broadcast: bool = False,
+    random_seed: int = 0,
 ) -> list[CommunicationStep]:
     """Build the finite communication protocol for the requested topology."""
     if n_agents < 1:
@@ -72,21 +74,21 @@ def build_protocol_schedule(
         return schedule
 
     if topology == "mesh":
-        return [
-            CommunicationStep(
-                step_idx=0,
-                transmissions=[
-                    (src, dst)
-                    for src in range(n_agents)
-                    for dst in range(n_agents)
-                    if src != dst
-                ],
-                description="mesh: all agents broadcast to all other agents",
-            )
-        ]
+        return _build_mesh_propagation(n_agents)
+
+    if topology in {
+        "mesh_star",
+        "mesh_sink",
+        "mesh_dag_star",
+        "mesh_dag_sink",
+    }:
+        return _build_mesh_protocol(n_agents, aggregation="star")
 
     if topology == "dag_mesh":
         return _build_dag_mesh_schedule(n_agents)
+
+    if topology in {"random", "random_dag"}:
+        return _build_random_dag_schedule(n_agents, random_seed=random_seed)
 
     if topology == "static_exponential_dag":
         return _build_static_exponential_dag_schedule(n_agents)
@@ -135,20 +137,15 @@ def build_protocol_schedule(
         return _build_balanced_log_layer_schedule(n_agents)
 
     if topology == "static_exponential":
-        tau = _tau(n_agents)
-        transmissions = _dedupe_edges(
-            (src, (src + 2**phase) % n_agents)
-            for src in range(n_agents)
-            for phase in range(tau)
-        )
-        return [
-            CommunicationStep(
-                step_idx=step_idx,
-                transmissions=transmissions,
-                description="static_exponential: fixed exponential edges",
-            )
-            for step_idx in range(tau)
-        ]
+        return _build_static_exponential_propagation(n_agents)
+
+    if topology in {
+        "static_exponential_star",
+        "static_exponential_sink",
+        "static_exponential_dag_star",
+        "static_exponential_dag_sink",
+    }:
+        return _build_static_exponential_protocol(n_agents, aggregation="star")
 
     if topology == "one_peer_exponential":
         tau = _tau(n_agents)
@@ -215,6 +212,84 @@ def _build_dag_mesh_schedule(n_agents: int) -> list[CommunicationStep]:
     ]
 
 
+def _build_random_dag_schedule(
+    n_agents: int,
+    *,
+    random_seed: int,
+) -> list[CommunicationStep]:
+    """Build a seeded sparse random DAG swept in destination order.
+
+    Agent ids define the DAG topological order, so edges always point from a
+    lower id to a higher id. A chain backbone is always present to guarantee
+    every source can eventually reach the final sink agent ``n_agents - 1``.
+    Extra forward edges are sampled with a modest density so the baseline stays
+    sparse and comparable to the other finite protocols.
+    """
+    rng = random.Random(random_seed)
+    edge_probability = min(0.5, max(0.25, math.log2(n_agents) / n_agents))
+    edges: set[tuple[int, int]] = {
+        (src, src + 1)
+        for src in range(n_agents - 1)
+    }
+    for src in range(n_agents):
+        for dst in range(src + 2, n_agents):
+            if rng.random() < edge_probability:
+                edges.add((src, dst))
+
+    schedule: list[CommunicationStep] = []
+    for dst in range(1, n_agents):
+        transmissions = [
+            (src, dst)
+            for src in range(dst)
+            if (src, dst) in edges
+        ]
+        schedule.append(
+            CommunicationStep(
+                step_idx=len(schedule),
+                transmissions=transmissions,
+                description=(
+                    "random_dag: seeded random predecessors "
+                    f"send to agent {dst} "
+                    f"(seed={random_seed}, p={edge_probability:.3f})"
+                ),
+            )
+        )
+    return schedule
+
+
+def _build_mesh_propagation(n_agents: int) -> list[CommunicationStep]:
+    """Build one dense all-to-all mesh propagation step."""
+    return [
+        CommunicationStep(
+            step_idx=0,
+            transmissions=[
+                (src, dst)
+                for src in range(n_agents)
+                for dst in range(n_agents)
+                if src != dst
+            ],
+            description="mesh: all agents broadcast to all other agents",
+        )
+    ]
+
+
+def _build_mesh_protocol(
+    n_agents: int,
+    *,
+    aggregation: str,
+) -> list[CommunicationStep]:
+    """Build mesh propagation followed by a final reducer into one sink."""
+    schedule = _build_mesh_propagation(n_agents)
+    if aggregation == "star":
+        tail = _build_star_sink_gather_schedule(
+            n_agents,
+            description_prefix="mesh",
+        )
+    else:
+        raise ValueError(f"unsupported mesh aggregation: {aggregation}")
+    return _renumber_schedule([*schedule, *tail])
+
+
 def _build_static_exponential_dag_schedule(n_agents: int) -> list[CommunicationStep]:
     """Build sparse exponential predecessor layers in destination order."""
     tau = _tau(n_agents)
@@ -237,6 +312,45 @@ def _build_static_exponential_dag_schedule(n_agents: int) -> list[CommunicationS
                 )
             )
     return schedule
+
+
+def _build_static_exponential_propagation(
+    n_agents: int,
+) -> list[CommunicationStep]:
+    """Build repeated fixed exponential-edge propagation phases."""
+    tau = _tau(n_agents)
+    transmissions = _dedupe_edges(
+        (src, (src + 2**phase) % n_agents)
+        for src in range(n_agents)
+        for phase in range(tau)
+    )
+    return [
+        CommunicationStep(
+            step_idx=step_idx,
+            transmissions=transmissions,
+            description="static_exponential: fixed exponential edges",
+        )
+        for step_idx in range(tau)
+    ]
+
+
+def _build_static_exponential_protocol(
+    n_agents: int,
+    *,
+    aggregation: str,
+) -> list[CommunicationStep]:
+    """Build static exponential propagation followed by one final sink."""
+    schedule = _build_static_exponential_propagation(n_agents)
+    if aggregation == "star":
+        tail = _build_star_sink_gather_schedule(
+            n_agents,
+            description_prefix="static_exponential",
+        )
+    else:
+        raise ValueError(
+            f"unsupported static exponential aggregation: {aggregation}"
+        )
+    return _renumber_schedule([*schedule, *tail])
 
 
 def _build_one_peer_exponential_dag_propagation(
@@ -280,26 +394,38 @@ def _build_one_peer_exponential_dag_protocol(
     if aggregation == "tree":
         tail = _build_binary_reduce_tree_schedule(n_agents)
     elif aggregation == "star":
-        sink = n_agents - 1
-        tail = [
-            CommunicationStep(
-                step_idx=0,
-                transmissions=[
-                    (src, sink)
-                    for src in range(n_agents)
-                    if src != sink
-                ],
-                description=(
-                    "one_peer_exponential_dag aggregation: "
-                    f"star gather to agent {sink}"
-                ),
-            )
-        ]
+        tail = _build_star_sink_gather_schedule(
+            n_agents,
+            description_prefix="one_peer_exponential_dag",
+        )
     elif aggregation == "static_exponential_dag":
         tail = _build_static_exponential_dag_schedule(n_agents)
     else:
         raise ValueError(f"unsupported one-peer DAG aggregation: {aggregation}")
     return _renumber_schedule([*schedule, *tail])
+
+
+def _build_star_sink_gather_schedule(
+    n_agents: int,
+    *,
+    description_prefix: str,
+) -> list[CommunicationStep]:
+    """Build a single star gather into the final agent as protocol sink."""
+    sink = n_agents - 1
+    return [
+        CommunicationStep(
+            step_idx=0,
+            transmissions=[
+                (src, sink)
+                for src in range(n_agents)
+                if src != sink
+            ],
+            description=(
+                f"{description_prefix} aggregation: "
+                f"star gather to agent {sink}"
+            ),
+        )
+    ]
 
 
 def _build_two_stage_layer_schedule(n_agents: int) -> list[CommunicationStep]:

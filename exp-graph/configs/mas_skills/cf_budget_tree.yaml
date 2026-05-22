@@ -1,0 +1,58 @@
+{
+  "counterexamples": [
+    {
+      "condition": "accuracy-first setting with enough budget",
+      "recommendation": "compare against cf_accuracy_peer_star"
+    }
+  ],
+  "evidence": [
+    {
+      "mean_messages": 7.0,
+      "mean_rmse": 0.16,
+      "mean_token_cost": 900.0,
+      "n_agents": 8,
+      "source": "cf_protocol_paper_agent_scaling_agents",
+      "std_rmse": 0.03,
+      "topology_name": "tree"
+    }
+  ],
+  "expected_tradeoff": {
+    "lesson": "Tree reduction is the cheapest stable first baseline for count-frequency communication.",
+    "mean_messages": 7.0,
+    "mean_rmse": 0.16,
+    "mean_token_cost": 900.0,
+    "std_rmse": 0.03,
+    "strength": "low message count and simple deterministic synchronization",
+    "weakness": "less peer coverage before final aggregation"
+  },
+  "fallback": {
+    "accuracy_first": "cf_accuracy_peer_star",
+    "balanced": "cf_middle_ground_mesh_star"
+  },
+  "objective": "budget_first",
+  "organization_policy": {
+    "operators": [
+      "local_solve",
+      "tree_reduce"
+    ],
+    "planner_mode": "topology_select",
+    "protocol_spec": null,
+    "selected_primary": "topology_default",
+    "topology_name": "tree"
+  },
+  "skill_id": "cf_budget_tree",
+  "tags": [
+    "mas",
+    "emperor-skill",
+    "count-frequency",
+    "budget_first"
+  ],
+  "task_family": "count_frequency",
+  "trigger": {
+    "max_agents": 64,
+    "min_agents": 2,
+    "task_family": "count_frequency"
+  },
+  "update_rule": "batch_consolidate",
+  "version": "0.1.0"
+}

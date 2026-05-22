@@ -1,0 +1,53 @@
+{
+  "counterexamples": [
+    {
+      "condition": "sparse random DAG under count-frequency",
+      "failure": "coverage can be seed-sensitive and dominated by deterministic policies"
+    }
+  ],
+  "evidence": [
+    {
+      "mean_messages": 12.0,
+      "mean_rmse": 0.42,
+      "mean_token_cost": 1400.0,
+      "n_agents": 8,
+      "source": "cf_protocol_paper_agent_scaling_agents",
+      "std_rmse": 0.20,
+      "topology_name": "random"
+    }
+  ],
+  "expected_tradeoff": {
+    "lesson": "Sparse random routing should be kept as a counterexample or ablation, not as the emperor default.",
+    "mean_messages": 12.0,
+    "mean_rmse": 0.42,
+    "mean_token_cost": 1400.0,
+    "std_rmse": 0.20,
+    "strength": "cheap exploratory baseline",
+    "weakness": "unstable coverage and weaker final accuracy"
+  },
+  "fallback": {
+    "default": "cf_budget_tree"
+  },
+  "objective": "balanced",
+  "organization_policy": {
+    "operators": [],
+    "planner_mode": "topology_select",
+    "protocol_spec": null,
+    "topology_name": "random"
+  },
+  "skill_id": "cf_avoid_sparse_random",
+  "tags": [
+    "mas",
+    "emperor-skill",
+    "count-frequency",
+    "counterexample"
+  ],
+  "task_family": "count_frequency",
+  "trigger": {
+    "max_agents": 64,
+    "min_agents": 2,
+    "task_family": "count_frequency"
+  },
+  "update_rule": "batch_consolidate",
+  "version": "0.1.0"
+}

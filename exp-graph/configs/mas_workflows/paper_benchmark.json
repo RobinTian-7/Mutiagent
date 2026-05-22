@@ -1,0 +1,55 @@
+{
+  "array_sizes": [
+    32,
+    64
+  ],
+  "confirm_real_llm": false,
+  "graph_max_messages": 32,
+  "graph_max_receiver_fan_in": 4,
+  "graph_max_steps": 4,
+  "graph_repair_attempts": 1,
+  "graph_candidate_score_mode": "objective",
+  "graph_search_mode": "single",
+  "graph_top_k": 1,
+  "graph_validation_seeds": [],
+  "init_mode": "llm_local_solve",
+  "llm_provider": "openai",
+  "max_parallel_agents": 2,
+  "max_parallel_insight_shards": 2,
+  "max_parallel_ministers": 2,
+  "max_parallel_runs": 1,
+  "merge_mode": "llm_full_merge",
+  "model_name": "gpt-4o-mini",
+  "n_agents": [
+    4,
+    8
+  ],
+  "num_graph_candidates": 1,
+  "objectives": [
+    "accuracy_first",
+    "budget_first",
+    "balanced"
+  ],
+  "retain_traces": true,
+  "test_seeds": [
+    9,
+    10,
+    11,
+    12,
+    13
+  ],
+  "topologies": [
+    "tree",
+    "one_peer_exponential_dag_star",
+    "mesh_star"
+  ],
+  "trace": true,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "verbose_events": false
+}
