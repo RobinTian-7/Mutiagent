@@ -25,6 +25,10 @@ from exp_graph.mas.evolution import (
     build_counterexample_patches_from_evidence,
     build_result_patches_from_evidence,
     classify_topology,
+    condition_specific_skill_id,
+    default_operation_recommendations,
+    infer_condition_scope,
+    infer_topology_structure_features,
 )
 from exp_graph.mas.formatting import format_insight_report
 from exp_graph.mas.insights import insight_report_to_patches
@@ -800,12 +804,22 @@ def _build_insight_shards(
         _objective, _operators, skill_id, _lesson = classify_topology(
             str(condition.get("topology_name", ""))
         )
+        condition_scope = infer_condition_scope([condition])
+        candidate_skill_id = condition_specific_skill_id(
+            skill_id,
+            str(condition.get("topology_name", "")),
+            condition_scope,
+        )
         shards.append(
             {
                 "condition": condition,
                 "trace_summary": trace_by_key.get(key, {}),
                 "evidence_refs": records_by_condition.get(key, []),
-                "affected_skill": skill_id if skill_bank.get(skill_id) else None,
+                "affected_skill": (
+                    candidate_skill_id
+                    if skill_bank.get(candidate_skill_id)
+                    else skill_id if skill_bank.get(skill_id) else None
+                ),
                 "current_skill_versions": {
                     skill.skill_id: skill.version for skill in skill_bank
                 },
@@ -822,6 +836,14 @@ def _deterministic_shard_report(shard: dict[str, Any]) -> InsightReport:
     insights: list[MASInsight] = []
     run_count = int(condition.get("run_count", 0))
     claim_status = "observed" if run_count >= 3 else "hypothesis"
+    condition_scope = infer_condition_scope([condition])
+    structure_features = infer_topology_structure_features(topology, [condition])
+    operation_recommendations = default_operation_recommendations(
+        topology,
+        structure_features,
+        condition_scope,
+    )
+    condition_buckets = [condition_scope]
     if refs:
         insights.append(
             MASInsight(
@@ -837,6 +859,8 @@ def _deterministic_shard_report(shard: dict[str, Any]) -> InsightReport:
                 metric_snapshot=condition,
                 affected_skills=affected,
                 recommended_actions=["merge batch tradeoff evidence"],
+                operation_recommendations=operation_recommendations,
+                condition_buckets=condition_buckets,
                 confidence=0.65 if claim_status == "observed" else 0.4,
                 falsification_test="Evaluate on held-out seeds.",
             )
@@ -863,6 +887,20 @@ def _deterministic_shard_report(shard: dict[str, Any]) -> InsightReport:
                 recommended_actions=[
                     "add full_coverage_wrong_answer risk note and fallback"
                 ],
+                operation_recommendations=[
+                    {
+                        "action_type": "avoid",
+                        "target": "edge_schedule",
+                        "instruction": (
+                            "Do not promote this structure globally when full "
+                            "coverage still produces wrong final answers; add an "
+                            "audit or deterministic merge validation step first."
+                        ),
+                        "conditions": condition_scope,
+                        "expected_effect": {"semantic_merge_risk": "decrease"},
+                    }
+                ],
+                condition_buckets=condition_buckets,
                 confidence=0.7 if claim_status == "observed" else 0.45,
                 falsification_test=(
                     "Run deterministic structured merge audit on held-out seeds."
@@ -1022,12 +1060,15 @@ def _build_batch_insight_prompt(shard: dict[str, Any]) -> str:
                 "Identify coverage, sink, fan-in, provenance, and cost/accuracy mechanisms.",
                 "State whether each claim is observed, inferred, or a hypothesis.",
                 "Recommend planner changes that can alter future generated DAG edges.",
+                "Emit operation_recommendations with action_type, target, instruction, conditions, and expected_effect.",
+                "Use condition_buckets when the lesson is specific to n_agents, array_size, objective, or merge/init mode.",
                 "Flag repeatedly bad structures as avoid-skill candidates.",
             ],
             "rules": [
                 "Every insight must cite evidence_refs from the shard.",
                 "Use hypothesis when seed support is below 3.",
                 "Do not recommend direct skill writes; only insight patches are allowed.",
+                "Each operation recommendation must be executable by changing edge order, sink selection, fan-in, reducer scope, provenance flow, or trigger buckets.",
                 "Do not reward a topology for low cost when accuracy or coverage collapsed.",
             ],
         },

@@ -439,6 +439,11 @@ def build_free_graph_prompt(
             "budget-aware partial aggregation",
         ],
         "skill_evidence": [_skill_context(skill) for skill in skills[:6]],
+        "skill_usage_rules": [
+            "Use structure_features and operation_recommendations from skills as concrete design operations, not as topology names to copy blindly.",
+            "Respect condition buckets in skill triggers; do not generalize a skill outside its n_agents or array_size bucket without evidence.",
+            "When a skill says preserve a selected_primary sink, emit that sink explicitly in selected_primary and maintain temporal reachability to it.",
+        ],
         "required_json_shape": {
             "candidates": [
                 {

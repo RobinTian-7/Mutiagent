@@ -46,6 +46,9 @@ RETAIN_TRACES="${RETAIN_TRACES:-1}"
 VERBOSE_EVENTS="${VERBOSE_EVENTS:-1}"
 RUN_BASELINES="${RUN_BASELINES:-1}"
 RUN_EVOLUTION="${RUN_EVOLUTION:-1}"
+BEST_SO_FAR_ELITE="${BEST_SO_FAR_ELITE:-1}"
+BEST_SKILLS_DIR="${BEST_SKILLS_DIR:-$OUT_ROOT/skills_best_so_far}"
+BEST_SO_FAR_STATE="${BEST_SO_FAR_STATE:-$OUT_ROOT/best_so_far.json}"
 
 GRAPH_SEARCH_MODE="${GRAPH_SEARCH_MODE:-topk}"
 NUM_GRAPH_CANDIDATES="${NUM_GRAPH_CANDIDATES:-4}"
@@ -131,8 +134,14 @@ common_matrix_args=(
   --model-name "$MODEL_NAME"
   --merge-mode "$MERGE_MODE"
   --init-mode "$INIT_MODE"
-  "${trace_args[@]}"
-  "${graph_args[@]}"
+)
+if ((${#trace_args[@]} > 0)); then
+  common_matrix_args+=("${trace_args[@]}")
+fi
+if ((${#graph_args[@]} > 0)); then
+  common_matrix_args+=("${graph_args[@]}")
+fi
+common_matrix_args+=(
   --max-parallel-runs "$MAX_PARALLEL_RUNS"
   --max-parallel-agents "$MAX_PARALLEL_AGENTS"
   --max-parallel-ministers "$MAX_PARALLEL_MINISTERS"
@@ -230,6 +239,22 @@ prepare_next_skill_dir() {
   printf 'pending evolution\n' > "$next/.evolution_pending"
 }
 
+copy_skill_dir() {
+  local source="$1"
+  local target="$2"
+  local marker_text="$3"
+  local tmp="${target}_tmp_$$"
+
+  rm -rf "$tmp"
+  mkdir -p "$tmp"
+  if compgen -G "$source/*.yaml" > /dev/null; then
+    cp "$source"/*.yaml "$tmp"/
+  fi
+  printf '%s\n' "$marker_text" > "$tmp/.elite_metadata"
+  rm -rf "$target"
+  mv "$tmp" "$target"
+}
+
 evolve_skills() {
   local label="$1"
   local skill_dir="$2"
@@ -247,6 +272,136 @@ evolve_skills() {
     --revision-dir "$OUT_ROOT/revisions"
   printf 'evolved from %s\n' "$label" > "$skill_dir/$marker"
   rm -f "$skill_dir/.evolution_pending"
+}
+
+elite_score_json() {
+  local collected_dir="$1"
+  local label="$2"
+
+  PYTHONPATH=src "$PYTHON_BIN" - "$collected_dir" "$label" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from exp_graph.mas.matrix import objective_score
+
+collected = Path(sys.argv[1])
+label = sys.argv[2]
+path = collected / "cross_seed_metrics.json"
+if not path.exists():
+    raise SystemExit(f"missing cross-seed metrics: {path}")
+data = json.loads(path.read_text(encoding="utf-8"))
+conditions = [row for row in data.get("conditions", []) if isinstance(row, dict)]
+if not conditions:
+    raise SystemExit(f"no conditions in {path}")
+scores = [objective_score(row) for row in conditions]
+rmse = [float(row.get("mean_rmse", 0.0) or 0.0) for row in conditions]
+exact = [float(row.get("exact_match_rate", 0.0) or 0.0) for row in conditions]
+tokens = [float(row.get("mean_token_cost", 0.0) or 0.0) for row in conditions]
+payload = {
+    "label": label,
+    "score": sum(scores) / len(scores),
+    "score_higher_is_better": True,
+    "condition_count": len(conditions),
+    "mean_rmse": sum(rmse) / len(rmse),
+    "mean_exact_match_rate": sum(exact) / len(exact),
+    "mean_token_cost": sum(tokens) / len(tokens),
+}
+print(json.dumps(payload, sort_keys=True))
+PY
+}
+
+elite_decision() {
+  local score_json="$1"
+  local state_path="$2"
+
+  PYTHONPATH=src "$PYTHON_BIN" - "$score_json" "$state_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+current = json.loads(sys.argv[1])
+state_path = Path(sys.argv[2])
+if not state_path.exists():
+    print("promote")
+    raise SystemExit(0)
+best = json.loads(state_path.read_text(encoding="utf-8"))
+if float(current["score"]) > float(best.get("score", float("-inf"))) + 1e-12:
+    print("promote")
+else:
+    print("retain")
+PY
+}
+
+write_best_state() {
+  local score_json="$1"
+  local skill_dir="$2"
+  local eval_dir="$3"
+
+  PYTHONPATH=src "$PYTHON_BIN" - "$BEST_SO_FAR_STATE" "$score_json" "$skill_dir" "$eval_dir" "$BEST_SKILLS_DIR" <<'PY'
+import json
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+payload = json.loads(sys.argv[2])
+payload.update(
+    {
+        "updated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "source_skill_dir": sys.argv[3],
+        "source_eval_dir": sys.argv[4],
+        "best_skill_dir": sys.argv[5],
+    }
+)
+state_path.parent.mkdir(parents=True, exist_ok=True)
+state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+promote_best_so_far() {
+  local label="$1"
+  local skill_dir="$2"
+  local eval_dir="$3"
+  local score_json="$4"
+  local best_eval_dir="$OUT_ROOT/evolution/best_so_far_eval"
+
+  echo "[elite:$label] promote -> $BEST_SKILLS_DIR"
+  copy_skill_dir "$skill_dir" "$BEST_SKILLS_DIR" "best-so-far elite promoted from $label"
+  rm -rf "$best_eval_dir"
+  mkdir -p "$best_eval_dir"
+  if [[ -d "$eval_dir/collected" ]]; then
+    cp -R "$eval_dir/collected" "$best_eval_dir/collected"
+  fi
+  write_best_state "$score_json" "$skill_dir" "$eval_dir"
+}
+
+apply_best_so_far_elite() {
+  local label="$1"
+  local candidate_skills="$2"
+  local eval_dir="$3"
+
+  if ! truthy "$BEST_SO_FAR_ELITE"; then
+    EVOLUTION_CURRENT_SKILLS="$candidate_skills"
+    return
+  fi
+
+  local score_json
+  score_json="$(elite_score_json "$eval_dir/collected" "$label")"
+  local decision
+  decision="$(elite_decision "$score_json" "$BEST_SO_FAR_STATE")"
+  echo "[elite:$label] score=$score_json decision=$decision"
+  if [[ "$decision" == "promote" ]]; then
+    promote_best_so_far "$label" "$candidate_skills" "$eval_dir" "$score_json"
+  else
+    echo "[elite:$label] retain existing best -> $BEST_SKILLS_DIR"
+  fi
+
+  if [[ -d "$BEST_SKILLS_DIR" ]]; then
+    EVOLUTION_CURRENT_SKILLS="$BEST_SKILLS_DIR"
+  else
+    EVOLUTION_CURRENT_SKILLS="$candidate_skills"
+  fi
 }
 
 write_comparison_report() {
@@ -268,6 +423,7 @@ sources = [
 ]
 for i in range(iters):
     sources.append((f"self_evolved_free_dag_iter_{i + 1}", root / "evolution" / f"iter_{i}_eval" / "collected"))
+sources.append(("self_evolved_free_dag_best_so_far", root / "evolution" / "best_so_far_eval" / "collected"))
 
 for method, collected in sources:
     path = collected / "cross_seed_metrics.json"
@@ -409,6 +565,8 @@ echo "  array_sizes: $ARRAY_SIZES"
 echo "  train_seeds: $TRAIN_SEEDS"
 echo "  eval_seeds: $EVAL_SEEDS"
 echo "  evolution_iters: $EVOLUTION_ITERS"
+echo "  best_so_far_elite: $BEST_SO_FAR_ELITE"
+echo "  best_skills_dir: $BEST_SKILLS_DIR"
 
 if truthy "$RUN_BASELINES"; then
   run_eval_matrix \
@@ -445,8 +603,13 @@ if truthy "$RUN_BASELINES"; then
 fi
 
 if truthy "$RUN_EVOLUTION"; then
+  EVOLUTION_CURRENT_SKILLS="$EMPTY_SKILLS"
+  if truthy "$BEST_SO_FAR_ELITE" && [[ -f "$BEST_SO_FAR_STATE" && -d "$BEST_SKILLS_DIR" ]]; then
+    EVOLUTION_CURRENT_SKILLS="$BEST_SKILLS_DIR"
+    echo "[elite] resuming from existing best-so-far: $BEST_SKILLS_DIR"
+  fi
   for ((iter = 0; iter < EVOLUTION_ITERS; iter++)); do
-    current_skills="$OUT_ROOT/skills_iter_$iter"
+    current_skills="$EVOLUTION_CURRENT_SKILLS"
     next_skills="$OUT_ROOT/skills_iter_$((iter + 1))"
     marker=".evolved_from_iter_$iter"
     train_dir="$OUT_ROOT/evolution/iter_${iter}_train"
@@ -465,6 +628,10 @@ if truthy "$RUN_EVOLUTION"; then
       "graph_generate" \
       "free_graph" \
       "" \
+      "$eval_dir"
+    apply_best_so_far_elite \
+      "self_evolved_free_dag_iter_$((iter + 1))" \
+      "$next_skills" \
       "$eval_dir"
   done
 fi

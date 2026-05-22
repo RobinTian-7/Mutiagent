@@ -145,6 +145,8 @@ def build_emperor_prompt(
         "planning_responsibilities": [
             "Select topology or operators based on evidence, objective, n_agents, and budget.",
             "Treat avoid skills as concrete failure modes to route around.",
+            "Use skill structure_features and operation_recommendations as direct topology operations, not just as topology_name labels.",
+            "Respect trigger condition buckets such as agent_bucket and array_size_bucket when selecting a skill.",
             "Explain the expected information flow: who aggregates, who broadcasts, and where the final answer should reside.",
             "Prefer structures that preserve source coverage and provenance for sharded count-frequency tasks.",
         ],

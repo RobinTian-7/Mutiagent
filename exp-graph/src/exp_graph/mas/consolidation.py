@@ -227,6 +227,7 @@ def _route_candidate(bank: SkillBank, candidate: SkillCard) -> str:
             skill.task_family == candidate.task_family
             and skill.objective == candidate.objective
             and skill.topology_name == candidate.topology_name
+            and _condition_scope_compatible(skill, candidate)
         ):
             return skill.skill_id
     return candidate.skill_id
@@ -244,11 +245,63 @@ def _patch_matches_skill_topology(
         candidate_topology = patch.candidate_skill.topology_name
         if candidate_topology and candidate_topology != skill_topology:
             return False
+        if not _condition_scope_compatible(skill, patch.candidate_skill):
+            return False
     for ref in patch.evidence_refs:
         record = records_by_id.get(ref)
         if record is None or not record.topology_name:
             continue
         if record.topology_name != skill_topology:
+            return False
+        if not _record_matches_skill_trigger(skill, record):
+            return False
+    return True
+
+
+def _condition_scope_compatible(current: SkillCard, incoming: SkillCard) -> bool:
+    if not (
+        _topology_uses_condition_bucket(current.topology_name)
+        or _topology_uses_condition_bucket(incoming.topology_name)
+    ):
+        return True
+    current_key = current.trigger.get("condition_key")
+    incoming_key = incoming.trigger.get("condition_key")
+    if current_key or incoming_key:
+        return current_key == incoming_key
+    return True
+
+
+def _topology_uses_condition_bucket(topology_name: str | None) -> bool:
+    return bool(topology_name and topology_name.startswith("generated:"))
+
+
+def _record_matches_skill_trigger(skill: SkillCard, record: EvidenceRecord) -> bool:
+    trigger = skill.trigger
+    min_agents = trigger.get("min_agents")
+    max_agents = trigger.get("max_agents")
+    if record.n_agents is not None:
+        if min_agents is not None and record.n_agents < int(min_agents):
+            return False
+        if max_agents is not None and record.n_agents > int(max_agents):
+            return False
+        agent_counts = trigger.get("agent_counts")
+        if agent_counts is not None and record.n_agents not in {
+            int(item) for item in agent_counts
+        }:
+            return False
+    array_size = record.metrics.get("array_size")
+    if array_size is not None:
+        min_array = trigger.get("min_array_size")
+        max_array = trigger.get("max_array_size")
+        array_int = int(array_size)
+        if min_array is not None and array_int < int(min_array):
+            return False
+        if max_array is not None and array_int > int(max_array):
+            return False
+        array_sizes = trigger.get("array_sizes")
+        if array_sizes is not None and array_int not in {
+            int(item) for item in array_sizes
+        }:
             return False
     return True
 
@@ -261,12 +314,18 @@ def _prepare_new_skill(
         raise ValueError("add patch requires candidate_skill")
     skill = patch.candidate_skill
     refs = _dedupe([*skill.evidence_refs, *patch.evidence_refs])
+    recomputed_tradeoff = _recompute_tradeoff(refs, records_by_id)
+    recomputed_dynamics = _recompute_dynamics(refs, records_by_id)
     update = {
         "evidence_refs": refs,
-        "expected_tradeoff": _recompute_tradeoff(refs, records_by_id)
-        or skill.expected_tradeoff,
-        "expected_dynamics": _recompute_dynamics(refs, records_by_id)
-        or skill.expected_dynamics,
+        "expected_tradeoff": {
+            **skill.expected_tradeoff,
+            **recomputed_tradeoff,
+        },
+        "expected_dynamics": {
+            **skill.expected_dynamics,
+            **recomputed_dynamics,
+        },
         "revision_history": [
             {
                 "patch_ids": [patch.patch_id],
@@ -361,11 +420,13 @@ def _merge_patch_group(
             )
 
     tradeoff = {
-        **(_recompute_tradeoff(evidence_refs, records_by_id) or skill.expected_tradeoff),
+        **skill.expected_tradeoff,
+        **_recompute_tradeoff(evidence_refs, records_by_id),
         **expected_tradeoff_updates,
     }
     dynamics = {
-        **(_recompute_dynamics(evidence_refs, records_by_id) or skill.expected_dynamics),
+        **skill.expected_dynamics,
+        **_recompute_dynamics(evidence_refs, records_by_id),
         **expected_dynamics_updates,
     }
     confidence = _recompute_confidence(evidence_refs, records_by_id)
@@ -519,9 +580,35 @@ def _merge_organization_policy(
         if key in {"topology_name", "operators", "planner_mode"} and key in merged:
             if merged[key] != value:
                 continue
-        if key == "rationale_rules":
+        if key in {"rationale_rules", "operation_recommendations", "operator_constraints"}:
             existing = merged.get(key, [])
-            merged[key] = _dedupe([*list(existing if isinstance(existing, list) else []), *list(value if isinstance(value, list) else [])])
+            if key == "rationale_rules":
+                merged[key] = _dedupe(
+                    [
+                        *list(existing if isinstance(existing, list) else []),
+                        *list(value if isinstance(value, list) else []),
+                    ]
+                )
+            else:
+                incoming_items = value if isinstance(value, list) else [value]
+                existing_items = existing if isinstance(existing, list) else [existing]
+                merged[key] = _dedupe_dicts(
+                    [
+                        item if isinstance(item, dict) else {"summary": str(item)}
+                        for item in [*existing_items, *incoming_items]
+                        if item
+                    ]
+                )
+            continue
+        if key in {"structure_features", "condition_scope"} and isinstance(
+            value,
+            dict,
+        ):
+            current_value = merged.get(key)
+            merged[key] = {
+                **(current_value if isinstance(current_value, dict) else {}),
+                **value,
+            }
             continue
         merged[key] = value
     return merged

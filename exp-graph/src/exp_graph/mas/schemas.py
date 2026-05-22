@@ -235,6 +235,8 @@ class MASInsight(BaseModel):
     metric_snapshot: dict[str, object] = Field(default_factory=dict)
     affected_skills: list[str] = Field(default_factory=list)
     recommended_actions: list[str] = Field(default_factory=list)
+    operation_recommendations: list[dict[str, object]] = Field(default_factory=list)
+    condition_buckets: list[dict[str, object]] = Field(default_factory=list)
     confidence: float = 0.0
     falsification_test: str = ""
 

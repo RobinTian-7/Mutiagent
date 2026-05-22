@@ -9,7 +9,6 @@ from typing import Any
 
 from exp_graph.mas.ingest import (
     aggregate_rows_to_evidence,
-    group_evidence_by_topology,
     load_experiment_directory,
 )
 from exp_graph.mas.schemas import EvidenceRecord, EvolutionBatch, SkillCard, SkillPatch
@@ -23,10 +22,13 @@ class ResultAnalystMinister:
 
     def analyze(self, aggregate_rows: list[dict[str, Any]]) -> list[SkillPatch]:
         evidence = aggregate_rows_to_evidence(aggregate_rows)
-        grouped = group_evidence_by_topology(evidence)
+        grouped = _group_dict_evidence_for_skills(evidence)
         patches = [
-            build_skill_patch_for_topology(topology, rows)
-            for topology, rows in sorted(grouped.items())
+            build_skill_patch_for_topology(
+                str(rows[0].get("topology_name", rows[0].get("Topology", group_key))),
+                rows,
+            )
+            for group_key, rows in sorted(grouped.items())
         ]
         patches.extend(build_negative_patches(evidence))
         return patches
@@ -224,11 +226,13 @@ def build_result_patches_from_evidence(
     ]
     grouped: dict[str, list[EvidenceRecord]] = defaultdict(list)
     for record in aggregate_records:
-        grouped[record.topology_name].append(record)
+        grouped[_record_skill_group_key(record)].append(record)
     patches: list[SkillPatch] = []
-    for topology, rows in sorted(grouped.items()):
+    for _group_key, rows in sorted(grouped.items()):
+        topology = rows[0].topology_name
         objective, operators, skill_id, lesson = classify_topology(topology)
         refs = [record.evidence_id for record in rows]
+        analysis_evidence = _records_to_analysis_evidence(rows)
         expected_tradeoff = {
             "mean_rmse": _mean_record_metric(rows, "mean_rmse", "final_rmse"),
             "mean_token_cost": _mean_record_metric(
@@ -254,14 +258,15 @@ def build_result_patches_from_evidence(
             objective=objective,
             operators=operators,
             evidence=[],
+            analysis_evidence=analysis_evidence,
             evidence_refs=refs,
             expected_tradeoff=expected_tradeoff,
         )
         patches.append(
             SkillPatch(
-                patch_id=f"result_{skill_id}",
+                patch_id=f"result_{candidate.skill_id}",
                 action="merge",
-                target_skill_id=skill_id,
+                target_skill_id=candidate.skill_id,
                 candidate_skill=candidate,
                 evidence_refs=refs,
                 update={
@@ -293,14 +298,20 @@ def build_cost_patches_from_evidence(records: list[EvidenceRecord]) -> list[Skil
         ),
     )
     objective, operators, skill_id, _lesson = classify_topology(cheapest.topology_name)
-    refs = [record.evidence_id for record in aggregate_records
-            if record.topology_name == cheapest.topology_name]
+    cheapest_group_key = _record_skill_group_key(cheapest)
+    cheapest_rows = [
+        record
+        for record in aggregate_records
+        if _record_skill_group_key(record) == cheapest_group_key
+    ]
+    refs = [record.evidence_id for record in cheapest_rows]
     candidate = make_skill_card(
         skill_id=skill_id,
         topology_name=cheapest.topology_name,
         objective=objective,
         operators=operators,
         evidence=[],
+        analysis_evidence=_records_to_analysis_evidence(cheapest_rows),
         evidence_refs=refs,
         expected_tradeoff={
             "strength": "lowest observed communication cost",
@@ -343,7 +354,12 @@ def build_counterexample_patches_from_evidence(
             if _record_metric(row, "mean_rmse", "final_rmse") > best_rmse * 1.75:
                 dominated[row.topology_name].append(row)
     patches = []
-    for topology, rows in sorted(dominated.items()):
+    grouped_rows: dict[str, list[EvidenceRecord]] = defaultdict(list)
+    for rows in dominated.values():
+        for row in rows:
+            grouped_rows[_record_skill_group_key(row)].append(row)
+    for _group_key, rows in sorted(grouped_rows.items()):
+        topology = rows[0].topology_name
         refs = [record.evidence_id for record in rows]
         candidate = make_skill_card(
             skill_id=f"cf_avoid_{topology}",
@@ -351,6 +367,7 @@ def build_counterexample_patches_from_evidence(
             objective="balanced",
             operators=[],
             evidence=[],
+            analysis_evidence=_records_to_analysis_evidence(rows),
             evidence_refs=refs,
             expected_tradeoff={
                 "strength": "negative routing evidence",
@@ -367,7 +384,11 @@ def build_counterexample_patches_from_evidence(
         )
         patches.append(
             SkillPatch(
-                patch_id=f"counterexample_{topology}",
+                patch_id=(
+                    f"counterexample_{candidate.skill_id}"
+                    if _topology_uses_condition_bucket(topology)
+                    else f"counterexample_{topology}"
+                ),
                 action="merge",
                 target_skill_id=candidate.skill_id,
                 candidate_skill=candidate,
@@ -410,9 +431,9 @@ def build_skill_patch_for_topology(
         },
     )
     return SkillPatch(
-        patch_id=f"result_{skill_id}",
+        patch_id=f"result_{candidate.skill_id}",
         action="merge",
-        target_skill_id=skill_id,
+        target_skill_id=candidate.skill_id,
         candidate_skill=candidate,
         evidence=rows,
         lesson=lesson,
@@ -422,7 +443,7 @@ def build_skill_patch_for_topology(
 
 
 def build_negative_patches(evidence: list[dict[str, Any]]) -> list[SkillPatch]:
-    grouped = group_evidence_by_topology(evidence)
+    grouped = _group_dict_evidence_for_skills(evidence)
     if not grouped:
         return []
     by_agent: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -435,8 +456,10 @@ def build_negative_patches(evidence: list[dict[str, Any]]) -> list[SkillPatch]:
             if float(row["mean_rmse"]) > best_rmse * 1.75:
                 dominated.add(str(row["topology_name"]))
     patches: list[SkillPatch] = []
-    for topology in sorted(dominated):
-        rows = grouped[topology]
+    for group_key, rows in sorted(grouped.items()):
+        topology = str(rows[0]["topology_name"])
+        if topology not in dominated:
+            continue
         candidate = make_skill_card(
             skill_id=f"cf_avoid_{topology}",
             topology_name=topology,
@@ -451,7 +474,11 @@ def build_negative_patches(evidence: list[dict[str, Any]]) -> list[SkillPatch]:
         )
         patches.append(
             SkillPatch(
-                patch_id=f"counterexample_{topology}",
+                patch_id=(
+                    f"counterexample_{candidate.skill_id}"
+                    if _topology_uses_condition_bucket(topology)
+                    else f"counterexample_{topology}"
+                ),
                 action="merge",
                 target_skill_id=candidate.skill_id,
                 candidate_skill=candidate,
@@ -502,31 +529,76 @@ def make_skill_card(
     operators: list[str],
     evidence: list[dict[str, Any]],
     expected_tradeoff: dict[str, object],
+    analysis_evidence: list[dict[str, Any]] | None = None,
     evidence_refs: list[str] | None = None,
     counterexamples: list[dict[str, object]] | None = None,
 ) -> SkillCard:
+    feature_evidence = analysis_evidence if analysis_evidence is not None else evidence
+    condition_scope = infer_condition_scope(feature_evidence)
+    structure_features = infer_topology_structure_features(
+        topology_name,
+        feature_evidence,
+    )
+    operation_recommendations = default_operation_recommendations(
+        topology_name,
+        structure_features,
+        condition_scope,
+    )
+    final_skill_id = condition_specific_skill_id(
+        skill_id,
+        topology_name,
+        condition_scope,
+    )
+    trigger = {
+        "task_family": "count_frequency",
+        "min_agents": condition_scope.get("min_agents", 1),
+        "max_agents": condition_scope.get("max_agents", 999),
+        "agent_bucket": condition_scope.get("agent_bucket", "agents_any"),
+        "condition_key": condition_scope.get("condition_key", "agents_any__arrays_any"),
+    }
+    if condition_scope.get("min_array_size") is not None:
+        trigger.update(
+            {
+                "min_array_size": condition_scope["min_array_size"],
+                "max_array_size": condition_scope["max_array_size"],
+                "array_size_bucket": condition_scope.get(
+                    "array_size_bucket",
+                    "arrays_any",
+                ),
+            }
+        )
+    if condition_scope.get("agent_counts"):
+        trigger["agent_counts"] = condition_scope["agent_counts"]
+    if condition_scope.get("array_sizes"):
+        trigger["array_sizes"] = condition_scope["array_sizes"]
     return SkillCard(
-        skill_id=skill_id,
+        skill_id=final_skill_id,
         version="0.1.0",
         task_family="count_frequency",
-        trigger={
-            "task_family": "count_frequency",
-            "min_agents": min(int(row["n_agents"]) for row in evidence) if evidence else 1,
-            "max_agents": max(int(row["n_agents"]) for row in evidence) if evidence else 999,
-        },
+        trigger=trigger,
         objective=objective,  # type: ignore[arg-type]
         organization_policy={
-            "planner_mode": "topology_select",
+            "planner_mode": (
+                "graph_generate"
+                if topology_name.startswith("generated:")
+                else "topology_select"
+            ),
             "topology_name": topology_name,
             "operators": operators,
             "protocol_spec": None,
+            "structure_features": structure_features,
+            "operation_recommendations": operation_recommendations,
         },
         expected_tradeoff=expected_tradeoff,
+        expected_dynamics={
+            "condition_scope": condition_scope,
+            "structure_features": structure_features,
+        },
         evidence=evidence,
         evidence_refs=evidence_refs or [],
         fallback={
             "budget_first": "cf_budget_tree"
-            if skill_id != "cf_budget_tree"
+            if final_skill_id != "cf_budget_tree"
             else None
         },
         counterexamples=counterexamples or [],
@@ -557,3 +629,332 @@ def _has_comparative_topology_evidence(evidence: list[dict[str, Any]]) -> bool:
 
 def _has_comparative_record_evidence(records: list[EvidenceRecord]) -> bool:
     return len({record.topology_name for record in records}) >= 2
+
+
+def infer_condition_scope(evidence: list[dict[str, Any]]) -> dict[str, object]:
+    """Summarize the condition bucket where a skill has evidence."""
+    agent_counts = sorted(
+        {
+            value
+            for row in evidence
+            if (value := _evidence_int(row, "n_agents", "Agents")) is not None
+        }
+    )
+    array_sizes = sorted(
+        {
+            value
+            for row in evidence
+            if (value := _evidence_int(row, "array_size", "ArraySize")) is not None
+        }
+    )
+    min_agents = min(agent_counts) if agent_counts else 1
+    max_agents = max(agent_counts) if agent_counts else 999
+    agent_bucket = (
+        f"agents_{min_agents}"
+        if agent_counts and min_agents == max_agents
+        else f"agents_{min_agents}_{max_agents}" if agent_counts else "agents_any"
+    )
+    scope: dict[str, object] = {
+        "min_agents": min_agents,
+        "max_agents": max_agents,
+        "agent_bucket": agent_bucket,
+        "agent_counts": agent_counts,
+    }
+    if array_sizes:
+        min_array = min(array_sizes)
+        max_array = max(array_sizes)
+        array_bucket = (
+            f"arrays_{min_array}"
+            if min_array == max_array
+            else f"arrays_{min_array}_{max_array}"
+        )
+        scope.update(
+            {
+                "min_array_size": min_array,
+                "max_array_size": max_array,
+                "array_size_bucket": array_bucket,
+                "array_sizes": array_sizes,
+            }
+        )
+    else:
+        array_bucket = "arrays_any"
+    scope["condition_key"] = f"{agent_bucket}__{array_bucket}"
+    return scope
+
+
+def infer_topology_structure_features(
+    topology_name: str,
+    evidence: list[dict[str, Any]],
+) -> dict[str, object]:
+    """Record explicit topology structure signals, not just its name."""
+    name = topology_name.lower()
+    motifs = []
+    for token, motif in [
+        ("tree", "hierarchical_reduce"),
+        ("star", "single_sink"),
+        ("mesh", "peer_broadcast"),
+        ("peer", "peer_exchange"),
+        ("exponential", "log_distance_peer_exchange"),
+        ("flow", "temporal_flow"),
+        ("freq", "frequency_counting_protocol"),
+        ("sink", "explicit_sink"),
+    ]:
+        if token in name and motif not in motifs:
+            motifs.append(motif)
+    selected_primary_values = sorted(
+        {
+            value
+            for row in evidence
+            if (
+                value := _evidence_int(
+                    row,
+                    "generated_graph_selected_primary",
+                    "selected_primary",
+                )
+            )
+            is not None
+        }
+    )
+    mean_steps = _mean_evidence_float(evidence, "mean_protocol_steps", "protocol_steps")
+    mean_messages = _mean_evidence_float(
+        evidence,
+        "mean_protocol_messages",
+        "protocol_messages",
+        "mean_messages",
+        "MeanTotalMessages",
+    )
+    generated_rates = [
+        value
+        for row in evidence
+        if (
+            value := _evidence_float(row, "generated_graph_rate", "generated_graph")
+        )
+        is not None
+    ]
+    metadata = [
+        value
+        for row in evidence
+        if isinstance(value := row.get("protocol_spec_metadata"), dict)
+    ]
+    features: dict[str, object] = {
+        "topology_name": topology_name,
+        "generated_graph": topology_name.startswith("generated:")
+        or any(value > 0 for value in generated_rates),
+        "motifs": motifs or ["unspecified_generated_structure"],
+        "aggregation_pattern": _aggregation_pattern_from_motifs(motifs),
+        "sink_pattern": "single_selected_primary"
+        if selected_primary_values or "single_sink" in motifs
+        else "not_explicit",
+        "selected_primary_values": selected_primary_values,
+        "mean_protocol_steps": mean_steps,
+        "mean_protocol_messages": mean_messages,
+        "evidence_metadata_keys": sorted(
+            {
+                str(key)
+                for item in metadata
+                for key in item.keys()
+            }
+        ),
+    }
+    if metadata:
+        candidate_ids = sorted(
+            {
+                str(item["candidate_id"])
+                for item in metadata
+                if item.get("candidate_id") is not None
+            }
+        )
+        if candidate_ids:
+            features["candidate_ids"] = candidate_ids
+    return features
+
+
+def default_operation_recommendations(
+    topology_name: str,
+    structure_features: dict[str, object],
+    condition_scope: dict[str, object],
+) -> list[dict[str, object]]:
+    """Produce operation-level planner hints from structure evidence."""
+    motifs = set(structure_features.get("motifs", []))
+    recommendations: list[dict[str, object]] = [
+        {
+            "action_type": "preserve",
+            "target": "condition_trigger",
+            "instruction": (
+                "Apply this skill only inside the recorded agent and array-size "
+                "condition bucket unless held-out evidence expands it."
+            ),
+            "conditions": {
+                "condition_key": condition_scope.get("condition_key"),
+                "agent_bucket": condition_scope.get("agent_bucket"),
+                "array_size_bucket": condition_scope.get("array_size_bucket"),
+            },
+        }
+    ]
+    if "hierarchical_reduce" in motifs or "temporal_flow" in motifs:
+        recommendations.append(
+            {
+                "action_type": "preserve",
+                "target": "edge_schedule",
+                "instruction": (
+                    "Use staged reduce edges where every receiver that aggregates "
+                    "partials can forward the merged state in a later step."
+                ),
+                "expected_effect": {"coverage": "increase", "message_cost": "bounded"},
+            }
+        )
+    if structure_features.get("sink_pattern") == "single_selected_primary":
+        recommendations.append(
+            {
+                "action_type": "preserve",
+                "target": "final_reducer",
+                "instruction": (
+                    "Set selected_primary to the final sink and score only that "
+                    "answer holder for generated DAG runs."
+                ),
+                "expected_effect": {"final_answer_noise": "decrease"},
+            }
+        )
+    if topology_name.startswith("generated:"):
+        recommendations.append(
+            {
+                "action_type": "mutate",
+                "target": "free_graph_generation",
+                "instruction": (
+                    "When exploring variants, change fan-in, sink placement, or "
+                    "audit edges while keeping full temporal reachability to the "
+                    "selected primary."
+                ),
+                "expected_effect": {"candidate_diversity": "increase"},
+            }
+        )
+    return recommendations
+
+
+def condition_specific_skill_id(
+    skill_id: str,
+    topology_name: str,
+    condition_scope: dict[str, object],
+) -> str:
+    if not _uses_condition_specific_identity(skill_id, topology_name):
+        return skill_id
+    condition_key = str(condition_scope.get("condition_key", ""))
+    if not condition_key or condition_key == "agents_any__arrays_any":
+        return skill_id
+    suffix = condition_key.replace("agents_", "a").replace("arrays_", "arr")
+    return f"{skill_id}__{suffix}"
+
+
+def _group_dict_evidence_for_skills(
+    evidence: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in evidence:
+        topology = str(row.get("topology_name", row.get("Topology", "")))
+        if _topology_uses_condition_bucket(topology):
+            key = f"{topology}|{_dict_condition_key(row)}"
+        else:
+            key = topology
+        grouped[key].append(row)
+    return grouped
+
+
+def _record_skill_group_key(record: EvidenceRecord) -> str:
+    if _topology_uses_condition_bucket(record.topology_name):
+        return f"{record.topology_name}|{_record_condition_key(record)}"
+    return record.topology_name
+
+
+def _records_to_analysis_evidence(
+    records: list[EvidenceRecord],
+) -> list[dict[str, Any]]:
+    rows = []
+    for record in records:
+        rows.append(
+            {
+                "evidence_id": record.evidence_id,
+                "source_type": record.source_type,
+                "topology_name": record.topology_name,
+                "n_agents": record.n_agents,
+                "seed": record.seed,
+                **record.metrics,
+                "risk_tags": record.risk_tags,
+                "dynamics": record.dynamics,
+            }
+        )
+    return rows
+
+
+def _topology_uses_condition_bucket(topology_name: str) -> bool:
+    return topology_name.startswith("generated:")
+
+
+def _uses_condition_specific_identity(skill_id: str, topology_name: str) -> bool:
+    return _topology_uses_condition_bucket(topology_name) or skill_id.startswith(
+        "cf_avoid_generated:"
+    )
+
+
+def _dict_condition_key(row: dict[str, Any]) -> str:
+    agents = _evidence_int(row, "n_agents", "Agents")
+    array_size = _evidence_int(row, "array_size", "ArraySize")
+    return f"agents_{agents or 'any'}__arrays_{array_size or 'any'}"
+
+
+def _record_condition_key(record: EvidenceRecord) -> str:
+    array_size = record.metrics.get("array_size")
+    return f"agents_{record.n_agents or 'any'}__arrays_{array_size or 'any'}"
+
+
+def _aggregation_pattern_from_motifs(motifs: list[str]) -> str:
+    if "hierarchical_reduce" in motifs:
+        return "hierarchical"
+    if "single_sink" in motifs:
+        return "star_sink"
+    if "peer_broadcast" in motifs:
+        return "broadcast_then_reduce"
+    if "peer_exchange" in motifs:
+        return "peer_exchange"
+    return "unspecified"
+
+
+def _evidence_int(row: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        value = row.get(key)
+        if value is None and "metrics" in row and isinstance(row["metrics"], dict):
+            value = row["metrics"].get(key)
+        if value in {None, ""}:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            try:
+                return int(float(value))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _evidence_float(row: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = row.get(key)
+        if value is None and "metrics" in row and isinstance(row["metrics"], dict):
+            value = row["metrics"].get(key)
+        if value in {None, ""}:
+            continue
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _mean_evidence_float(evidence: list[dict[str, Any]], *keys: str) -> float:
+    values = [
+        value
+        for row in evidence
+        if (value := _evidence_float(row, *keys)) is not None
+    ]
+    return statistics.fmean(values) if values else 0.0

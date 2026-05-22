@@ -57,6 +57,8 @@ class SkillBank:
                 continue
             if not self._matches_agent_range(skill, request.n_agents):
                 continue
+            if not self._matches_array_size(skill, request.array_size):
+                continue
             matches.append(skill)
         return matches
 
@@ -133,6 +135,24 @@ class SkillBank:
             return False
         return True
 
+    @staticmethod
+    def _matches_array_size(skill: SkillCard, array_size: int | None) -> bool:
+        if array_size is None:
+            return True
+        trigger = skill.trigger
+        min_array = trigger.get("min_array_size")
+        max_array = trigger.get("max_array_size")
+        if min_array is not None and array_size < int(min_array):
+            return False
+        if max_array is not None and array_size > int(max_array):
+            return False
+        array_sizes = trigger.get("array_sizes")
+        if array_sizes is not None and array_size not in {
+            int(item) for item in array_sizes
+        }:
+            return False
+        return True
+
 
 def is_selectable_skill(skill: SkillCard) -> bool:
     """Return whether a skill is safe for the emperor to choose directly."""
@@ -190,7 +210,7 @@ def merge_skill(skill: SkillCard, patch: SkillPatch) -> SkillCard:
     }
     if candidate is not None:
         merged_policy = dict(skill.organization_policy)
-        merged_policy.update(candidate.organization_policy)
+        merged_policy = _merge_policy(merged_policy, candidate.organization_policy)
         update["organization_policy"] = merged_policy
         merged_tradeoff = dict(skill.expected_tradeoff)
         merged_tradeoff.update(candidate.expected_tradeoff)
@@ -220,7 +240,7 @@ def merge_skill(skill: SkillCard, patch: SkillPatch) -> SkillCard:
         dict,
     ):
         merged_policy = dict(update.get("organization_policy", skill.organization_policy))
-        merged_policy.update(update_data["organization_policy"])
+        merged_policy = _merge_policy(merged_policy, update_data["organization_policy"])
         update["organization_policy"] = merged_policy
     return skill.model_copy(update=update)
 
@@ -282,6 +302,62 @@ def _extend_dict_items(target: list[dict[str, object]], value: object) -> None:
         target.append(value)
     elif value:
         target.append({"summary": str(value)})
+
+
+def _merge_policy(
+    current: dict[str, object],
+    incoming: dict[str, object],
+) -> dict[str, object]:
+    merged = dict(current)
+    for key, value in incoming.items():
+        if key in {"operation_recommendations", "operator_constraints"}:
+            existing = merged.get(key, [])
+            existing_items = existing if isinstance(existing, list) else [existing]
+            incoming_items = value if isinstance(value, list) else [value]
+            merged[key] = _dedupe_dicts(
+                [
+                    item if isinstance(item, dict) else {"summary": str(item)}
+                    for item in [*existing_items, *incoming_items]
+                    if item
+                ]
+            )
+            continue
+        if key == "rationale_rules":
+            existing = merged.get(key, [])
+            merged[key] = _dedupe(
+                [
+                    *[
+                        str(item)
+                        for item in (existing if isinstance(existing, list) else [])
+                    ],
+                    *[
+                        str(item)
+                        for item in (value if isinstance(value, list) else [])
+                    ],
+                ]
+            )
+            continue
+        if key in {"structure_features", "condition_scope"} and isinstance(value, dict):
+            existing = merged.get(key)
+            merged[key] = {
+                **(existing if isinstance(existing, dict) else {}),
+                **value,
+            }
+            continue
+        merged[key] = value
+    return merged
+
+
+def _dedupe_dicts(values: list[dict[str, object]]) -> list[dict[str, object]]:
+    seen = set()
+    result = []
+    for value in values:
+        key = json.dumps(value, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
 
 
 def render_skill_markdown(skill: SkillCard) -> str:

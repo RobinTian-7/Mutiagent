@@ -21,6 +21,45 @@ def test_skill_bank_loads_yaml_subset_and_retrieves_selectable_skills() -> None:
     assert {skill.skill_id for skill in matches} == {"cf_middle_ground_mesh_star"}
 
 
+def test_skill_bank_retrieval_respects_array_size_bucket() -> None:
+    bank = SkillBank(
+        [
+            SkillCard(
+                skill_id="cf_generated_arr128",
+                objective="balanced",
+                trigger={
+                    "task_family": "count_frequency",
+                    "min_agents": 8,
+                    "max_agents": 8,
+                    "min_array_size": 128,
+                    "max_array_size": 128,
+                    "condition_key": "agents_8__arrays_128",
+                },
+                organization_policy={"topology_name": "generated:balanced_tree_star"},
+            ),
+            SkillCard(
+                skill_id="cf_generated_arr512",
+                objective="balanced",
+                trigger={
+                    "task_family": "count_frequency",
+                    "min_agents": 8,
+                    "max_agents": 8,
+                    "min_array_size": 512,
+                    "max_array_size": 512,
+                    "condition_key": "agents_8__arrays_512",
+                },
+                organization_policy={"topology_name": "generated:balanced_tree_star"},
+            ),
+        ]
+    )
+
+    matches = bank.retrieve(
+        PlannerRequest.from_names(n_agents=8, array_size=512, objective="balanced")
+    )
+
+    assert [skill.skill_id for skill in matches] == ["cf_generated_arr512"]
+
+
 def test_skill_bank_save_load_and_markdown_render(tmp_path) -> None:
     bank = SkillBank.load_dir(SKILL_DIR)
     saved_dir = tmp_path / "skills"

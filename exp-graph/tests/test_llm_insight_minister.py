@@ -18,6 +18,7 @@ def test_fake_llm_insight_minister_outputs_verified_patch_candidates():
             n_agents=4,
             seed=1,
             metrics={
+                "array_size": 128,
                 "final_rmse": 0.2,
                 "total_messages": 3,
                 "token_cost": 100,
@@ -39,5 +40,10 @@ def test_fake_llm_insight_minister_outputs_verified_patch_candidates():
     assert report.key_insights
     assert all(insight.evidence_refs for insight in report.key_insights)
     assert all(insight.claim_status == "hypothesis" for insight in report.key_insights)
+    assert all(insight.operation_recommendations for insight in report.key_insights)
+    assert all(insight.condition_buckets for insight in report.key_insights)
     assert report.skill_update_recommendations
     assert report.skill_update_recommendations[0].action == "merge"
+    assert "operation_recommendations" in report.skill_update_recommendations[0].update[
+        "organization_policy"
+    ]

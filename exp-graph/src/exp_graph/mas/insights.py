@@ -11,7 +11,13 @@ from typing import Any
 
 from exp_graph.llm.base import LLMClient
 from exp_graph.llm.factory import create_llm_client
-from exp_graph.mas.evolution import classify_topology
+from exp_graph.mas.evolution import (
+    classify_topology,
+    condition_specific_skill_id,
+    default_operation_recommendations,
+    infer_condition_scope,
+    infer_topology_structure_features,
+)
 from exp_graph.mas.schemas import (
     EvidenceRecord,
     InsightReport,
@@ -41,6 +47,11 @@ def build_evidence_pack(
             "seeds": sorted({row.seed for row in rows if row.seed is not None}),
             "metrics": _metric_summary(rows),
             "dynamics": _dynamics_summary(rows),
+            "condition_scope": infer_condition_scope(_record_prompt_rows(rows)),
+            "structure_features": infer_topology_structure_features(
+                topology,
+                _record_prompt_rows(rows),
+            ),
             "risk_tags": sorted({tag for row in rows for tag in row.risk_tags}),
         }
     return {
@@ -126,6 +137,8 @@ def build_insight_prompt(*, evidence_pack: dict[str, Any]) -> str:
             "Separate observed evidence from hypotheses and label confidence accordingly.",
             "Identify whether failures come from missing coverage, excessive fan-in, weak sink choice, duplicate-count risk, poor provenance flow, or cost/accuracy mismatch.",
             "Translate each useful observation into an action the topology planner can use when generating future DAG edges.",
+            "For every useful insight, emit operation_recommendations as concrete operations: preserve/mutate/avoid/validate, a target such as edge_schedule, sink_selection, fan_in_limit, reducer_scope, skill_trigger, and a directly executable instruction.",
+            "Emit condition_buckets when the lesson only appears for specific n_agents or array_size ranges; avoid overgeneralizing a skill outside its bucket.",
             "Recommend avoid-skills for repeatedly bad structures and positive skills only for structures with evidence-backed benefit.",
             "Prefer concrete topology rules over generic advice such as use better communication.",
         ],
@@ -149,6 +162,31 @@ def build_insight_prompt(*, evidence_pack: dict[str, Any]) -> str:
                     "metric_snapshot": {},
                     "affected_skills": ["skill id"],
                     "recommended_actions": ["string"],
+                    "operation_recommendations": [
+                        {
+                            "action_type": "preserve | mutate | avoid | validate",
+                            "target": (
+                                "edge_schedule | sink_selection | fan_in_limit | "
+                                "reducer_scope | provenance_flow | skill_trigger"
+                            ),
+                            "instruction": "specific topology-planner operation",
+                            "conditions": {
+                                "agent_bucket": "agents_8",
+                                "array_size_bucket": "arrays_1024",
+                            },
+                            "expected_effect": {
+                                "rmse": "decrease",
+                                "messages": "bounded",
+                            },
+                        }
+                    ],
+                    "condition_buckets": [
+                        {
+                            "agent_bucket": "agents_8",
+                            "array_size_bucket": "arrays_1024",
+                            "supporting_refs": ["evidence id"],
+                        }
+                    ],
                     "confidence": 0.0,
                     "falsification_test": "string",
                 }
@@ -160,6 +198,7 @@ def build_insight_prompt(*, evidence_pack: dict[str, Any]) -> str:
             "Every insight must cite evidence_refs from the evidence pack.",
             "Single-seed claims must be marked hypothesis.",
             "Each recommended action must name the planner behavior it should change.",
+            "Each operation_recommendation must be executable by changing generated DAG edges, sink choice, fan-in, reducer scope, or skill trigger conditions.",
             "Do not claim a topology is good only because it is cheap; include accuracy and coverage evidence.",
             "Unsupported claims should be omitted.",
         ],
@@ -237,7 +276,26 @@ def _deterministic_insight_report(
             refs = [str(ref) for ref in summary.get("evidence_refs", [])]
             objective, _operators, skill_id, lesson = classify_topology(topology)
             risk_tags = summary.get("risk_tags", [])
-            affected = [skill_id] if skill_bank.get(skill_id) else []
+            condition_scope = summary.get("condition_scope", {})
+            structure_features = summary.get("structure_features", {})
+            operation_recommendations = default_operation_recommendations(
+                topology,
+                structure_features if isinstance(structure_features, dict) else {},
+                condition_scope if isinstance(condition_scope, dict) else {},
+            )
+            condition_buckets = [
+                condition_scope
+            ] if isinstance(condition_scope, dict) and condition_scope else []
+            candidate_skill_id = condition_specific_skill_id(
+                skill_id,
+                topology,
+                condition_scope if isinstance(condition_scope, dict) else {},
+            )
+            affected = (
+                [candidate_skill_id]
+                if skill_bank.get(candidate_skill_id)
+                else [skill_id] if skill_bank.get(skill_id) else []
+            )
             if refs:
                 insights.append(
                     MASInsight(
@@ -253,6 +311,8 @@ def _deterministic_insight_report(
                         metric_snapshot=summary.get("metrics", {}),
                         affected_skills=affected,
                         recommended_actions=["merge evidence into planner skill"],
+                        operation_recommendations=operation_recommendations,
+                        condition_buckets=condition_buckets,
                         confidence=0.65,
                         falsification_test=(
                             "Run additional seeds and compare regret against "
@@ -276,6 +336,20 @@ def _deterministic_insight_report(
                         metric_snapshot={"risk_tags": risk_tags},
                         affected_skills=affected,
                         recommended_actions=["merge risk notes and fallback hints"],
+                        operation_recommendations=[
+                            {
+                                "action_type": "avoid",
+                                "target": "skill_trigger",
+                                "instruction": (
+                                    "Keep this risk as a condition-bucketed fallback "
+                                    "instead of promoting it to a global topology rule."
+                                ),
+                                "conditions": condition_scope
+                                if isinstance(condition_scope, dict)
+                                else {},
+                            }
+                        ],
+                        condition_buckets=condition_buckets,
                         confidence=0.55,
                         falsification_test=(
                             "Check whether risk tags persist across larger n_agents."
@@ -294,14 +368,15 @@ def _deterministic_insight_report(
 
 
 def _insight_update(insight: MASInsight) -> dict[str, object]:
+    update: dict[str, object]
     if insight.insight_type in {"design_principle", "tradeoff"}:
-        return {
+        update = {
             "organization_policy": {
                 "rationale_rules": [insight.summary],
             }
         }
-    if insight.insight_type == "dynamics_pattern":
-        return {
+    elif insight.insight_type == "dynamics_pattern":
+        update = {
             "expected_dynamics": {
                 insight.insight_id: {
                     "summary": insight.summary,
@@ -309,8 +384,8 @@ def _insight_update(insight: MASInsight) -> dict[str, object]:
                 }
             }
         }
-    if insight.insight_type == "risk_pattern":
-        return {
+    elif insight.insight_type == "risk_pattern":
+        update = {
             "risk_notes": [
                 {
                     "source": "llm_insight_minister",
@@ -320,8 +395,8 @@ def _insight_update(insight: MASInsight) -> dict[str, object]:
                 }
             ]
         }
-    if insight.insight_type == "operator_rule":
-        return {
+    elif insight.insight_type == "operator_rule":
+        update = {
             "organization_policy": {
                 "operator_constraints": [
                     {
@@ -331,8 +406,8 @@ def _insight_update(insight: MASInsight) -> dict[str, object]:
                 ]
             }
         }
-    if insight.insight_type == "hypothesis":
-        return {
+    elif insight.insight_type == "hypothesis":
+        update = {
             "hypotheses": [
                 {
                     "source": "llm_insight_minister",
@@ -341,8 +416,8 @@ def _insight_update(insight: MASInsight) -> dict[str, object]:
                 }
             ]
         }
-    if insight.insight_type == "followup_experiment":
-        return {
+    elif insight.insight_type == "followup_experiment":
+        update = {
             "validation_plan": [
                 {
                     "source": "llm_insight_minister",
@@ -351,13 +426,35 @@ def _insight_update(insight: MASInsight) -> dict[str, object]:
                 }
             ]
         }
-    if insight.insight_type == "scaling_pattern":
-        return {
+    elif insight.insight_type == "scaling_pattern":
+        update = {
             "expected_tradeoff": {
                 "scaling_pattern": insight.summary,
             }
         }
-    return {}
+    else:
+        update = {}
+    return _attach_operation_update(update, insight)
+
+
+def _attach_operation_update(
+    update: dict[str, object],
+    insight: MASInsight,
+) -> dict[str, object]:
+    if not insight.operation_recommendations and not insight.condition_buckets:
+        return update
+    merged = dict(update)
+    policy = dict(merged.get("organization_policy", {}))
+    dynamics = dict(merged.get("expected_dynamics", {}))
+    if insight.operation_recommendations:
+        policy["operation_recommendations"] = insight.operation_recommendations
+    if insight.condition_buckets:
+        dynamics["condition_buckets"] = insight.condition_buckets
+    if policy:
+        merged["organization_policy"] = policy
+    if dynamics:
+        merged["expected_dynamics"] = dynamics
+    return merged
 
 
 def _metric_summary(rows: list[EvidenceRecord]) -> dict[str, float]:
@@ -386,6 +483,22 @@ def _dynamics_summary(rows: list[EvidenceRecord]) -> dict[str, object]:
         ),
         "retry_attempts": _mean_nested(trace_rows, "merge_quality", "retry_attempts"),
     }
+
+
+def _record_prompt_rows(rows: list[EvidenceRecord]) -> list[dict[str, object]]:
+    return [
+        {
+            "evidence_id": row.evidence_id,
+            "source_type": row.source_type,
+            "topology_name": row.topology_name,
+            "n_agents": row.n_agents,
+            "seed": row.seed,
+            **row.metrics,
+            "risk_tags": row.risk_tags,
+            "dynamics": row.dynamics,
+        }
+        for row in rows
+    ]
 
 
 def _mean_metric(metrics: list[dict[str, object]], *keys: str) -> float:

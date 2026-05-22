@@ -96,6 +96,13 @@ def format_insight_report(report: InsightReport) -> str:
                     f"    summary: {insight.summary}",
                 ]
             )
+            if insight.operation_recommendations:
+                lines.append("    operation_recommendations:")
+                lines.extend(
+                    "      - "
+                    + json.dumps(item, ensure_ascii=True, sort_keys=True)
+                    for item in insight.operation_recommendations
+                )
     if report.rejected_insights:
         lines.extend(["", "rejected_insights:"])
         lines.extend(
