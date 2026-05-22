@@ -362,10 +362,14 @@ def _merge_patch_group(
     expected_tradeoff_updates: dict[str, object] = {}
     expected_dynamics_updates: dict[str, object] = {}
     trigger = dict(skill.trigger)
+    tags = list(skill.tags)
+    tags_changed = False
 
     for patch in patches:
         if patch.action == "deprecate":
             changed.add("evidence")
+            tags = _dedupe([*tags, "deprecated"])
+            tags_changed = True
             continue
         evidence.extend(patch.evidence)
         update = patch.update or {}
@@ -453,6 +457,8 @@ def _merge_patch_group(
             "revision_history",
         ]
     )
+    if tags_changed:
+        changed.add("tags")
     return skill.model_copy(
         update={
             "version": new_version,
@@ -470,6 +476,7 @@ def _merge_patch_group(
             "validation_plan": _dedupe_dicts(validation_plan),
             "confidence": confidence or skill.confidence,
             "revision_history": revision_history,
+            "tags": tags,
         }
     ), sorted(changed)
 

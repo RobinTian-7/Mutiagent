@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from exp_graph.mas.schemas import PlannerRequest, SkillCard, SkillPatch
@@ -60,6 +61,7 @@ class SkillBank:
             if not self._matches_array_size(skill, request.array_size):
                 continue
             matches.append(skill)
+        matches.sort(key=lambda skill: self._retrieval_sort_key(skill, request))
         return matches
 
     def apply_patch(self, patch: SkillPatch) -> str:
@@ -89,6 +91,7 @@ class SkillBank:
                                 "summary": patch.lesson,
                             },
                         ],
+                        "tags": _dedupe([*skill.tags, "deprecated"]),
                     }
                 )
             return "deprecated"
@@ -153,11 +156,201 @@ class SkillBank:
             return False
         return True
 
+    @staticmethod
+    def _retrieval_sort_key(
+        skill: SkillCard,
+        request: PlannerRequest,
+    ) -> tuple[int, float, int, str]:
+        return (
+            -_condition_specificity(skill, request),
+            _skill_mean_rmse(skill),
+            -_skill_evidence_count(skill),
+            skill.skill_id,
+        )
+
 
 def is_selectable_skill(skill: SkillCard) -> bool:
     """Return whether a skill is safe for the emperor to choose directly."""
     tags = {tag.lower() for tag in skill.tags}
-    return "counterexample" not in tags and not skill.skill_id.startswith("cf_avoid_")
+    blocked_tags = {"archived", "counterexample", "deprecated"}
+    return not (tags & blocked_tags) and not skill.skill_id.startswith("cf_avoid_")
+
+
+def compact_skill_bank(
+    bank: SkillBank,
+    *,
+    max_per_condition: int = 3,
+) -> tuple[SkillBank, SkillBank, dict[str, object]]:
+    """Keep only the lowest-RMSE selectable skills in each condition bucket."""
+    limit = max(1, int(max_per_condition))
+    grouped: dict[str, list[SkillCard]] = {}
+    archived: list[SkillCard] = []
+    for skill in sorted(bank, key=lambda item: item.skill_id):
+        if not is_selectable_skill(skill):
+            archived.append(_archive_skill(skill, "non_selectable"))
+            continue
+        bucket = _skill_condition_bucket(skill)
+        grouped.setdefault(bucket, []).append(skill)
+
+    active: list[SkillCard] = []
+    bucket_summaries: dict[str, dict[str, object]] = {}
+    for bucket, skills in sorted(grouped.items()):
+        ranked = sorted(
+            skills,
+            key=lambda skill: (
+                _skill_mean_rmse(skill),
+                -_skill_evidence_count(skill),
+                skill.skill_id,
+            ),
+        )
+        kept = ranked[:limit]
+        dropped = ranked[limit:]
+        active.extend(kept)
+        archived.extend(
+            _archive_skill(skill, f"outside_top_{limit}_for_condition_bucket")
+            for skill in dropped
+        )
+        bucket_summaries[bucket] = {
+            "kept": [skill.skill_id for skill in kept],
+            "archived": [skill.skill_id for skill in dropped],
+        }
+
+    summary = {
+        "max_per_condition": limit,
+        "active_count": len(active),
+        "archived_count": len(archived),
+        "condition_buckets": bucket_summaries,
+    }
+    return SkillBank(active), SkillBank(archived), summary
+
+
+def compact_skill_dir(
+    *,
+    skill_dir: Path | str,
+    output_dir: Path | str,
+    archive_dir: Path | str,
+    max_per_condition: int = 3,
+) -> dict[str, object]:
+    """Compact a skill directory into active and archived skill directories."""
+    active, archived, summary = compact_skill_bank(
+        SkillBank.load_dir(skill_dir),
+        max_per_condition=max_per_condition,
+    )
+    output_path = Path(output_dir)
+    archive_path = Path(archive_dir)
+    for path in [output_path, archive_path]:
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+    active.save_dir(output_path)
+    archived.save_dir(archive_path)
+    summary = {
+        **summary,
+        "input_dir": str(skill_dir),
+        "output_dir": str(output_path),
+        "archive_dir": str(archive_path),
+    }
+    (output_path / "skill_compaction_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
+def _condition_specificity(skill: SkillCard, request: PlannerRequest) -> int:
+    trigger = skill.trigger
+    score = 0
+    if trigger.get("condition_key"):
+        score += 8
+    agent_counts = trigger.get("agent_counts")
+    if agent_counts is not None and request.n_agents in {int(item) for item in agent_counts}:
+        score += 4
+    elif (
+        trigger.get("min_agents") is not None
+        and trigger.get("max_agents") is not None
+        and int(trigger["min_agents"]) == int(trigger["max_agents"]) == request.n_agents
+    ):
+        score += 4
+    elif trigger.get("min_agents") is not None or trigger.get("max_agents") is not None:
+        score += 2
+
+    if request.array_size is not None:
+        array_sizes = trigger.get("array_sizes")
+        if array_sizes is not None and request.array_size in {
+            int(item) for item in array_sizes
+        }:
+            score += 4
+        elif (
+            trigger.get("min_array_size") is not None
+            and trigger.get("max_array_size") is not None
+            and int(trigger["min_array_size"])
+            == int(trigger["max_array_size"])
+            == request.array_size
+        ):
+            score += 4
+        elif (
+            trigger.get("min_array_size") is not None
+            or trigger.get("max_array_size") is not None
+        ):
+            score += 2
+    return score
+
+
+def _skill_mean_rmse(skill: SkillCard) -> float:
+    value = skill.expected_tradeoff.get("mean_rmse")
+    if value is None:
+        return float("inf")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _skill_evidence_count(skill: SkillCard) -> int:
+    value = skill.expected_tradeoff.get("active_evidence_count")
+    if value is not None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            pass
+    return len(skill.evidence_refs) + len(skill.evidence)
+
+
+def _skill_condition_bucket(skill: SkillCard) -> str:
+    trigger = skill.trigger
+    return json.dumps(
+        {
+            "task_family": skill.task_family,
+            "objective": skill.objective,
+            "agent_bucket": trigger.get("agent_bucket")
+            or _range_bucket(trigger, "agents", "min_agents", "max_agents"),
+            "array_size_bucket": trigger.get("array_size_bucket")
+            or _range_bucket(trigger, "arrays", "min_array_size", "max_array_size"),
+        },
+        sort_keys=True,
+    )
+
+
+def _range_bucket(
+    trigger: dict[str, object],
+    prefix: str,
+    min_key: str,
+    max_key: str,
+) -> str:
+    min_value = trigger.get(min_key)
+    max_value = trigger.get(max_key)
+    if min_value is not None and max_value is not None and int(min_value) == int(max_value):
+        return f"{prefix}_{int(min_value)}"
+    if min_value is not None or max_value is not None:
+        return f"{prefix}_{min_value or 'any'}_{max_value or 'any'}"
+    return f"{prefix}_any"
+
+
+def _archive_skill(skill: SkillCard, reason: str) -> SkillCard:
+    tags = _dedupe([*skill.tags, "archived"])
+    dynamics = dict(skill.expected_dynamics)
+    dynamics["archive_reason"] = reason
+    return skill.model_copy(update={"tags": tags, "expected_dynamics": dynamics})
 
 
 def merge_skill(skill: SkillCard, patch: SkillPatch) -> SkillCard:

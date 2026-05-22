@@ -12,6 +12,10 @@ set -euo pipefail
 #
 # The existing LangGraph paper workflow is still available through:
 #   PIPELINE_MODE=langgraph_paper scripts/run_mas_autoskill_free_dag_pipeline.sh
+#
+# Best-so-far elite retention is controlled by:
+#   BEST_SO_FAR_MODE=on|off
+# Legacy BEST_SO_FAR_ELITE=0|1 is still accepted when BEST_SO_FAR_MODE is unset.
 
 ROOT="${ROOT:-/Users/robintian/AI/Agent-Expretional-Graph}"
 REPO="${REPO:-$ROOT/exp-graph}"
@@ -46,9 +50,27 @@ RETAIN_TRACES="${RETAIN_TRACES:-1}"
 VERBOSE_EVENTS="${VERBOSE_EVENTS:-1}"
 RUN_BASELINES="${RUN_BASELINES:-1}"
 RUN_EVOLUTION="${RUN_EVOLUTION:-1}"
-BEST_SO_FAR_ELITE="${BEST_SO_FAR_ELITE:-1}"
+if [[ -z "${BEST_SO_FAR_MODE:-}" ]]; then
+  BEST_SO_FAR_MODE="${BEST_SO_FAR_ELITE:-on}"
+fi
+case "$BEST_SO_FAR_MODE" in
+  1|true|TRUE|yes|YES|y|Y|on|ON|enabled|ENABLED)
+    BEST_SO_FAR_MODE="on"
+    BEST_SO_FAR_ELITE=1
+    ;;
+  0|false|FALSE|no|NO|n|N|off|OFF|disabled|DISABLED)
+    BEST_SO_FAR_MODE="off"
+    BEST_SO_FAR_ELITE=0
+    ;;
+  *)
+    echo "Invalid BEST_SO_FAR_MODE=$BEST_SO_FAR_MODE. Use on or off." >&2
+    exit 2
+    ;;
+esac
 BEST_SKILLS_DIR="${BEST_SKILLS_DIR:-$OUT_ROOT/skills_best_so_far}"
 BEST_SO_FAR_STATE="${BEST_SO_FAR_STATE:-$OUT_ROOT/best_so_far.json}"
+SKILL_TOP_K_PER_CONDITION="${SKILL_TOP_K_PER_CONDITION:-3}"
+SKILL_ARCHIVE_DIR="${SKILL_ARCHIVE_DIR:-$OUT_ROOT/skills_archive}"
 
 GRAPH_SEARCH_MODE="${GRAPH_SEARCH_MODE:-topk}"
 NUM_GRAPH_CANDIDATES="${NUM_GRAPH_CANDIDATES:-4}"
@@ -101,6 +123,10 @@ truthy() {
     1|true|TRUE|yes|YES|y|Y) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+best_so_far_enabled() {
+  [[ "$BEST_SO_FAR_MODE" == "on" ]]
 }
 
 trace_args=()
@@ -283,8 +309,6 @@ import json
 import sys
 from pathlib import Path
 
-from exp_graph.mas.matrix import objective_score
-
 collected = Path(sys.argv[1])
 label = sys.argv[2]
 path = collected / "cross_seed_metrics.json"
@@ -294,16 +318,17 @@ data = json.loads(path.read_text(encoding="utf-8"))
 conditions = [row for row in data.get("conditions", []) if isinstance(row, dict)]
 if not conditions:
     raise SystemExit(f"no conditions in {path}")
-scores = [objective_score(row) for row in conditions]
 rmse = [float(row.get("mean_rmse", 0.0) or 0.0) for row in conditions]
 exact = [float(row.get("exact_match_rate", 0.0) or 0.0) for row in conditions]
 tokens = [float(row.get("mean_token_cost", 0.0) or 0.0) for row in conditions]
+mean_rmse = sum(rmse) / len(rmse)
 payload = {
     "label": label,
-    "score": sum(scores) / len(scores),
-    "score_higher_is_better": True,
+    "score": mean_rmse,
+    "score_metric": "mean_rmse",
+    "score_lower_is_better": True,
     "condition_count": len(conditions),
-    "mean_rmse": sum(rmse) / len(rmse),
+    "mean_rmse": mean_rmse,
     "mean_exact_match_rate": sum(exact) / len(exact),
     "mean_token_cost": sum(tokens) / len(tokens),
 }
@@ -326,7 +351,9 @@ if not state_path.exists():
     print("promote")
     raise SystemExit(0)
 best = json.loads(state_path.read_text(encoding="utf-8"))
-if float(current["score"]) > float(best.get("score", float("-inf"))) + 1e-12:
+current_rmse = float(current["mean_rmse"])
+best_rmse = float(best.get("mean_rmse", best.get("score", float("inf"))))
+if current_rmse < best_rmse - 1e-12:
     print("promote")
 else:
     print("retain")
@@ -365,9 +392,15 @@ promote_best_so_far() {
   local eval_dir="$3"
   local score_json="$4"
   local best_eval_dir="$OUT_ROOT/evolution/best_so_far_eval"
+  local archive_dir="$SKILL_ARCHIVE_DIR/$label"
 
-  echo "[elite:$label] promote -> $BEST_SKILLS_DIR"
-  copy_skill_dir "$skill_dir" "$BEST_SKILLS_DIR" "best-so-far elite promoted from $label"
+  echo "[elite:$label] compact/promote -> $BEST_SKILLS_DIR"
+  run_cli compact-skills \
+    --skill-dir "$skill_dir" \
+    --output-dir "$BEST_SKILLS_DIR" \
+    --archive-dir "$archive_dir" \
+    --max-per-condition "$SKILL_TOP_K_PER_CONDITION"
+  printf 'best-so-far elite promoted from %s\n' "$label" > "$BEST_SKILLS_DIR/.best_so_far"
   rm -rf "$best_eval_dir"
   mkdir -p "$best_eval_dir"
   if [[ -d "$eval_dir/collected" ]]; then
@@ -381,7 +414,7 @@ apply_best_so_far_elite() {
   local candidate_skills="$2"
   local eval_dir="$3"
 
-  if ! truthy "$BEST_SO_FAR_ELITE"; then
+  if ! best_so_far_enabled; then
     EVOLUTION_CURRENT_SKILLS="$candidate_skills"
     return
   fi
@@ -405,7 +438,7 @@ apply_best_so_far_elite() {
 }
 
 write_comparison_report() {
-  PYTHONPATH=src "$PYTHON_BIN" - "$OUT_ROOT" "$EVOLUTION_ITERS" <<'PY'
+  PYTHONPATH=src "$PYTHON_BIN" - "$OUT_ROOT" "$EVOLUTION_ITERS" "$BEST_SO_FAR_MODE" <<'PY'
 import csv
 import json
 import sys
@@ -413,6 +446,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 iters = int(sys.argv[2])
+best_so_far_mode = sys.argv[3]
 rows = []
 
 sources = [
@@ -423,7 +457,8 @@ sources = [
 ]
 for i in range(iters):
     sources.append((f"self_evolved_free_dag_iter_{i + 1}", root / "evolution" / f"iter_{i}_eval" / "collected"))
-sources.append(("self_evolved_free_dag_best_so_far", root / "evolution" / "best_so_far_eval" / "collected"))
+if best_so_far_mode == "on":
+    sources.append(("self_evolved_free_dag_best_so_far", root / "evolution" / "best_so_far_eval" / "collected"))
 
 for method, collected in sources:
     path = collected / "cross_seed_metrics.json"
@@ -565,8 +600,10 @@ echo "  array_sizes: $ARRAY_SIZES"
 echo "  train_seeds: $TRAIN_SEEDS"
 echo "  eval_seeds: $EVAL_SEEDS"
 echo "  evolution_iters: $EVOLUTION_ITERS"
-echo "  best_so_far_elite: $BEST_SO_FAR_ELITE"
+echo "  best_so_far_mode: $BEST_SO_FAR_MODE"
 echo "  best_skills_dir: $BEST_SKILLS_DIR"
+echo "  skill_top_k_per_condition: $SKILL_TOP_K_PER_CONDITION"
+echo "  skill_archive_dir: $SKILL_ARCHIVE_DIR"
 
 if truthy "$RUN_BASELINES"; then
   run_eval_matrix \
@@ -604,7 +641,7 @@ fi
 
 if truthy "$RUN_EVOLUTION"; then
   EVOLUTION_CURRENT_SKILLS="$EMPTY_SKILLS"
-  if truthy "$BEST_SO_FAR_ELITE" && [[ -f "$BEST_SO_FAR_STATE" && -d "$BEST_SKILLS_DIR" ]]; then
+  if best_so_far_enabled && [[ -f "$BEST_SO_FAR_STATE" && -d "$BEST_SKILLS_DIR" ]]; then
     EVOLUTION_CURRENT_SKILLS="$BEST_SKILLS_DIR"
     echo "[elite] resuming from existing best-so-far: $BEST_SKILLS_DIR"
   fi

@@ -27,7 +27,11 @@ from exp_graph.mas.planner import EmperorPlanner
 from exp_graph.mas.pipeline import run_mas_pipeline
 from exp_graph.mas.schemas import MASRuntimeConfig, PlannerRequest
 from exp_graph.mas.search import search_candidates
-from exp_graph.mas.skill_bank import SkillBank, render_skill_bank_markdown
+from exp_graph.mas.skill_bank import (
+    SkillBank,
+    compact_skill_dir,
+    render_skill_bank_markdown,
+)
 from exp_graph.mas.workflow import (
     WORKFLOW_NODES,
     WorkflowRunOptions,
@@ -87,6 +91,12 @@ def main() -> None:
     evolve.add_argument("--backup", action="store_true")
     evolve.add_argument("--markdown-dir", type=Path, default=None)
     evolve.add_argument("--revision-dir", type=Path, default=None)
+
+    compact = subparsers.add_parser("compact-skills")
+    compact.add_argument("--skill-dir", type=Path, required=True)
+    compact.add_argument("--output-dir", type=Path, required=True)
+    compact.add_argument("--archive-dir", type=Path, required=True)
+    compact.add_argument("--max-per-condition", type=int, default=3)
 
     run = subparsers.add_parser("run")
     run.add_argument("--skill-dir", type=Path, required=True)
@@ -268,6 +278,16 @@ def main() -> None:
         )
         print("[evolve-skills]")
         print(format_evolution_result(result))
+        return
+
+    if args.command == "compact-skills":
+        result = compact_skill_dir(
+            skill_dir=args.skill_dir,
+            output_dir=args.output_dir,
+            archive_dir=args.archive_dir,
+            max_per_condition=args.max_per_condition,
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
         return
 
     if args.command == "run":
