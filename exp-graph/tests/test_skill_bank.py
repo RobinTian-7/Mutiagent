@@ -192,10 +192,42 @@ def test_compact_skill_bank_keeps_top_rmse_per_condition_bucket() -> None:
         "bucket_skill_2",
         "bucket_skill_3",
         "other_array_bucket",
+        "cf_avoid_bad",
     }
-    assert set(archived.skills) == {"bucket_skill_4", "cf_avoid_bad"}
-    assert summary["active_count"] == 4
+    assert set(archived.skills) == {"bucket_skill_4"}
+    assert summary["active_count"] == 5
+    assert summary["active_avoid_count"] == 1
     assert archived.get("bucket_skill_4").tags == ["archived"]
+
+
+def test_skill_bank_retrieves_avoid_skills_as_negative_constraints() -> None:
+    avoid = SkillCard(
+        skill_id="cf_avoid_generated:bad",
+        objective="balanced",
+        trigger={
+            "min_agents": 8,
+            "max_agents": 8,
+            "min_array_size": 512,
+            "max_array_size": 512,
+        },
+        organization_policy={"topology_name": "generated:bad"},
+    )
+    deprecated = avoid.model_copy(
+        update={
+            "skill_id": "cf_avoid_generated:old",
+            "tags": ["deprecated"],
+        }
+    )
+    bank = SkillBank([avoid, deprecated])
+
+    matches = bank.retrieve_avoid(
+        PlannerRequest.from_names(n_agents=8, array_size=512, objective="balanced")
+    )
+
+    assert [skill.skill_id for skill in matches] == ["cf_avoid_generated:bad"]
+    assert bank.retrieve(
+        PlannerRequest.from_names(n_agents=8, array_size=512, objective="balanced")
+    ) == []
 
 
 def test_compact_skill_dir_writes_active_and_archive_dirs(tmp_path) -> None:

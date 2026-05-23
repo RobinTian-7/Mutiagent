@@ -61,6 +61,33 @@ def test_consolidate_batch_adds_and_merges_versioned_skills() -> None:
 
 
 def test_generated_topology_skill_records_structure_and_condition_bucket() -> None:
+    protocol_spec = {
+        "name": "balanced_tree_star",
+        "n_agents": 8,
+        "steps": [
+            {
+                "transmissions": [[0, 1], [2, 3], [4, 5], [6, 7]],
+                "description": "pair reduce",
+                "operator": "tree_reduce",
+            },
+            {
+                "transmissions": [[1, 3], [5, 7]],
+                "description": "merge pairs",
+                "operator": "tree_reduce",
+            },
+            {
+                "transmissions": [[3, 7]],
+                "description": "final sink",
+                "operator": "tree_reduce",
+            },
+        ],
+        "operators": ["llm_generate_dag"],
+        "metadata": {
+            "generated_graph": True,
+            "selected_primary": 7,
+            "candidate_id": "candidate_0",
+        },
+    }
     records = [
         EvidenceRecord(
             evidence_id="run:generated_tree:8:1024:1",
@@ -77,6 +104,7 @@ def test_generated_topology_skill_records_structure_and_condition_bucket() -> No
                 "generated_graph_selected_primary": 7,
                 "protocol_steps": 3,
                 "protocol_messages": 7,
+                "protocol_spec": protocol_spec,
             },
         )
     ]
@@ -95,6 +123,8 @@ def test_generated_topology_skill_records_structure_and_condition_bucket() -> No
     assert structure["sink_pattern"] == "single_selected_primary"
     recommendations = skill.organization_policy["operation_recommendations"]
     assert any(item["target"] == "final_reducer" for item in recommendations)
+    assert skill.organization_policy["protocol_spec"] == protocol_spec
+    assert skill.expected_dynamics["protocol_spec_hash"]
 
 
 def test_generated_topology_skills_are_bucketed_by_condition() -> None:

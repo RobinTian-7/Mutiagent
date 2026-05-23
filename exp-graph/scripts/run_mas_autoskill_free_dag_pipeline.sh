@@ -305,29 +305,41 @@ elite_score_json() {
   local label="$2"
 
   PYTHONPATH=src "$PYTHON_BIN" - "$collected_dir" "$label" <<'PY'
+import csv
 import json
 import sys
 from pathlib import Path
 
 collected = Path(sys.argv[1])
 label = sys.argv[2]
-path = collected / "cross_seed_metrics.json"
+path = collected / "matrix_run_summary.csv"
 if not path.exists():
-    raise SystemExit(f"missing cross-seed metrics: {path}")
-data = json.loads(path.read_text(encoding="utf-8"))
-conditions = [row for row in data.get("conditions", []) if isinstance(row, dict)]
-if not conditions:
-    raise SystemExit(f"no conditions in {path}")
-rmse = [float(row.get("mean_rmse", 0.0) or 0.0) for row in conditions]
-exact = [float(row.get("exact_match_rate", 0.0) or 0.0) for row in conditions]
-tokens = [float(row.get("mean_token_cost", 0.0) or 0.0) for row in conditions]
+    raise SystemExit(f"missing run-level metrics for best-so-far scoring: {path}")
+with path.open("r", encoding="utf-8", newline="") as handle:
+    rows = [
+        row
+        for row in csv.DictReader(handle)
+        if row.get("phase") == "test"
+        and row.get("planner_policy") == "free_graph"
+        and row.get("objective")
+    ]
+if not rows:
+    raise SystemExit(f"no labeled held-out free_graph eval runs in {path}")
+rmse = [float(row["FinalRMSE"]) for row in rows]
+exact = [1.0 if row.get("FinalExactMatch", "").lower() == "true" else 0.0 for row in rows]
+tokens = [
+    float(row.get("TotalPromptTokens", 0.0) or 0.0)
+    + float(row.get("TotalCompletionTokens", 0.0) or 0.0)
+    for row in rows
+]
 mean_rmse = sum(rmse) / len(rmse)
 payload = {
     "label": label,
     "score": mean_rmse,
     "score_metric": "mean_rmse",
+    "score_aggregation": "per_eval_run_arithmetic_mean",
     "score_lower_is_better": True,
-    "condition_count": len(conditions),
+    "run_count": len(rows),
     "mean_rmse": mean_rmse,
     "mean_exact_match_rate": sum(exact) / len(exact),
     "mean_token_cost": sum(tokens) / len(tokens),
@@ -351,6 +363,12 @@ if not state_path.exists():
     print("promote")
     raise SystemExit(0)
 best = json.loads(state_path.read_text(encoding="utf-8"))
+expected_aggregation = "per_eval_run_arithmetic_mean"
+if best.get("score_aggregation") != expected_aggregation:
+    raise SystemExit(
+        "existing best_so_far.json uses the obsolete condition-row scoring rule; "
+        "use a fresh OUT_ROOT or delete BEST_SO_FAR_STATE before resuming"
+    )
 current_rmse = float(current["mean_rmse"])
 best_rmse = float(best.get("mean_rmse", best.get("score", float("inf"))))
 if current_rmse < best_rmse - 1e-12:

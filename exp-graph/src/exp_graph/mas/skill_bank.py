@@ -64,6 +64,26 @@ class SkillBank:
         matches.sort(key=lambda skill: self._retrieval_sort_key(skill, request))
         return matches
 
+    def retrieve_avoid(self, request: PlannerRequest) -> list[SkillCard]:
+        """Return matching avoid/counterexample skills as risk constraints."""
+        matches: list[SkillCard] = []
+        for skill in self.skills.values():
+            if not is_avoid_skill(skill):
+                continue
+            if not _is_active_skill(skill):
+                continue
+            if skill.task_family != request.task_family:
+                continue
+            if skill.objective not in {request.objective.name, "balanced"}:
+                continue
+            if not self._matches_agent_range(skill, request.n_agents):
+                continue
+            if not self._matches_array_size(skill, request.array_size):
+                continue
+            matches.append(skill)
+        matches.sort(key=lambda skill: self._retrieval_sort_key(skill, request))
+        return matches
+
     def apply_patch(self, patch: SkillPatch) -> str:
         """Apply one AutoSkill-style lifecycle patch."""
         if patch.action == "discard":
@@ -171,9 +191,19 @@ class SkillBank:
 
 def is_selectable_skill(skill: SkillCard) -> bool:
     """Return whether a skill is safe for the emperor to choose directly."""
+    return _is_active_skill(skill) and not is_avoid_skill(skill)
+
+
+def is_avoid_skill(skill: SkillCard) -> bool:
+    """Return whether a skill should be used only as a negative constraint."""
     tags = {tag.lower() for tag in skill.tags}
-    blocked_tags = {"archived", "counterexample", "deprecated"}
-    return not (tags & blocked_tags) and not skill.skill_id.startswith("cf_avoid_")
+    return "counterexample" in tags or skill.skill_id.startswith("cf_avoid_")
+
+
+def _is_active_skill(skill: SkillCard) -> bool:
+    tags = {tag.lower() for tag in skill.tags}
+    blocked_tags = {"archived", "deprecated"}
+    return not (tags & blocked_tags)
 
 
 def compact_skill_bank(
@@ -185,7 +215,11 @@ def compact_skill_bank(
     limit = max(1, int(max_per_condition))
     grouped: dict[str, list[SkillCard]] = {}
     archived: list[SkillCard] = []
+    active_avoid: list[SkillCard] = []
     for skill in sorted(bank, key=lambda item: item.skill_id):
+        if is_avoid_skill(skill) and _is_active_skill(skill):
+            active_avoid.append(skill)
+            continue
         if not is_selectable_skill(skill):
             archived.append(_archive_skill(skill, "non_selectable"))
             continue
@@ -217,11 +251,12 @@ def compact_skill_bank(
 
     summary = {
         "max_per_condition": limit,
-        "active_count": len(active),
+        "active_count": len(active) + len(active_avoid),
+        "active_avoid_count": len(active_avoid),
         "archived_count": len(archived),
         "condition_buckets": bucket_summaries,
     }
-    return SkillBank(active), SkillBank(archived), summary
+    return SkillBank([*active, *active_avoid]), SkillBank(archived), summary
 
 
 def compact_skill_dir(

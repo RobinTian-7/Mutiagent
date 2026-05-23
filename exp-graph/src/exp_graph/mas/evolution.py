@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -539,6 +541,7 @@ def make_skill_card(
         topology_name,
         feature_evidence,
     )
+    protocol_spec = _best_protocol_spec(feature_evidence)
     operation_recommendations = default_operation_recommendations(
         topology_name,
         structure_features,
@@ -585,7 +588,7 @@ def make_skill_card(
             ),
             "topology_name": topology_name,
             "operators": operators,
-            "protocol_spec": None,
+            "protocol_spec": protocol_spec,
             "structure_features": structure_features,
             "operation_recommendations": operation_recommendations,
         },
@@ -593,6 +596,7 @@ def make_skill_card(
         expected_dynamics={
             "condition_scope": condition_scope,
             "structure_features": structure_features,
+            "protocol_spec_hash": _protocol_spec_hash(protocol_spec),
         },
         evidence=evidence,
         evidence_refs=evidence_refs or [],
@@ -613,6 +617,29 @@ def _mean_record_metric(records: list[EvidenceRecord], *keys: str) -> float:
         if any(key in record.metrics and record.metrics[key] is not None for key in keys)
     ]
     return statistics.fmean(values) if values else 0.0
+
+
+def _best_protocol_spec(evidence: list[dict[str, Any]]) -> dict[str, object] | None:
+    candidates: list[tuple[float, dict[str, object]]] = []
+    for row in evidence:
+        spec = row.get("protocol_spec")
+        if spec is None and isinstance(row.get("metrics"), dict):
+            spec = row["metrics"].get("protocol_spec")  # type: ignore[index]
+        if not isinstance(spec, dict) or not spec.get("steps"):
+            continue
+        rmse = _evidence_float(row, "mean_rmse", "final_rmse")
+        candidates.append((rmse if rmse is not None else float("inf"), spec))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def _protocol_spec_hash(protocol_spec: dict[str, object] | None) -> str | None:
+    if protocol_spec is None:
+        return None
+    payload = json.dumps(protocol_spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def _record_metric(record: EvidenceRecord, *keys: str) -> float:

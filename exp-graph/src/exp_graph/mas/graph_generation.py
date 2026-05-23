@@ -357,6 +357,7 @@ def build_free_graph_prompt(
     *,
     request: PlannerRequest,
     skills: list[SkillCard],
+    avoid_skills: list[SkillCard] | None = None,
     options: GraphValidationOptions,
     num_candidates: int,
 ) -> str:
@@ -439,10 +440,15 @@ def build_free_graph_prompt(
             "budget-aware partial aggregation",
         ],
         "skill_evidence": [_skill_context(skill) for skill in skills[:6]],
+        "avoid_or_counterexample_skills": [
+            _skill_context(skill) for skill in (avoid_skills or [])[:6]
+        ],
         "skill_usage_rules": [
             "Use structure_features and operation_recommendations from skills as concrete design operations, not as topology names to copy blindly.",
+            "If a skill includes organization_policy.protocol_spec, treat it as an executable reference edge schedule; preserve or deliberately improve its coverage, sink, and fan-in properties.",
             "Respect condition buckets in skill triggers; do not generalize a skill outside its n_agents or array_size bucket without evidence.",
             "When a skill says preserve a selected_primary sink, emit that sink explicitly in selected_primary and maintain temporal reachability to it.",
+            "Treat avoid_or_counterexample_skills as negative constraints; do not reproduce their edge schedules or failure patterns for the same condition bucket.",
         ],
         "required_json_shape": {
             "candidates": [
@@ -489,14 +495,23 @@ def _generate_graph_candidates(
     llm_client: LLMClient | None,
 ) -> tuple[list[GeneratedGraphPlan], list[str]]:
     count = max(1, runtime.num_graph_candidates)
+    positive_skills = skill_bank.retrieve(request)
+    seeded = _skill_seeded_graph_candidates(
+        request=request,
+        skills=positive_skills,
+    )
+    remaining_count = max(0, count - len(seeded))
     if runtime.llm_provider == "fake":
-        return _fake_graph_candidates(request, count), []
+        return [*seeded, *_fake_graph_candidates(request, remaining_count)], []
+    if remaining_count == 0:
+        return seeded, []
     client = llm_client or create_llm_client(runtime.llm_provider)
     prompt = build_free_graph_prompt(
         request=request,
-        skills=skill_bank.retrieve(request),
+        skills=positive_skills,
+        avoid_skills=skill_bank.retrieve_avoid(request),
         options=options,
-        num_candidates=count,
+        num_candidates=remaining_count,
     )
     response = client.complete(
         prompt,
@@ -506,9 +521,93 @@ def _generate_graph_candidates(
     candidates = parse_graph_candidates_response(
         response.text,
         n_agents=request.n_agents,
-        expected_count=count,
+        expected_count=remaining_count,
     )
-    return candidates, [response.text]
+    return [*seeded, *candidates], [response.text]
+
+
+def _skill_seeded_graph_candidates(
+    *,
+    request: PlannerRequest,
+    skills: list[SkillCard],
+) -> list[GeneratedGraphPlan]:
+    graphs: list[GeneratedGraphPlan] = []
+    seen: set[str] = set()
+    for skill in skills[:6]:
+        spec_data = skill.organization_policy.get("protocol_spec")
+        if not isinstance(spec_data, dict) or not spec_data.get("steps"):
+            continue
+        try:
+            spec = ProtocolGraphSpec.model_validate(spec_data)
+        except Exception:
+            continue
+        if spec.n_agents != request.n_agents:
+            continue
+        graph = _graph_from_skill_protocol(skill, spec)
+        digest = _graph_digest(graph)
+        if digest in seen:
+            continue
+        seen.add(digest)
+        graphs.append(graph)
+        if len(graphs) >= 3:
+            break
+    return graphs
+
+
+def _graph_from_skill_protocol(
+    skill: SkillCard,
+    spec: ProtocolGraphSpec,
+) -> GeneratedGraphPlan:
+    selected = spec.metadata.get("selected_primary")
+    return GeneratedGraphPlan(
+        candidate_id=f"skill_{_safe_candidate_id(skill.skill_id)}",
+        name=spec.name or _safe_candidate_id(skill.skill_id),
+        graph_type=str(spec.metadata.get("graph_type") or "temporal_dag"),
+        n_agents=spec.n_agents,
+        selected_primary=_optional_int(selected),
+        steps=[
+            GeneratedGraphStep(
+                description=step.description,
+                edges=step.transmissions,
+                operator_hint=step.operator or "skill_replay",
+            )
+            for step in spec.steps
+        ],
+        rationale=f"Replay executable DAG stored in skill {skill.skill_id}.",
+        expected_tradeoff=skill.expected_tradeoff,
+        fallback_topology=(
+            str(spec.metadata["fallback_topology"])
+            if spec.metadata.get("fallback_topology") is not None
+            else None
+        ),
+    )
+
+
+def _safe_candidate_id(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_")[:80] or "skill"
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _graph_digest(graph: GeneratedGraphPlan) -> str:
+    return json.dumps(
+        [
+            {
+                "edges": step.edges,
+                "operator_hint": step.operator_hint,
+            }
+            for step in graph.steps
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def parse_graph_candidates_response(

@@ -335,6 +335,11 @@ def _evidence_records_from_result(
                 if result.config.protocol_spec is not None
                 else {}
             ),
+            "protocol_spec": (
+                result.config.protocol_spec.model_dump(mode="json")
+                if result.config.protocol_spec is not None
+                else None
+            ),
         },
         risk_tags=_run_risk_tags(summary),
         created_at=created_at,

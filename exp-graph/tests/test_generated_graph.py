@@ -6,13 +6,18 @@ from exp_graph.mas.graph_generation import (
     GeneratedGraphPlan,
     GeneratedGraphStep,
     GraphValidationOptions,
+    build_free_graph_prompt,
     compile_generated_graph,
+    plan_free_graph,
     parse_graph_candidates_response,
     repair_graph_plan,
     validate_graph_plan,
     _objective_score,
 )
+from exp_graph.mas.schemas import MASRuntimeConfig, PlannerRequest, SkillCard
+from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.protocols import build_protocol_schedule_from_spec
+from exp_graph.tasks import CountFrequencyTaskAdapter
 
 
 def test_generated_graph_schema_accepts_valid_temporal_dag() -> None:
@@ -149,3 +154,89 @@ def test_accuracy_max_candidate_score_uses_only_rmse() -> None:
         low_cost_high_rmse,
         score_mode="accuracy_max",
     )
+
+
+def test_free_graph_prompt_includes_avoid_skills_as_constraints() -> None:
+    prompt = build_free_graph_prompt(
+        request=PlannerRequest.from_names(
+            n_agents=4,
+            array_size=128,
+            planner_mode="graph_generate",
+        ),
+        skills=[],
+        avoid_skills=[
+            SkillCard(
+                skill_id="cf_avoid_generated:bad",
+                objective="balanced",
+                organization_policy={"topology_name": "generated:bad"},
+            )
+        ],
+        options=GraphValidationOptions(n_agents=4),
+        num_candidates=1,
+    )
+
+    assert "avoid_or_counterexample_skills" in prompt
+    assert "cf_avoid_generated:bad" in prompt
+    assert "negative constraints" in prompt
+
+
+def test_plan_free_graph_replays_skill_protocol_as_candidate(tmp_path: Path) -> None:
+    protocol_spec = {
+        "name": "stored_tree",
+        "n_agents": 4,
+        "steps": [
+            {
+                "transmissions": [[0, 1], [2, 3]],
+                "description": "pair reduce",
+                "operator": "tree_reduce",
+            },
+            {
+                "transmissions": [[1, 3]],
+                "description": "final sink",
+                "operator": "tree_reduce",
+            },
+        ],
+        "operators": ["llm_generate_dag"],
+        "metadata": {
+            "generated_graph": True,
+            "candidate_id": "old_best",
+            "selected_primary": 3,
+        },
+    }
+    bank = SkillBank(
+        [
+            SkillCard(
+                skill_id="cf_topology_generated:stored_tree__a4__arr128",
+                objective="balanced",
+                trigger={
+                    "min_agents": 4,
+                    "max_agents": 4,
+                    "min_array_size": 128,
+                    "max_array_size": 128,
+                    "condition_key": "agents_4__arrays_128",
+                },
+                organization_policy={
+                    "topology_name": "generated:stored_tree",
+                    "protocol_spec": protocol_spec,
+                },
+                expected_tradeoff={"mean_rmse": 1.0},
+            )
+        ]
+    )
+
+    result = plan_free_graph(
+        request=PlannerRequest.from_names(
+            n_agents=4,
+            array_size=128,
+            planner_mode="graph_generate",
+        ),
+        runtime=MASRuntimeConfig(llm_provider="fake", graph_search_mode="single"),
+        skill_bank=bank,
+        seed=1,
+        task_adapter=CountFrequencyTaskAdapter(),
+        output_dir=tmp_path,
+    )
+
+    assert result.selected_candidate_id.startswith("skill_")
+    assert result.plan.protocol_spec.name == "stored_tree"
+    assert result.plan.protocol_spec.steps[0].transmissions == [(0, 1), (2, 3)]

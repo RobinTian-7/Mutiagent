@@ -1182,6 +1182,7 @@ def _plan_row(
         "generated_graph": bool(metadata.get("generated_graph")),
         "generated_graph_candidate_id": metadata.get("candidate_id"),
         "generated_graph_selected_primary": metadata.get("selected_primary"),
+        "protocol_spec": spec if isinstance(spec, dict) else {},
         "graph_search_mode": job.get("graph_search_mode"),
         "num_graph_candidates": job.get("num_graph_candidates"),
         "graph_top_k": job.get("graph_top_k"),
