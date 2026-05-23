@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:40:39+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 12.0,
+  "job_id": "d8176963186a",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_d8176963186a",
+  "run_id": "protocol_tree_n8_seed103_1779540011886886000",
+  "started_at": "2026-05-23T12:40:05+00:00",
+  "status": "succeeded",
+  "token_cost": 21098
+}

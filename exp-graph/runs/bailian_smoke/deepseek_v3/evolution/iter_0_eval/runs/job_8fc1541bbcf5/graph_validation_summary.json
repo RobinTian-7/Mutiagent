@@ -1,0 +1,13 @@
+{
+  "candidate_count": 1,
+  "candidate_score_mode": "accuracy_max",
+  "created_at": "2026-05-23T10:01:02+00:00",
+  "fallback_reason": null,
+  "raw_response_count": 0,
+  "rejected_candidate_count": 0,
+  "selected_candidate_id": "skill_cf_topology_generated_two_phase_partial_aggregation__a4__arr64",
+  "selected_candidate_score": -7.615773105863909,
+  "top_k_candidate_ids": [
+    "skill_cf_topology_generated_two_phase_partial_aggregation__a4__arr64"
+  ]
+}

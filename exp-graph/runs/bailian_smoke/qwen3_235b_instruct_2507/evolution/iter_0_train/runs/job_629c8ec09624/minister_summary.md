@@ -1,0 +1,17 @@
+run_id: protocol_generated:staged_pairwise_reduce_n4_seed1_1779531006455256000
+final_rmse: 1.4142135623730951
+exact_match: False
+total_messages: 3
+total_model_calls: 7
+token_cost: 7094
+patch_counts:
+  merge: 2
+lessons:
+  - Observed CF evidence for topology generated:staged_pairwise_reduce.
+  - Trace dynamics for generated:staged_pairwise_reduce expose reusable MAS coverage, aggregation, and merge-quality signals.
+risk_notes:
+  - Trace dynamics for generated:staged_pairwise_reduce expose reusable MAS coverage, aggregation, and merge-quality signals.
+artifacts:
+  evidence_records: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen3_235b_instruct_2507/evolution/iter_0_train/runs/job_629c8ec09624/evidence_records.jsonl
+  output_dir: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen3_235b_instruct_2507/evolution/iter_0_train/runs/job_629c8ec09624
+  patch_dir: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen3_235b_instruct_2507/evolution/iter_0_train/runs/job_629c8ec09624/patches

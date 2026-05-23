@@ -1,0 +1,13 @@
+active_receiver,active_sender,agent_id,coverage_ratio,exact_match,global_exact_match,global_normalized_l1_error,global_rmse,known_item_count,known_source_count,known_sources,local_exact_match,local_normalized_l1_error,local_rmse,normalized_l1_error,phase,received_count,rmse,sent_count,step_idx,topology
+False,False,0,0.25,True,False,0.75,16.61324772583615,16,1,[0],True,0.0,0.0,0.0,initial,0,0.0,0,-1,generated:staged_pairwise_reduce
+False,False,1,0.25,True,False,0.75,16.492422502470642,16,1,[1],True,0.0,0.0,0.0,initial,0,0.0,0,-1,generated:staged_pairwise_reduce
+False,False,2,0.25,True,False,0.75,16.55294535724685,16,1,[2],True,0.0,0.0,0.0,initial,0,0.0,0,-1,generated:staged_pairwise_reduce
+False,False,3,0.25,True,False,0.75,16.73320053068151,16,1,[3],True,0.0,0.0,0.0,initial,0,0.0,0,-1,generated:staged_pairwise_reduce
+False,True,0,0.25,True,False,0.75,16.61324772583615,16,1,[0],True,0.0,0.0,0.0,after_step,0,0.0,1,0,generated:staged_pairwise_reduce
+True,False,1,0.5,True,False,0.5,11.313708498984761,32,2,"[0, 1]",True,0.0,0.0,0.0,after_step,1,0.0,0,0,generated:staged_pairwise_reduce
+False,True,2,0.25,True,False,0.75,16.55294535724685,16,1,[2],True,0.0,0.0,0.0,after_step,0,0.0,1,0,generated:staged_pairwise_reduce
+True,False,3,0.5,False,False,0.53125,12.806248474865697,32,2,"[2, 3]",False,0.0625,1.4142135623730951,0.0625,after_step,1,1.4142135623730951,0,0,generated:staged_pairwise_reduce
+False,False,0,0.25,True,False,0.75,16.61324772583615,16,1,[0],True,0.0,0.0,0.0,after_step,0,0.0,0,1,generated:staged_pairwise_reduce
+False,True,1,0.5,True,False,0.5,11.313708498984761,32,2,"[0, 1]",True,0.0,0.0,0.0,after_step,0,0.0,1,1,generated:staged_pairwise_reduce
+False,False,2,0.25,True,False,0.75,16.55294535724685,16,1,[2],True,0.0,0.0,0.0,after_step,0,0.0,0,1,generated:staged_pairwise_reduce
+True,False,3,1.0,False,False,0.03125,1.4142135623730951,64,4,"[0, 1, 2, 3]",False,0.03125,1.4142135623730951,0.03125,after_step,1,1.4142135623730951,0,1,generated:staged_pairwise_reduce

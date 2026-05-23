@@ -1,0 +1,15 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": {
+    "raw_prompts": [],
+    "raw_responses": [],
+    "text": "{\n  \"alternatives\": [],\n  \"fallback_skill_id\": null,\n  \"operators\": [\"local_solve\", \"tree_reduce\"],\n  \"planner_mode\": \"operator_compose\",\n  \"rationale\": \"For count_frequency with 8 agents and 1024 array size, tree_reduce efficiently aggregates frequency counts with O(log N) message complexity, balancing accuracy and cost. Local_solve initializes per-agent counts. This avoids star topology's high cost and chain's latency.\",\n  \"score\": 0.85,\n  \"score_breakdown\": {\n    \"accuracy_fit\": 0.9,\n    \"cost_fit\": 0.8\n  },\n  \"skill_id\": null,\n  \"topology_name\": \"tree\"\n}",
+    "usage": {
+      "completion_tokens": 163,
+      "model_calls": 1,
+      "prompt_tokens": 667
+    }
+  }
+}

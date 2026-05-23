@@ -1,0 +1,173 @@
+{
+  "alternatives": [],
+  "config_overrides": {
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_1",
+        "fallback_topology": "mesh_star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "hybrid_mesh_fanout",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Redundant peer exchange: Agents 0-3 broadcast to 4-7 to create cross-shard awareness.",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              4,
+              0
+            ],
+            [
+              5,
+              1
+            ],
+            [
+              6,
+              2
+            ],
+            [
+              7,
+              3
+            ]
+          ]
+        },
+        {
+          "description": "Converge to sink: All agents that received new data forward their merged state to the primary.",
+          "operator": "audit_sink_with_extra_edge",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "fallback_skill_id": null,
+  "operators": [
+    "llm_generate_dag"
+  ],
+  "planner_mode": "graph_generate",
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_1",
+      "fallback_topology": "mesh_star",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "hybrid_mesh_fanout",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Redundant peer exchange: Agents 0-3 broadcast to 4-7 to create cross-shard awareness.",
+        "operator": "sparse_peer_exchange",
+        "transmissions": [
+          [
+            0,
+            4
+          ],
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            4,
+            0
+          ],
+          [
+            5,
+            1
+          ],
+          [
+            6,
+            2
+          ],
+          [
+            7,
+            3
+          ]
+        ]
+      },
+      {
+        "description": "Converge to sink: All agents that received new data forward their merged state to the primary.",
+        "operator": "audit_sink_with_extra_edge",
+        "transmissions": [
+          [
+            0,
+            7
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "rationale": "Uses a mesh-like broadcast for redundancy in step 1 to ensure no data loss, followed by a directed fan-in to reduce message count while maintaining high accuracy via duplicate verification paths.",
+  "score": 0.0,
+  "score_breakdown": {},
+  "skill_id": null,
+  "topology_name": "generated:hybrid_mesh_fanout"
+}

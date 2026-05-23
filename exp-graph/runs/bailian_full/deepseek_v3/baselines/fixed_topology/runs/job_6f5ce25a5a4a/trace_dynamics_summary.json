@@ -1,0 +1,46 @@
+[
+  {
+    "created_at": "2026-05-23T10:45:27+00:00",
+    "dynamics": {
+      "aggregation_reliability": {
+        "average_rmse": 19.183326093250876,
+        "best_agent_global_rmse": 19.183326093250876,
+        "is_sink_topology": true,
+        "sink_agent_id": 7,
+        "sink_best_rmse_gap": 0.0,
+        "sink_coverage_ratio": 1.0,
+        "sink_global_rmse": 19.183326093250876,
+        "vote_rmse": 19.183326093250876
+      },
+      "coverage_growth": {
+        "final_full_coverage_agents": 8,
+        "final_max_coverage": 1.0,
+        "final_mean_coverage": 1.0,
+        "initial_max_coverage": 0.125,
+        "initial_mean_coverage": 0.125,
+        "max_coverage_gain": 0.875,
+        "mean_coverage_gain": 0.875
+      },
+      "merge_quality": {
+        "avg_fan_in": 0.9393939393939394,
+        "completion_tokens": 9976,
+        "parse_error_count": 0,
+        "prompt_tokens": 37776,
+        "retry_attempts": 0,
+        "trace_rows": 33
+      }
+    },
+    "evidence_id": "trace:protocol_one_peer_exponential_dag_star_n8_seed103_1779533009941879000",
+    "metrics": {},
+    "n_agents": 8,
+    "risk_tags": [
+      "full_coverage_wrong_answer"
+    ],
+    "seed": 103,
+    "source_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_6f5ce25a5a4a/traces/protocol_one_peer_exponential_dag_star_n8_seed103_1779533009941879000.jsonl",
+    "source_type": "trace",
+    "status": "observed",
+    "task_family": "count_frequency",
+    "topology_name": "one_peer_exponential_dag_star"
+  }
+]

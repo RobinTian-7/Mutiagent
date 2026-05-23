@@ -1,0 +1,13 @@
+{
+  "conditions": {
+    "{\"array_size\": 1024, \"init_mode\": \"llm_local_solve\", \"merge_mode\": \"llm_full_merge\", \"n_agents\": 8, \"objective\": \"balanced\"}": {
+      "mean_messages": 7.0,
+      "mean_rmse": 9.24037034920393,
+      "mean_token_cost": 19032.0,
+      "planner_policy": "skill_grounded",
+      "score": -7.489859244442751,
+      "topology_name": "tree"
+    }
+  },
+  "created_at": "2026-05-23T12:12:02+00:00"
+}

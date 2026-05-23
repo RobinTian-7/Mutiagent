@@ -1,0 +1,78 @@
+{
+  "batch_id": "revision_batch_20260523_123710",
+  "counts": {
+    "added": 2,
+    "merged": 1,
+    "skipped_already_applied": 3
+  },
+  "revisions": [
+    {
+      "batch_id": "revision_batch_20260523_123710",
+      "changed_fields": [
+        "confidence",
+        "evidence",
+        "evidence_refs",
+        "expected_dynamics",
+        "expected_tradeoff",
+        "fallback",
+        "revision_history",
+        "risk_notes",
+        "trigger"
+      ],
+      "created_at": "2026-05-23T12:37:10+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539218226057000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539757656430000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "from_version": "0.1.0",
+      "patch_ids": [
+        "cost_cf_topology_generated:hybrid_reduce_audit"
+      ],
+      "revision_id": "rev_cf_topology_generated:hybrid_reduce_audit__a8__arr1024_20260523_123710",
+      "skill_id": "cf_topology_generated:hybrid_reduce_audit__a8__arr1024",
+      "summary": "Updated cf_topology_generated:hybrid_reduce_audit__a8__arr1024 fields: confidence, evidence, evidence_refs, expected_dynamics, expected_tradeoff, fallback, revision_history, risk_notes, trigger.",
+      "to_version": "0.1.1"
+    },
+    {
+      "batch_id": "revision_batch_20260523_123710",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T12:37:10+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "counterexample_cf_avoid_generated:hybrid_reduce_audit__a8__arr1024"
+      ],
+      "revision_id": "rev_cf_avoid_generated:hybrid_reduce_audit__a8__arr1024_20260523_123710",
+      "skill_id": "cf_avoid_generated:hybrid_reduce_audit__a8__arr1024",
+      "summary": "Added new planner skill cf_avoid_generated:hybrid_reduce_audit__a8__arr1024.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_123710",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T12:37:10+00:00",
+      "evidence_refs": [
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539757656430000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "trace_cf_topology_generated:hybrid_reduce_audit"
+      ],
+      "revision_id": "rev_cf_topology_generated:hybrid_reduce_audit_20260523_123710",
+      "skill_id": "cf_topology_generated:hybrid_reduce_audit",
+      "summary": "Added new planner skill cf_topology_generated:hybrid_reduce_audit.",
+      "to_version": "0.1.0"
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,698 @@
+[
+  {
+    "candidate_id": "candidate_0",
+    "graph_plan": {
+      "candidate_id": "candidate_0",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "binary_tree_merge",
+      "rationale": "Binary tree reduces messages to 7, all agents reach sink 7 in 3 steps.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "edges": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Intermediate merge at level 1",
+          "edges": [
+            [
+              2,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Final aggregation at sink",
+          "edges": [],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -23.856982887238342,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 20.049937655763422,
+        "mean_token_cost": 15206.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 34.64101615137755,
+        "mean_token_cost": 15283.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 10.770329614269007,
+        "mean_token_cost": 15441.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 29.966648127543394,
+        "mean_token_cost": 15296.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "binary_tree_merge",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Intermediate merge at level 1",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              2,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Final aggregation at sink",
+          "operator": "star_sink",
+          "transmissions": []
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_1",
+    "graph_plan": {
+      "candidate_id": "candidate_1",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "medium"
+      },
+      "fallback_topology": "star",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "star_with_audit",
+      "rationale": "All agents send directly to sink 7 in step 1, then sink sends audit to agent 0 for verification in step 2, ensuring correctness.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "All agents send to primary sink",
+          "edges": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        },
+        {
+          "description": "Sink sends audit to agent 0 for verification",
+          "edges": [
+            [
+              7,
+              0
+            ]
+          ],
+          "operator_hint": "audit_sink_with_extra_edge"
+        },
+        {
+          "description": "Agent 0 reports back to sink",
+          "edges": [
+            [
+              0,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -164.2436847363036,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 6.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 125.40334923757021,
+        "mean_token_cost": 15030.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 6.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 122.22929272478018,
+        "mean_token_cost": 14026.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 6.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 122.80065146407001,
+        "mean_token_cost": 16159.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 6.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 286.54144551879403,
+        "mean_token_cost": 14844.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 6,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_1",
+        "fallback_topology": "star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "star_with_audit",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "All agents send to primary sink",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Sink sends audit to agent 0 for verification",
+          "operator": "audit_sink_with_extra_edge",
+          "transmissions": [
+            [
+              7,
+              0
+            ]
+          ]
+        },
+        {
+          "description": "Agent 0 reports back to sink",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [
+      "removed fan-in overflow edge (4, 7) at step 0",
+      "removed fan-in overflow edge (5, 7) at step 0",
+      "removed fan-in overflow edge (6, 7) at step 0"
+    ],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [4, 5, 6]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_2",
+    "graph_plan": {
+      "candidate_id": "candidate_2",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "high"
+      },
+      "fallback_topology": "mesh",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "sparse_peer_exchange",
+      "rationale": "Agents exchange in pairs over 3 steps, then final merge to sink 7, ensuring redundancy and coverage.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Initial peer exchange among pairs",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Cross-group exchange",
+          "edges": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Final merge to sink",
+          "edges": [
+            [
+              2,
+              7
+            ],
+            [
+              4,
+              7
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -182.0042862549347,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 16.0,
+        "mean_rmse": 124.15715847263903,
+        "mean_token_cost": 21070.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 16.0,
+        "mean_rmse": 122.63767773404713,
+        "mean_token_cost": 22789.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 16.0,
+        "mean_rmse": 244.3890341238739,
+        "mean_token_cost": 22101.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 17.0,
+        "mean_rmse": 236.83327468917875,
+        "mean_token_cost": 33577.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 10,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_2",
+        "fallback_topology": "mesh",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "sparse_peer_exchange",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Initial peer exchange among pairs",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Cross-group exchange",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        },
+        {
+          "description": "Final merge to sink",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              2,
+              7
+            ],
+            [
+              4,
+              7
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_3",
+    "graph_plan": {
+      "candidate_id": "candidate_3",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "budget_aware_partial",
+      "rationale": "Uses only 6 messages: agents 0-3 send to 4, agents 5-6 send to 7, then 4 sends to 7. Sink 7 gets all data in 2 steps.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Partial aggregation to two intermediates",
+          "edges": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              7
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "budget_aware_partial_aggregation"
+        },
+        {
+          "description": "Intermediate 4 sends to sink",
+          "edges": [
+            [
+              4,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -59.39975810722909,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 21.02379604162864,
+        "mean_token_cost": 14275.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 27.820855486487112,
+        "mean_token_cost": 14012.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 163.2789024950866,
+        "mean_token_cost": 14513.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 11.0,
+        "mean_rmse": 25.475478405713993,
+        "mean_token_cost": 15079.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_3",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "budget_aware_partial",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Partial aggregation to two intermediates",
+          "operator": "budget_aware_partial_aggregation",
+          "transmissions": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              7
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Intermediate 4 sends to sink",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              4,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  }
+]

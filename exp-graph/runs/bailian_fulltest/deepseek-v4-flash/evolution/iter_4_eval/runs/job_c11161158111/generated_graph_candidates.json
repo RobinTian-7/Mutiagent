@@ -1,0 +1,799 @@
+[
+  {
+    "candidate_id": "skill_cf_topology_generated_two_stage_merge__a8__arr1024",
+    "graph_plan": {
+      "candidate_id": "skill_cf_topology_generated_two_stage_merge__a8__arr1024",
+      "expected_tradeoff": {
+        "active_evidence_count": 1,
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:two_stage_merge.",
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_norm_l1": 0.01953125,
+        "mean_rmse": 7.615773105863909,
+        "mean_token_cost": 16549.0,
+        "std_rmse": 0.0
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "two_stage_merge",
+      "rationale": "Replay executable DAG stored in skill cf_topology_generated:two_stage_merge__a8__arr1024.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "All partials sent to sink agent 7",
+          "edges": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -20.973579105787167,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 22.58317958127243,
+        "mean_token_cost": 16439.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 15.165750888103101,
+        "mean_token_cost": 16508.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 17.72004514666935,
+        "mean_token_cost": 16536.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 28.42534080710379,
+        "mean_token_cost": 16492.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "skill_cf_topology_generated_two_stage_merge__a8__arr1024",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "two_stage_merge",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "All partials sent to sink agent 7",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "skill_cf_topology_generated_hybrid_reduce_audit__a8__arr1024",
+    "graph_plan": {
+      "candidate_id": "skill_cf_topology_generated_hybrid_reduce_audit__a8__arr1024",
+      "expected_tradeoff": {
+        "active_evidence_count": 3,
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:hybrid_reduce_audit.",
+        "mean_messages": 8.0,
+        "mean_model_calls": 15.0,
+        "mean_norm_l1": 0.037109375,
+        "mean_rmse": 15.64856888621651,
+        "mean_token_cost": 19284.333333333332,
+        "std_rmse": 0.0
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "hybrid_reduce_audit",
+      "rationale": "Replay executable DAG stored in skill cf_topology_generated:hybrid_reduce_audit__a8__arr1024.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Intermediate reduce: agents 1 and 3 send to agent 3; agents 5 and 7 send to agent 7",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Final reduce: agent 3 sends to agent 7; audit edge from agent 0 to agent 7 to ensure coverage",
+          "edges": [
+            [
+              3,
+              7
+            ],
+            [
+              0,
+              7
+            ]
+          ],
+          "operator_hint": "audit_sink_with_extra_edge"
+        }
+      ]
+    },
+    "objective_score": -55.20742814570787,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 16.3707055437449,
+        "mean_token_cost": 19558.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 165.71059109181888,
+        "mean_token_cost": 19550.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 10.677078252031311,
+        "mean_token_cost": 19232.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 28.071337695236398,
+        "mean_token_cost": 19234.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 8,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "skill_cf_topology_generated_hybrid_reduce_audit__a8__arr1024",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "hybrid_reduce_audit",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Intermediate reduce: agents 1 and 3 send to agent 3; agents 5 and 7 send to agent 7",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Final reduce: agent 3 sends to agent 7; audit edge from agent 0 to agent 7 to ensure coverage",
+          "operator": "audit_sink_with_extra_edge",
+          "transmissions": [
+            [
+              3,
+              7
+            ],
+            [
+              0,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "skill_cf_topology_generated_sparse_peer_exchange__a8__arr1024",
+    "graph_plan": {
+      "candidate_id": "skill_cf_topology_generated_sparse_peer_exchange__a8__arr1024",
+      "expected_tradeoff": {
+        "active_evidence_count": 1,
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:sparse_peer_exchange.",
+        "mean_messages": 20.0,
+        "mean_model_calls": 25.0,
+        "mean_norm_l1": 0.046875,
+        "mean_rmse": 18.2208671582886,
+        "mean_token_cost": 36380.0,
+        "std_rmse": 0.0
+      },
+      "fallback_topology": "mesh",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "sparse_peer_exchange",
+      "rationale": "Replay executable DAG stored in skill cf_topology_generated:sparse_peer_exchange__a8__arr1024.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Sparse peer exchange: each agent sends to two neighbors",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              7,
+              0
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Second exchange to propagate further",
+          "edges": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              6
+            ],
+            [
+              5,
+              7
+            ],
+            [
+              6,
+              0
+            ],
+            [
+              7,
+              1
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "All agents send to sink for final aggregation",
+          "edges": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -19.434753481433827,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 20.0,
+        "mean_model_calls": 25.0,
+        "mean_rmse": 23.323807579381203,
+        "mean_token_cost": 35009.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 20.0,
+        "mean_model_calls": 25.0,
+        "mean_rmse": 23.958297101421877,
+        "mean_token_cost": 34924.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 20.0,
+        "mean_model_calls": 25.0,
+        "mean_rmse": 7.3484692283495345,
+        "mean_token_cost": 34358.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 20.0,
+        "mean_model_calls": 25.0,
+        "mean_rmse": 23.108440016582687,
+        "mean_token_cost": 36301.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 20,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "skill_cf_topology_generated_sparse_peer_exchange__a8__arr1024",
+        "fallback_topology": "mesh",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "sparse_peer_exchange",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Sparse peer exchange: each agent sends to two neighbors",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              7,
+              0
+            ]
+          ]
+        },
+        {
+          "description": "Second exchange to propagate further",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              6
+            ],
+            [
+              5,
+              7
+            ],
+            [
+              6,
+              0
+            ],
+            [
+              7,
+              1
+            ]
+          ]
+        },
+        {
+          "description": "All agents send to sink for final aggregation",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_0",
+    "graph_plan": {
+      "candidate_id": "candidate_0",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "two_stage_merge",
+      "rationale": "Pairwise local reduce then star to sink; low message count and proven coverage.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "All partials sent to sink agent 7",
+          "edges": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -75.29745658297708,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 244.96122142086082,
+        "mean_token_cost": 16931.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 13.96424004376894,
+        "mean_token_cost": 16565.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 10.295630140987,
+        "mean_token_cost": 16559.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 31.96873472629156,
+        "mean_token_cost": 16557.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "two_stage_merge",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "All partials sent to sink agent 7",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  }
+]

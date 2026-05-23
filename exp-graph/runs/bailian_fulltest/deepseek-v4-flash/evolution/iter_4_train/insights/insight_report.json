@@ -1,0 +1,711 @@
+{
+  "executive_summary": "Batch-level MAS insights extracted from matrix evidence.",
+  "experiment_id": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_4_train/collected/batch_evidence.jsonl",
+  "followup_experiments": [
+    {
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8,
+        "objective": "balanced"
+      },
+      "description": "Test two_stage_merge with llm_weighted_merge and llm_global_solve on same condition.",
+      "expected_outcome": "Improved exact match rate and lower RMSE."
+    },
+    {
+      "conditions": {
+        "array_size": 1024,
+        "modifications": {
+          "fan_in": 3,
+          "min_protocol_steps": 3
+        },
+        "n_agents": 8,
+        "objective": "balanced",
+        "topology_name": "generated:budget_aware_partial"
+      },
+      "description": "Test budget-aware partial topology with increased fan-in (3) and protocol steps (3) on same condition to see if accuracy improves.",
+      "experiment_id": "followup_001",
+      "hypothesis": "Increasing fan-in and protocol steps will reduce wrong answer rate."
+    },
+    {
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8,
+        "objective": "budget_first",
+        "topology_name": "generated:budget_aware_partial"
+      },
+      "description": "Test budget-aware partial topology with budget_first objective to see if accuracy is acceptable.",
+      "experiment_id": "followup_002",
+      "hypothesis": "Budget-aware topology performs better when objective is budget_first."
+    },
+    {
+      "conditions": {
+        "array_size": 1024,
+        "modifications": {
+          "min_sink_fan_in": 3,
+          "provenance_tracking": true
+        },
+        "n_agents": 8,
+        "planner_policy": "free_graph",
+        "topology_name": "generated:sparse_peer_exchange"
+      },
+      "description": "Test sparse peer exchange with sink fan-in=3 and provenance tracking on array_size=1024, n_agents=8.",
+      "experiment_id": "followup_001",
+      "hypothesis": "Increasing sink fan-in and adding provenance will reduce full_coverage_wrong_answer_rate below 0.5."
+    },
+    {
+      "conditions": {
+        "array_size": 256,
+        "n_agents": 8,
+        "planner_policy": "free_graph",
+        "topology_name": "generated:sparse_peer_exchange"
+      },
+      "description": "Test sparse peer exchange on array_size=256, n_agents=8 to see if accuracy improves.",
+      "experiment_id": "followup_002",
+      "hypothesis": "Sparse peer exchange performs adequately on smaller arrays."
+    }
+  ],
+  "key_insights": [
+    {
+      "affected_skills": [
+        "cf_topology_generated:budget_aware_partial__a8__arr1024"
+      ],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "init_mode": "llm_local_solve",
+          "merge_mode": "llm_full_merge",
+          "n_agents": 8,
+          "objective": "balanced"
+        }
+      ],
+      "confidence": 0.9,
+      "evidence_refs": [
+        "run:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000",
+        "trace:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000"
+      ],
+      "falsification_test": "Run with increased fan-in (e.g., fan-in=3) and check if full_coverage_wrong_answer_rate decreases.",
+      "insight_id": "insight_001",
+      "insight_type": "risk_pattern",
+      "metric_snapshot": {
+        "full_coverage_wrong_answer_rate": 1.0,
+        "mean_messages": 7.0,
+        "mean_protocol_steps": 2.0,
+        "mean_rmse": 15.811388300841896,
+        "mean_token_cost": 16424.0
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_edge_order",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Reduce full_coverage_wrong_answer_rate by increasing answer diversity.",
+          "instruction": "Increase fan-in to at least 3 agents per sink to ensure diverse perspectives before merging.",
+          "target": "sink selection"
+        },
+        {
+          "action_type": "change_sink_selection",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Improve accuracy by allowing intermediate verification.",
+          "instruction": "Add an additional sink layer with 2 sinks to create intermediate aggregations before final merge.",
+          "target": "sink count"
+        }
+      ],
+      "recommended_actions": [
+        "Flag this topology as avoid-skill candidate for n_agents=8, array_size=1024.",
+        "Increase protocol steps to at least 3 to allow more iterative refinement."
+      ],
+      "summary": "The budget-aware partial topology achieved full coverage (all agents covered) but all answers were wrong (full_coverage_wrong_answer_rate=1.0). This indicates that the communication structure allowed agents to reach a consensus on an incorrect answer, likely due to insufficient diversity or verification.",
+      "title": "Budget-aware partial topology leads to full coverage but zero accuracy"
+    },
+    {
+      "affected_skills": [
+        "cf_topology_generated:budget_aware_partial__a8__arr1024"
+      ],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "n_agents": 8
+        }
+      ],
+      "confidence": 0.8,
+      "evidence_refs": [
+        "trace:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000"
+      ],
+      "falsification_test": "Run with min_protocol_steps=3 and observe if accuracy improves.",
+      "insight_id": "insight_002",
+      "insight_type": "dynamics_pattern",
+      "metric_snapshot": {
+        "mean_coverage_gain": 0.15625,
+        "mean_final_coverage": 0.28125,
+        "mean_messages": 7.0,
+        "mean_protocol_steps": 2.0
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_edge_order",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Allow more iterative refinement and reduce wrong answer rate.",
+          "instruction": "Increase minimum protocol steps to 3 for n_agents=8, array_size=1024.",
+          "target": "protocol depth"
+        }
+      ],
+      "recommended_actions": [
+        "Set min_protocol_steps=3 in planner for this condition bucket."
+      ],
+      "summary": "The topology used only 2 protocol steps and 7 messages on average, which is low for 8 agents on 1024-sized array. This suggests that agents did not have enough communication rounds to correct errors, leading to a consensus on wrong answers.",
+      "title": "Low protocol steps and messages correlate with wrong answers despite full coverage"
+    },
+    {
+      "affected_skills": [
+        "cf_topology_generated:budget_aware_partial__a8__arr1024"
+      ],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "objective": "balanced"
+        }
+      ],
+      "confidence": 0.6,
+      "evidence_refs": [
+        "run:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000"
+      ],
+      "falsification_test": "Run with budget_first objective and check if accuracy is acceptable.",
+      "insight_id": "insight_003",
+      "insight_type": "tradeoff",
+      "metric_snapshot": {
+        "mean_rmse": 15.811388300841896,
+        "mean_token_cost": 16424.0,
+        "objective": "balanced"
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_sink_selection",
+          "conditions": {
+            "objective": "balanced"
+          },
+          "expected_effect": "Improve accuracy while keeping cost moderate.",
+          "instruction": "For balanced objective, use at least 2 sinks to ensure accuracy is not sacrificed.",
+          "target": "sink count"
+        }
+      ],
+      "recommended_actions": [
+        "Restrict budget-aware topologies to budget_first objective only."
+      ],
+      "summary": "The topology was designed for budget awareness but the objective was balanced. The low cost (mean tokens 16424) came at the expense of accuracy (RMSE 15.81). This suggests a tradeoff where budget-aware structures sacrifice accuracy too much for balanced objectives.",
+      "title": "Budget-aware partial topology may be unsuitable for balanced objective"
+    },
+    {
+      "affected_skills": [
+        "cf_topology_generated:sparse_peer_exchange",
+        "cf_topology_generated:sparse_peer_exchange__a8__arr1024"
+      ],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "init_mode": "llm_local_solve",
+          "merge_mode": "llm_full_merge",
+          "n_agents": 8,
+          "objective": "balanced"
+        }
+      ],
+      "confidence": 0.8,
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+      ],
+      "falsification_test": "Run the same topology with fan-in >=3 at sink and check if full_coverage_wrong_answer_rate drops below 0.5.",
+      "insight_id": "insight_001",
+      "insight_type": "risk_pattern",
+      "metric_snapshot": {
+        "full_coverage_wrong_answer_rate": 1.0,
+        "mean_coverage_gain": 0.4375,
+        "mean_final_coverage": 0.5625,
+        "mean_rmse": 13.39
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_edge_order",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Reduce error propagation by allowing the sink to compare multiple partial results.",
+          "instruction": "Increase fan-in at the sink agent to at least 3 predecessors to allow cross-verification before final answer.",
+          "target": "sink_selection"
+        },
+        {
+          "action_type": "change_sink_selection",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Improve final answer quality by routing through a more reliable agent.",
+          "instruction": "Select the agent with highest local accuracy as the sink, or use a separate verification agent as sink.",
+          "target": "sink_agent"
+        },
+        {
+          "action_type": "change_provenance_flow",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Enable error detection and correction by tracking data lineage.",
+          "instruction": "Add provenance metadata to each message so that the sink can trace the origin of values and detect inconsistencies.",
+          "target": "provenance_tracking"
+        }
+      ],
+      "recommended_actions": [
+        "Increase fan-in at sink",
+        "Select sink based on accuracy",
+        "Add provenance tracking"
+      ],
+      "summary": "The sparse peer exchange topology achieved full coverage (mean final coverage 0.5625, but full_coverage_wrong_answer_rate=1.0) meaning all agents were reached but all final answers were incorrect. This suggests that the sparse exchange structure propagated errors without any verification or correction mechanism.",
+      "title": "Sparse peer exchange leads to full coverage but zero accuracy due to error propagation"
+    },
+    {
+      "affected_skills": [
+        "cf_topology_generated:sparse_peer_exchange",
+        "cf_topology_generated:sparse_peer_exchange__a8__arr1024"
+      ],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "n_agents": 8,
+          "objective": "balanced"
+        }
+      ],
+      "confidence": 0.7,
+      "evidence_refs": [
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+      ],
+      "falsification_test": "Compare accuracy with fan-in=3 vs fan-in=1 at sink.",
+      "insight_id": "insight_002",
+      "insight_type": "design_principle",
+      "metric_snapshot": {
+        "mean_candidate_count": 4.0,
+        "mean_messages": 20.0,
+        "mean_model_calls": 25.0,
+        "mean_token_cost": 35100.0
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_fan_in",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Increase redundancy and reduce error propagation.",
+          "instruction": "Set minimum fan-in for sink to 3 to ensure multiple inputs are merged.",
+          "target": "sink_agent"
+        },
+        {
+          "action_type": "change_reducer_scope",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Improve accuracy by combining multiple estimates with weighting.",
+          "instruction": "Use a more sophisticated merge that includes confidence weighting or majority voting instead of llm_full_merge.",
+          "target": "merge_mode"
+        }
+      ],
+      "recommended_actions": [
+        "Increase sink fan-in to 3",
+        "Use confidence-weighted merge"
+      ],
+      "summary": "With only 4 mean candidate count and 20 messages, the sparse peer exchange has low redundancy. Errors from early agents propagate to later agents without correction, leading to uniformly wrong final answers.",
+      "title": "Low fan-in and no verification cause error amplification in sparse exchange"
+    },
+    {
+      "affected_skills": [
+        "cf_topology_generated:sparse_peer_exchange",
+        "cf_topology_generated:sparse_peer_exchange__a8__arr1024"
+      ],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "n_agents": 8
+        }
+      ],
+      "confidence": 0.6,
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+      ],
+      "falsification_test": "Test sparse peer exchange on array_size=256 and check if accuracy improves.",
+      "insight_id": "insight_003",
+      "insight_type": "scaling_pattern",
+      "metric_snapshot": {
+        "array_size": 1024,
+        "mean_rmse": 13.39,
+        "std_rmse": 1.9
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_trigger_buckets",
+          "conditions": {
+            "array_size": 1024
+          },
+          "expected_effect": "Prevent catastrophic accuracy loss on large arrays.",
+          "instruction": "Avoid sparse peer exchange for array_size > 512; use hierarchical or audit-based topologies instead.",
+          "target": "topology_selection"
+        }
+      ],
+      "recommended_actions": [
+        "Restrict sparse peer exchange to small arrays"
+      ],
+      "summary": "For array size 1024, the sparse exchange topology fails completely (RMSE 13.39). This suggests that for large arrays, sparse communication without verification is insufficient to aggregate accurate information.",
+      "title": "Sparse peer exchange may be unsuitable for large arrays without verification steps"
+    }
+  ],
+  "rejected_insights": [
+    {
+      "insight_id": "insight_001",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_002",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_003",
+      "reason": "affected_skill_topology_mismatch"
+    }
+  ],
+  "report_id": "batch_insight_report_20260523_125417",
+  "skill_update_recommendations": [
+    {
+      "action": "merge",
+      "candidate_skill": null,
+      "confidence": 0.9,
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000",
+        "trace:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000"
+      ],
+      "lesson": "The budget-aware partial topology achieved full coverage (all agents covered) but all answers were wrong (full_coverage_wrong_answer_rate=1.0). This indicates that the communication structure allowed agents to reach a consensus on an incorrect answer, likely due to insufficient diversity or verification.",
+      "patch_id": "insight_insight_001",
+      "source": "llm_insight_minister",
+      "target_skill_id": "cf_topology_generated:budget_aware_partial__a8__arr1024",
+      "update": {
+        "expected_dynamics": {
+          "condition_buckets": [
+            {
+              "array_size": 1024,
+              "init_mode": "llm_local_solve",
+              "merge_mode": "llm_full_merge",
+              "n_agents": 8,
+              "objective": "balanced"
+            }
+          ]
+        },
+        "organization_policy": {
+          "operation_recommendations": [
+            {
+              "action_type": "change_edge_order",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Reduce full_coverage_wrong_answer_rate by increasing answer diversity.",
+              "instruction": "Increase fan-in to at least 3 agents per sink to ensure diverse perspectives before merging.",
+              "target": "sink selection"
+            },
+            {
+              "action_type": "change_sink_selection",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Improve accuracy by allowing intermediate verification.",
+              "instruction": "Add an additional sink layer with 2 sinks to create intermediate aggregations before final merge.",
+              "target": "sink count"
+            }
+          ]
+        },
+        "risk_notes": [
+          {
+            "insight_id": "insight_001",
+            "metric_snapshot": {
+              "full_coverage_wrong_answer_rate": 1.0,
+              "mean_messages": 7.0,
+              "mean_protocol_steps": 2.0,
+              "mean_rmse": 15.811388300841896,
+              "mean_token_cost": 16424.0
+            },
+            "source": "llm_insight_minister",
+            "summary": "The budget-aware partial topology achieved full coverage (all agents covered) but all answers were wrong (full_coverage_wrong_answer_rate=1.0). This indicates that the communication structure allowed agents to reach a consensus on an incorrect answer, likely due to insufficient diversity or verification."
+          }
+        ]
+      }
+    },
+    {
+      "action": "merge",
+      "candidate_skill": null,
+      "confidence": 0.8,
+      "evidence": [],
+      "evidence_refs": [
+        "trace:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000"
+      ],
+      "lesson": "The topology used only 2 protocol steps and 7 messages on average, which is low for 8 agents on 1024-sized array. This suggests that agents did not have enough communication rounds to correct errors, leading to a consensus on wrong answers.",
+      "patch_id": "insight_insight_002",
+      "source": "llm_insight_minister",
+      "target_skill_id": "cf_topology_generated:budget_aware_partial__a8__arr1024",
+      "update": {
+        "expected_dynamics": {
+          "condition_buckets": [
+            {
+              "array_size": 1024,
+              "n_agents": 8
+            }
+          ],
+          "insight_002": {
+            "metric_snapshot": {
+              "mean_coverage_gain": 0.15625,
+              "mean_final_coverage": 0.28125,
+              "mean_messages": 7.0,
+              "mean_protocol_steps": 2.0
+            },
+            "summary": "The topology used only 2 protocol steps and 7 messages on average, which is low for 8 agents on 1024-sized array. This suggests that agents did not have enough communication rounds to correct errors, leading to a consensus on wrong answers."
+          }
+        },
+        "organization_policy": {
+          "operation_recommendations": [
+            {
+              "action_type": "change_edge_order",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Allow more iterative refinement and reduce wrong answer rate.",
+              "instruction": "Increase minimum protocol steps to 3 for n_agents=8, array_size=1024.",
+              "target": "protocol depth"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action": "merge",
+      "candidate_skill": null,
+      "confidence": 0.6,
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:budget_aware_partial_n8_seed2_1779540828288777000"
+      ],
+      "lesson": "The topology was designed for budget awareness but the objective was balanced. The low cost (mean tokens 16424) came at the expense of accuracy (RMSE 15.81). This suggests a tradeoff where budget-aware structures sacrifice accuracy too much for balanced objectives.",
+      "patch_id": "insight_insight_003",
+      "source": "llm_insight_minister",
+      "target_skill_id": "cf_topology_generated:budget_aware_partial__a8__arr1024",
+      "update": {
+        "expected_dynamics": {
+          "condition_buckets": [
+            {
+              "objective": "balanced"
+            }
+          ]
+        },
+        "organization_policy": {
+          "operation_recommendations": [
+            {
+              "action_type": "change_sink_selection",
+              "conditions": {
+                "objective": "balanced"
+              },
+              "expected_effect": "Improve accuracy while keeping cost moderate.",
+              "instruction": "For balanced objective, use at least 2 sinks to ensure accuracy is not sacrificed.",
+              "target": "sink count"
+            }
+          ],
+          "rationale_rules": [
+            "The topology was designed for budget awareness but the objective was balanced. The low cost (mean tokens 16424) came at the expense of accuracy (RMSE 15.81). This suggests a tradeoff where budget-aware structures sacrifice accuracy too much for balanced objectives."
+          ]
+        }
+      }
+    },
+    {
+      "action": "merge",
+      "candidate_skill": null,
+      "confidence": 0.8,
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+      ],
+      "lesson": "The sparse peer exchange topology achieved full coverage (mean final coverage 0.5625, but full_coverage_wrong_answer_rate=1.0) meaning all agents were reached but all final answers were incorrect. This suggests that the sparse exchange structure propagated errors without any verification or correction mechanism.",
+      "patch_id": "insight_insight_001",
+      "source": "llm_insight_minister",
+      "target_skill_id": "cf_topology_generated:sparse_peer_exchange",
+      "update": {
+        "expected_dynamics": {
+          "condition_buckets": [
+            {
+              "array_size": 1024,
+              "init_mode": "llm_local_solve",
+              "merge_mode": "llm_full_merge",
+              "n_agents": 8,
+              "objective": "balanced"
+            }
+          ]
+        },
+        "organization_policy": {
+          "operation_recommendations": [
+            {
+              "action_type": "change_edge_order",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Reduce error propagation by allowing the sink to compare multiple partial results.",
+              "instruction": "Increase fan-in at the sink agent to at least 3 predecessors to allow cross-verification before final answer.",
+              "target": "sink_selection"
+            },
+            {
+              "action_type": "change_sink_selection",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Improve final answer quality by routing through a more reliable agent.",
+              "instruction": "Select the agent with highest local accuracy as the sink, or use a separate verification agent as sink.",
+              "target": "sink_agent"
+            },
+            {
+              "action_type": "change_provenance_flow",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Enable error detection and correction by tracking data lineage.",
+              "instruction": "Add provenance metadata to each message so that the sink can trace the origin of values and detect inconsistencies.",
+              "target": "provenance_tracking"
+            }
+          ]
+        },
+        "risk_notes": [
+          {
+            "insight_id": "insight_001",
+            "metric_snapshot": {
+              "full_coverage_wrong_answer_rate": 1.0,
+              "mean_coverage_gain": 0.4375,
+              "mean_final_coverage": 0.5625,
+              "mean_rmse": 13.39
+            },
+            "source": "llm_insight_minister",
+            "summary": "The sparse peer exchange topology achieved full coverage (mean final coverage 0.5625, but full_coverage_wrong_answer_rate=1.0) meaning all agents were reached but all final answers were incorrect. This suggests that the sparse exchange structure propagated errors without any verification or correction mechanism."
+          }
+        ]
+      }
+    },
+    {
+      "action": "merge",
+      "candidate_skill": null,
+      "confidence": 0.7,
+      "evidence": [],
+      "evidence_refs": [
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+      ],
+      "lesson": "With only 4 mean candidate count and 20 messages, the sparse peer exchange has low redundancy. Errors from early agents propagate to later agents without correction, leading to uniformly wrong final answers.",
+      "patch_id": "insight_insight_002",
+      "source": "llm_insight_minister",
+      "target_skill_id": "cf_topology_generated:sparse_peer_exchange",
+      "update": {
+        "expected_dynamics": {
+          "condition_buckets": [
+            {
+              "array_size": 1024,
+              "n_agents": 8,
+              "objective": "balanced"
+            }
+          ]
+        },
+        "organization_policy": {
+          "operation_recommendations": [
+            {
+              "action_type": "change_fan_in",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Increase redundancy and reduce error propagation.",
+              "instruction": "Set minimum fan-in for sink to 3 to ensure multiple inputs are merged.",
+              "target": "sink_agent"
+            },
+            {
+              "action_type": "change_reducer_scope",
+              "conditions": {
+                "array_size": 1024,
+                "n_agents": 8
+              },
+              "expected_effect": "Improve accuracy by combining multiple estimates with weighting.",
+              "instruction": "Use a more sophisticated merge that includes confidence weighting or majority voting instead of llm_full_merge.",
+              "target": "merge_mode"
+            }
+          ],
+          "rationale_rules": [
+            "With only 4 mean candidate count and 20 messages, the sparse peer exchange has low redundancy. Errors from early agents propagate to later agents without correction, leading to uniformly wrong final answers."
+          ]
+        }
+      }
+    },
+    {
+      "action": "merge",
+      "candidate_skill": null,
+      "confidence": 0.6,
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed1_1779540814259220000",
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+      ],
+      "lesson": "For array size 1024, the sparse exchange topology fails completely (RMSE 13.39). This suggests that for large arrays, sparse communication without verification is insufficient to aggregate accurate information.",
+      "patch_id": "insight_insight_003",
+      "source": "llm_insight_minister",
+      "target_skill_id": "cf_topology_generated:sparse_peer_exchange",
+      "update": {
+        "expected_dynamics": {
+          "condition_buckets": [
+            {
+              "array_size": 1024,
+              "n_agents": 8
+            }
+          ]
+        },
+        "expected_tradeoff": {
+          "scaling_pattern": "For array size 1024, the sparse exchange topology fails completely (RMSE 13.39). This suggests that for large arrays, sparse communication without verification is insufficient to aggregate accurate information."
+        },
+        "organization_policy": {
+          "operation_recommendations": [
+            {
+              "action_type": "change_trigger_buckets",
+              "conditions": {
+                "array_size": 1024
+              },
+              "expected_effect": "Prevent catastrophic accuracy loss on large arrays.",
+              "instruction": "Avoid sparse peer exchange for array_size > 512; use hierarchical or audit-based topologies instead.",
+              "target": "topology_selection"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

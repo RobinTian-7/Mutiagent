@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:40:39+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 17.72004514666935,
+  "job_id": "967371b3d253",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_2_eval/runs/job_967371b3d253",
+  "run_id": "protocol_generated:two_stage_merge_n8_seed104_1779540030405689000",
+  "started_at": "2026-05-23T12:37:10+00:00",
+  "status": "succeeded",
+  "token_cost": 16576
+}

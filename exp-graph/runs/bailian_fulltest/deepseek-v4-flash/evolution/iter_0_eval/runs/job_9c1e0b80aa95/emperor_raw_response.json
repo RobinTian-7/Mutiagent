@@ -1,0 +1,8 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [
+    "{\n  \"candidates\": [\n    {\n      \"candidate_id\": \"candidate_0\",\n      \"expected_tradeoff\": {\n        \"accuracy\": \"medium\",\n        \"cost\": \"low\"\n      },\n      \"fallback_topology\": \"tree\",\n      \"graph_type\": \"temporal_dag\",\n      \"n_agents\": 8,\n      \"name\": \"hybrid_reduce_audit\",\n      \"rationale\": \"Combines pairwise reduce with an audit edge to primary to ensure full coverage with low message count.\",\n      \"selected_primary\": 7,\n      \"steps\": [\n        {\n          \"description\": \"Pairwise local reduce among leaves\",\n          \"edges\": [\n            [0, 1],\n            [2, 3],\n            [4, 5],\n            [6, 7]\n          ],\n          \"operator_hint\": \"pairwise_local_reduce\"\n        },\n        {\n          \"description\": \"Intermediate reduce to primary and audit edge from agent 0 to 7\",\n          \"edges\": [\n            [1, 7],\n            [3, 7],\n            [5, 7],\n            [0, 7]\n          ],\n          \"operator_hint\": \"tree_reduce\"\n        }\n      ]\n    }\n  ]\n}"
+  ],
+  "raw_response": null
+}

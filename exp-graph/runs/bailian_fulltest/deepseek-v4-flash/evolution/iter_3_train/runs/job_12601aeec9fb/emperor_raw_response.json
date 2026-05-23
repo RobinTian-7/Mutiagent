@@ -1,0 +1,8 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [
+    "{\n  \"candidates\": [\n    {\n      \"candidate_id\": \"candidate_0\",\n      \"expected_tradeoff\": {\n        \"accuracy\": \"medium\",\n        \"cost\": \"low\"\n      },\n      \"fallback_topology\": \"tree\",\n      \"graph_type\": \"temporal_dag\",\n      \"n_agents\": 8,\n      \"name\": \"two_stage_merge\",\n      \"rationale\": \"Uses pairwise reduce in step 1, then a star to sink in step 2, ensuring all agents reach sink with low message count (7) and steps (2). Avoids high-cost peer exchange while maintaining full coverage.\",\n      \"selected_primary\": 7,\n      \"steps\": [\n        {\n          \"description\": \"Pairwise local reduce: each pair merges into the higher-index agent\",\n          \"edges\": [\n            [0, 1],\n            [2, 3],\n            [4, 5],\n            [6, 7]\n          ],\n          \"operator_hint\": \"pairwise_local_reduce\"\n        },\n        {\n          \"description\": \"All partial holders send to sink agent 7\",\n          \"edges\": [\n            [1, 7],\n            [3, 7],\n            [5, 7]\n          ],\n          \"operator_hint\": \"star_sink\"\n        }\n      ]\n    }\n  ]\n}"
+  ],
+  "raw_response": null
+}

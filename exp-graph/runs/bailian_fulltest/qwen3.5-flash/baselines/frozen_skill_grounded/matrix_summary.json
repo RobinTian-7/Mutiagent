@@ -1,0 +1,105 @@
+{
+  "failed": 0,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded",
+  "skipped": 0,
+  "statuses": [
+    {
+      "ended_at": "2026-05-23T12:40:43+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 17.08800749063506,
+      "job_id": "0e701a2a9518",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_0e701a2a9518",
+      "run_id": "protocol_tree_n8_seed104_1779540008970155000",
+      "started_at": "2026-05-23T12:40:05+00:00",
+      "status": "succeeded",
+      "token_cost": 22976
+    },
+    {
+      "ended_at": "2026-05-23T12:43:20+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 19.026297590440446,
+      "job_id": "4047e1dcadac",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_4047e1dcadac",
+      "run_id": "protocol_tree_n8_seed104_1779540046665854000",
+      "started_at": "2026-05-23T12:40:43+00:00",
+      "status": "succeeded",
+      "token_cost": 22906
+    },
+    {
+      "ended_at": "2026-05-23T12:41:08+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 16.3707055437449,
+      "job_id": "4f872c595a3c",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_4f872c595a3c",
+      "run_id": "protocol_tree_n8_seed101_1779540039735756000",
+      "started_at": "2026-05-23T12:40:37+00:00",
+      "status": "succeeded",
+      "token_cost": 21615
+    },
+    {
+      "ended_at": "2026-05-23T12:41:10+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 16.852299546352718,
+      "job_id": "75212583c8c5",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_75212583c8c5",
+      "run_id": "protocol_tree_n8_seed103_1779540042335264000",
+      "started_at": "2026-05-23T12:40:39+00:00",
+      "status": "succeeded",
+      "token_cost": 22176
+    },
+    {
+      "ended_at": "2026-05-23T12:40:37+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 16.792855623746664,
+      "job_id": "a40b183e63ec",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_a40b183e63ec",
+      "run_id": "protocol_tree_n8_seed102_1779540008525709000",
+      "started_at": "2026-05-23T12:40:05+00:00",
+      "status": "succeeded",
+      "token_cost": 22093
+    },
+    {
+      "ended_at": "2026-05-23T12:41:15+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 26.68332812825267,
+      "job_id": "ab37a3362055",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_ab37a3362055",
+      "run_id": "protocol_tree_n8_seed102_1779540041928307000",
+      "started_at": "2026-05-23T12:40:39+00:00",
+      "status": "succeeded",
+      "token_cost": 22763
+    },
+    {
+      "ended_at": "2026-05-23T12:40:39+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 12.0,
+      "job_id": "d8176963186a",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_d8176963186a",
+      "run_id": "protocol_tree_n8_seed103_1779540011886886000",
+      "started_at": "2026-05-23T12:40:05+00:00",
+      "status": "succeeded",
+      "token_cost": 21098
+    },
+    {
+      "ended_at": "2026-05-23T12:40:39+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 16.0312195418814,
+      "job_id": "eadf6a38d9e5",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_eadf6a38d9e5",
+      "run_id": "protocol_tree_n8_seed101_1779540008836876000",
+      "started_at": "2026-05-23T12:40:05+00:00",
+      "status": "succeeded",
+      "token_cost": 22307
+    }
+  ],
+  "succeeded": 8,
+  "total_jobs": 8
+}

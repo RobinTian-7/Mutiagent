@@ -1,0 +1,7 @@
+{
+  "condition_count": 3,
+  "evidence_count": 6,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skillbank_free_dag/collected",
+  "patch_count": 7,
+  "run_count": 3
+}

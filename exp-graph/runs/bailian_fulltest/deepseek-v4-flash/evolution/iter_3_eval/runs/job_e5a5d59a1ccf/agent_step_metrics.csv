@@ -1,0 +1,33 @@
+active_receiver,active_sender,agent_id,coverage_ratio,exact_match,global_exact_match,global_normalized_l1_error,global_rmse,known_item_count,known_source_count,known_sources,local_exact_match,local_normalized_l1_error,local_rmse,normalized_l1_error,phase,received_count,rmse,sent_count,step_idx,topology
+False,False,0,0.125,False,False,0.8828125,287.0992859621911,128,1,[0],False,0.0625,3.1622776601683795,0.0625,initial,0,3.1622776601683795,0,-1,generated:sparse_peer_exchange
+False,False,1,0.125,False,False,0.875,284.2076705509547,128,1,[1],False,0.0625,3.1622776601683795,0.0625,initial,0,3.1622776601683795,0,-1,generated:sparse_peer_exchange
+False,False,2,0.125,False,False,0.875,284.49253065766067,128,1,[2],False,0.0625,3.7416573867739413,0.0625,initial,0,3.7416573867739413,0,-1,generated:sparse_peer_exchange
+False,False,3,0.125,False,False,0.875,284.23229936092764,128,1,[3],False,0.0625,3.1622776601683795,0.0625,initial,0,3.1622776601683795,0,-1,generated:sparse_peer_exchange
+False,False,4,0.125,False,False,0.875,284.829773724588,128,1,[4],False,0.078125,4.898979485566356,0.078125,initial,0,4.898979485566356,0,-1,generated:sparse_peer_exchange
+False,False,5,0.125,False,False,0.875,284.3659613948195,128,1,[5],False,0.03125,2.0,0.03125,initial,0,2.0,0,-1,generated:sparse_peer_exchange
+False,False,6,0.125,False,False,0.875,284.41167345944154,128,1,[6],False,0.09375,5.291502622129181,0.09375,initial,0,5.291502622129181,0,-1,generated:sparse_peer_exchange
+False,False,7,0.125,False,False,0.875,284.1865584435689,128,1,[7],False,0.078125,4.69041575982343,0.078125,initial,0,4.69041575982343,0,-1,generated:sparse_peer_exchange
+True,True,0,0.25,False,False,0.7578125,246.40616875394983,256,2,"[0, 7]",False,0.0390625,5.0990195135927845,0.0390625,after_step,1,5.0990195135927845,1,0,generated:sparse_peer_exchange
+True,True,1,0.25,False,False,0.7578125,246.42240157907722,256,2,"[0, 1]",False,0.0390625,4.242640687119285,0.0390625,after_step,1,4.242640687119285,1,0,generated:sparse_peer_exchange
+True,True,2,0.25,False,False,0.75,243.80730095712886,256,2,"[1, 2]",False,0.03125,3.1622776601683795,0.03125,after_step,1,3.1622776601683795,1,0,generated:sparse_peer_exchange
+True,True,3,0.25,False,False,0.75,243.94671549336343,256,2,"[2, 3]",False,0.0546875,6.48074069840786,0.0546875,after_step,1,6.48074069840786,1,0,generated:sparse_peer_exchange
+True,True,4,0.25,False,False,0.75,244.2744358298674,256,2,"[3, 4]",False,0.0625,7.3484692283495345,0.0625,after_step,1,7.3484692283495345,1,0,generated:sparse_peer_exchange
+True,True,5,0.25,False,False,0.75,244.35220481919126,256,2,"[4, 5]",False,0.046875,4.898979485566356,0.046875,after_step,1,4.898979485566356,1,0,generated:sparse_peer_exchange
+True,True,6,0.25,False,False,0.75,243.90161951081834,256,2,"[5, 6]",False,0.0546875,5.830951894845301,0.0546875,after_step,1,5.830951894845301,1,0,generated:sparse_peer_exchange
+True,True,7,0.25,False,False,0.75,243.74987179483807,256,2,"[6, 7]",False,0.078125,9.486832980505138,0.078125,after_step,1,9.486832980505138,1,0,generated:sparse_peer_exchange
+True,True,0,0.5,False,False,0.5078125,165.63212248836274,512,4,"[0, 5, 6, 7]",False,0.046875,9.899494936611665,0.046875,after_step,1,9.899494936611665,1,1,generated:sparse_peer_exchange
+True,True,1,0.5,False,False,0.5078125,165.45694303957148,512,4,"[0, 1, 6, 7]",False,0.046875,11.575836902790225,0.046875,after_step,1,11.575836902790225,1,1,generated:sparse_peer_exchange
+True,True,2,0.5,False,False,0.5078125,165.5475762432057,512,4,"[0, 1, 2, 7]",False,0.02734375,5.830951894845301,0.02734375,after_step,1,5.830951894845301,1,1,generated:sparse_peer_exchange
+True,True,3,0.5,False,False,0.5078125,165.2573750245356,512,4,"[0, 1, 2, 3]",False,0.03515625,6.928203230275509,0.03515625,after_step,1,6.928203230275509,1,1,generated:sparse_peer_exchange
+True,True,4,0.5,False,False,0.5,163.31564530074883,512,4,"[1, 2, 3, 4]",False,0.03515625,8.602325267042627,0.03515625,after_step,1,8.602325267042627,1,1,generated:sparse_peer_exchange
+True,True,5,0.5,False,False,0.5,163.5726138447387,512,4,"[2, 3, 4, 5]",False,0.046875,10.770329614269007,0.046875,after_step,1,10.770329614269007,1,1,generated:sparse_peer_exchange
+True,True,6,0.5,False,False,0.5,163.44418007380992,512,4,"[3, 4, 5, 6]",False,0.03125,6.0,0.03125,after_step,1,6.0,1,1,generated:sparse_peer_exchange
+True,True,7,0.5,False,False,0.5,163.18088123306603,512,4,"[4, 5, 6, 7]",False,0.03125,6.48074069840786,0.03125,after_step,1,6.48074069840786,1,1,generated:sparse_peer_exchange
+False,True,0,0.5,False,False,0.5078125,165.63212248836274,512,4,"[0, 5, 6, 7]",False,0.046875,9.899494936611665,0.046875,after_step,0,9.899494936611665,1,2,generated:sparse_peer_exchange
+False,True,1,0.5,False,False,0.5078125,165.45694303957148,512,4,"[0, 1, 6, 7]",False,0.046875,11.575836902790225,0.046875,after_step,0,11.575836902790225,1,2,generated:sparse_peer_exchange
+False,True,2,0.5,False,False,0.5078125,165.5475762432057,512,4,"[0, 1, 2, 7]",False,0.02734375,5.830951894845301,0.02734375,after_step,0,5.830951894845301,1,2,generated:sparse_peer_exchange
+False,True,3,0.5,False,False,0.5078125,165.2573750245356,512,4,"[0, 1, 2, 3]",False,0.03515625,6.928203230275509,0.03515625,after_step,0,6.928203230275509,1,2,generated:sparse_peer_exchange
+False,False,4,0.5,False,False,0.5,163.31564530074883,512,4,"[1, 2, 3, 4]",False,0.03515625,8.602325267042627,0.03515625,after_step,0,8.602325267042627,0,2,generated:sparse_peer_exchange
+False,False,5,0.5,False,False,0.5,163.5726138447387,512,4,"[2, 3, 4, 5]",False,0.046875,10.770329614269007,0.046875,after_step,0,10.770329614269007,0,2,generated:sparse_peer_exchange
+False,False,6,0.5,False,False,0.5,163.44418007380992,512,4,"[3, 4, 5, 6]",False,0.03125,6.0,0.03125,after_step,0,6.0,0,2,generated:sparse_peer_exchange
+True,False,7,1.0,False,False,0.5078125,165.2573750245356,1024,8,"[0, 1, 2, 3, 4, 5, 6, 7]",False,0.5078125,165.2573750245356,0.5078125,after_step,4,165.2573750245356,0,2,generated:sparse_peer_exchange

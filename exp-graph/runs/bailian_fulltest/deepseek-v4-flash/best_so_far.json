@@ -1,0 +1,15 @@
+{
+  "best_skill_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/skills_best_so_far",
+  "label": "self_evolved_free_dag_iter_5",
+  "mean_exact_match_rate": 0.0,
+  "mean_rmse": 12.638316915791313,
+  "mean_token_cost": 31670.0,
+  "run_count": 4,
+  "score": 12.638316915791313,
+  "score_aggregation": "per_eval_run_arithmetic_mean",
+  "score_lower_is_better": true,
+  "score_metric": "mean_rmse",
+  "source_eval_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_4_eval",
+  "source_skill_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/skills_iter_5",
+  "updated_at": "2026-05-23T12:59:01+00:00"
+}

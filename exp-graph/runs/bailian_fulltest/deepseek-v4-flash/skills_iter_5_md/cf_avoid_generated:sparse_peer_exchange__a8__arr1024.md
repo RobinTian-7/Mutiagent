@@ -1,0 +1,296 @@
+---
+skill_id: cf_avoid_generated:sparse_peer_exchange__a8__arr1024
+version: 0.1.0
+task_family: count_frequency
+objective: balanced
+---
+# cf_avoid_generated:sparse_peer_exchange__a8__arr1024
+
+## Organization Policy
+
+```json
+{
+  "operation_recommendations": [
+    {
+      "action_type": "preserve",
+      "conditions": {
+        "agent_bucket": "agents_8",
+        "array_size_bucket": "arrays_1024",
+        "condition_key": "agents_8__arrays_1024"
+      },
+      "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+      "target": "condition_trigger"
+    },
+    {
+      "action_type": "preserve",
+      "expected_effect": {
+        "final_answer_noise": "decrease"
+      },
+      "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+      "target": "final_reducer"
+    },
+    {
+      "action_type": "mutate",
+      "expected_effect": {
+        "candidate_diversity": "increase"
+      },
+      "instruction": "When exploring variants, change fan-in, sink placement, or audit edges while keeping full temporal reachability to the selected primary.",
+      "target": "free_graph_generation"
+    }
+  ],
+  "operators": [],
+  "planner_mode": "graph_generate",
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "skill_cf_topology_generated_sparse_peer_exchange__a8__arr1024",
+      "fallback_topology": "mesh",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "sparse_peer_exchange",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Sparse peer exchange: each agent sends to two neighbors",
+        "operator": "sparse_peer_exchange",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            7,
+            0
+          ]
+        ]
+      },
+      {
+        "description": "Second exchange to propagate further",
+        "operator": "sparse_peer_exchange",
+        "transmissions": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            5,
+            7
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            7,
+            1
+          ]
+        ]
+      },
+      {
+        "description": "All agents send to sink for final aggregation",
+        "operator": "star_sink",
+        "transmissions": [
+          [
+            0,
+            7
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "structure_features": {
+    "aggregation_pattern": "peer_exchange",
+    "candidate_ids": [
+      "skill_cf_topology_generated_sparse_peer_exchange__a8__arr1024"
+    ],
+    "evidence_metadata_keys": [
+      "candidate_id",
+      "fallback_topology",
+      "generated_graph",
+      "graph_type",
+      "max_messages",
+      "max_receiver_fan_in",
+      "max_steps",
+      "selected_primary"
+    ],
+    "generated_graph": true,
+    "mean_protocol_messages": 0.0,
+    "mean_protocol_steps": 0.0,
+    "motifs": [
+      "peer_exchange"
+    ],
+    "selected_primary_values": [
+      7
+    ],
+    "sink_pattern": "single_selected_primary",
+    "topology_name": "generated:sparse_peer_exchange"
+  },
+  "topology_name": "generated:sparse_peer_exchange"
+}
+```
+
+## Expected Tradeoff
+
+```json
+{
+  "active_evidence_count": 1,
+  "exact_match_rate": 0.0,
+  "mean_messages": 20.0,
+  "mean_model_calls": 25.0,
+  "mean_norm_l1": 0.037109375,
+  "mean_rmse": 15.297058540778355,
+  "mean_token_cost": 34622.0,
+  "std_rmse": 0.0,
+  "strength": "negative routing evidence",
+  "weakness": "dominated by stronger CF topology choices"
+}
+```
+
+## Expected Dynamics
+
+```json
+{
+  "condition_scope": {
+    "agent_bucket": "agents_8",
+    "agent_counts": [
+      8
+    ],
+    "array_size_bucket": "arrays_1024",
+    "array_sizes": [
+      1024
+    ],
+    "condition_key": "agents_8__arrays_1024",
+    "max_agents": 8,
+    "max_array_size": 1024,
+    "min_agents": 8,
+    "min_array_size": 1024
+  },
+  "protocol_spec_hash": "92882ed437b7",
+  "structure_features": {
+    "aggregation_pattern": "peer_exchange",
+    "candidate_ids": [
+      "skill_cf_topology_generated_sparse_peer_exchange__a8__arr1024"
+    ],
+    "evidence_metadata_keys": [
+      "candidate_id",
+      "fallback_topology",
+      "generated_graph",
+      "graph_type",
+      "max_messages",
+      "max_receiver_fan_in",
+      "max_steps",
+      "selected_primary"
+    ],
+    "generated_graph": true,
+    "mean_protocol_messages": 0.0,
+    "mean_protocol_steps": 0.0,
+    "motifs": [
+      "peer_exchange"
+    ],
+    "selected_primary_values": [
+      7
+    ],
+    "sink_pattern": "single_selected_primary",
+    "topology_name": "generated:sparse_peer_exchange"
+  }
+}
+```
+
+## Evidence Refs
+
+```json
+[
+  "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000"
+]
+```
+
+## Evidence
+
+```json
+[]
+```
+
+## Risk Notes
+
+```json
+[]
+```
+
+## Fallback
+
+```json
+{
+  "budget_first": "cf_budget_tree"
+}
+```
+
+## Counterexamples
+
+```json
+[
+  {
+    "evidence_id": "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540794073775000",
+    "mean_rmse": 15.297058540778355,
+    "topology_name": "generated:sparse_peer_exchange"
+  }
+]
+```

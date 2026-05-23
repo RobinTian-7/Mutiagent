@@ -1,0 +1,74 @@
+{
+  "executive_summary": "Batch-level MAS insights extracted from matrix evidence.",
+  "experiment_id": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_0_train/collected/batch_evidence.jsonl",
+  "followup_experiments": [
+    {
+      "conditions": {
+        "array_size": 1024,
+        "fan_in": 3,
+        "n_agents": 8,
+        "topology": "modified_sparse_peer_exchange"
+      },
+      "description": "Test with increased fan-in (3 incoming edges per sink) to see if accuracy improves."
+    },
+    {
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8,
+        "topology": "centralized"
+      },
+      "description": "Test with centralized topology to compare cost and accuracy."
+    },
+    {
+      "description": "Test binary tree reduce with majority voting merge instead of LLM full merge, keeping all other parameters same.",
+      "expected_metrics": {
+        "exact_match_rate": ">0.5",
+        "mean_rmse": "<5.0"
+      },
+      "experiment_id": "followup_001",
+      "hypothesis": "Majority voting will improve exact match rate while maintaining coverage."
+    },
+    {
+      "description": "Test binary tree reduce with fan-in 3 (ternary tree) to increase coverage gain.",
+      "expected_metrics": {
+        "mean_coverage_gain": ">0.3",
+        "mean_final_coverage": ">0.5"
+      },
+      "experiment_id": "followup_002",
+      "hypothesis": "Higher fan-in will increase coverage gain and final coverage."
+    }
+  ],
+  "key_insights": [],
+  "rejected_insights": [
+    {
+      "error": "1 validation error for InsightReport\nskill_update_recommendations.0.candidate_skill.failure_modes.0\n  Input should be a valid dictionary [type=dict_type, input_value='high cost if fan-in too high', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/dict_type",
+      "reason": "llm_failure"
+    },
+    {
+      "insight_id": "insight_001",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_002",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_003",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_001",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_002",
+      "reason": "affected_skill_topology_mismatch"
+    },
+    {
+      "insight_id": "insight_003",
+      "reason": "affected_skill_topology_mismatch"
+    }
+  ],
+  "report_id": "batch_insight_report_20260523_121725",
+  "skill_update_recommendations": []
+}

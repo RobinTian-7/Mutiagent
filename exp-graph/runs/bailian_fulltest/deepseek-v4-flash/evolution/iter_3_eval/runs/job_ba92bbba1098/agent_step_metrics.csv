@@ -1,0 +1,25 @@
+active_receiver,active_sender,agent_id,coverage_ratio,exact_match,global_exact_match,global_normalized_l1_error,global_rmse,known_item_count,known_source_count,known_sources,local_exact_match,local_normalized_l1_error,local_rmse,normalized_l1_error,phase,received_count,rmse,sent_count,step_idx,topology
+False,False,0,0.125,False,False,0.875,283.95774333516596,128,1,[0],False,0.109375,7.745966692414834,0.109375,initial,0,7.745966692414834,0,-1,generated:pairwise_then_star
+False,False,1,0.125,False,False,0.8798828125,286.2219418563154,128,1,[1],False,0.0390625,2.23606797749979,0.0390625,initial,0,2.23606797749979,0,-1,generated:pairwise_then_star
+False,False,2,0.125,False,False,0.875,284.7455004034304,128,1,[2],False,0.140625,7.483314773547883,0.140625,initial,0,7.483314773547883,0,-1,generated:pairwise_then_star
+False,False,3,0.125,False,False,0.875,284.6014757516201,128,1,[3],False,0.0625,3.4641016151377544,0.0625,initial,0,3.4641016151377544,0,-1,generated:pairwise_then_star
+False,False,4,0.125,False,False,0.875,284.2991382329535,128,1,[4],False,0.078125,4.242640687119285,0.078125,initial,0,4.242640687119285,0,-1,generated:pairwise_then_star
+False,False,5,0.125,False,False,0.875,284.9105122665712,128,1,[5],False,0.046875,2.449489742783178,0.046875,initial,0,2.449489742783178,0,-1,generated:pairwise_then_star
+False,False,6,0.125,False,False,0.875,284.9034924320866,128,1,[6],False,0.046875,2.8284271247461903,0.046875,initial,0,2.8284271247461903,0,-1,generated:pairwise_then_star
+False,False,7,0.125,False,False,0.875,284.94560884491625,128,1,[7],False,0.0625,3.1622776601683795,0.0625,initial,0,3.1622776601683795,0,-1,generated:pairwise_then_star
+False,True,0,0.125,False,False,0.875,283.95774333516596,128,1,[0],False,0.109375,7.745966692414834,0.109375,after_step,0,7.745966692414834,1,0,generated:pairwise_then_star
+True,False,1,0.25,False,False,0.7548828125,244.8121728999602,256,2,"[0, 1]",False,0.07421875,8.54400374531753,0.07421875,after_step,1,8.54400374531753,0,0,generated:pairwise_then_star
+False,True,2,0.125,False,False,0.875,284.7455004034304,128,1,[2],False,0.140625,7.483314773547883,0.140625,after_step,0,7.483314773547883,1,0,generated:pairwise_then_star
+True,False,3,0.25,False,False,0.75,244.3235559662637,256,2,"[2, 3]",False,0.078125,9.16515138991168,0.078125,after_step,1,9.16515138991168,0,0,generated:pairwise_then_star
+False,True,4,0.125,False,False,0.875,284.2991382329535,128,1,[4],False,0.078125,4.242640687119285,0.078125,after_step,0,4.242640687119285,1,0,generated:pairwise_then_star
+True,False,5,0.25,False,False,0.75,244.15159225366523,256,2,"[4, 5]",False,0.0390625,4.0,0.0390625,after_step,1,4.0,0,0,generated:pairwise_then_star
+False,True,6,0.125,False,False,0.875,284.9034924320866,128,1,[6],False,0.046875,2.8284271247461903,0.046875,after_step,0,2.8284271247461903,1,0,generated:pairwise_then_star
+True,False,7,0.25,False,False,0.75,245.18972245997588,256,2,"[6, 7]",False,0.046875,4.898979485566356,0.046875,after_step,1,4.898979485566356,0,0,generated:pairwise_then_star
+False,False,0,0.125,False,False,0.875,283.95774333516596,128,1,[0],False,0.109375,7.745966692414834,0.109375,after_step,0,7.745966692414834,0,1,generated:pairwise_then_star
+False,True,1,0.25,False,False,0.7548828125,244.8121728999602,256,2,"[0, 1]",False,0.07421875,8.54400374531753,0.07421875,after_step,0,8.54400374531753,1,1,generated:pairwise_then_star
+False,False,2,0.125,False,False,0.875,284.7455004034304,128,1,[2],False,0.140625,7.483314773547883,0.140625,after_step,0,7.483314773547883,0,1,generated:pairwise_then_star
+False,True,3,0.25,False,False,0.75,244.3235559662637,256,2,"[2, 3]",False,0.078125,9.16515138991168,0.078125,after_step,0,9.16515138991168,1,1,generated:pairwise_then_star
+False,False,4,0.125,False,False,0.875,284.2991382329535,128,1,[4],False,0.078125,4.242640687119285,0.078125,after_step,0,4.242640687119285,0,1,generated:pairwise_then_star
+False,True,5,0.25,False,False,0.75,244.15159225366523,256,2,"[4, 5]",False,0.0390625,4.0,0.0390625,after_step,0,4.0,1,1,generated:pairwise_then_star
+False,False,6,0.125,False,False,0.875,284.9034924320866,128,1,[6],False,0.046875,2.8284271247461903,0.046875,after_step,0,2.8284271247461903,0,1,generated:pairwise_then_star
+True,False,7,1.0,False,False,0.0478515625,23.769728648009426,1024,8,"[0, 1, 2, 3, 4, 5, 6, 7]",False,0.0478515625,23.769728648009426,0.0478515625,after_step,3,23.769728648009426,0,1,generated:pairwise_then_star

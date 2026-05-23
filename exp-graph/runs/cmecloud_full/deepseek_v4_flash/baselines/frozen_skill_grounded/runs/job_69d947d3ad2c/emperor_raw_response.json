@@ -1,0 +1,6 @@
+{
+  "fallback_reason": "llm planner failed: Error code: 429 - {'path': '/v1/chat/completions', 'error': 'Too Many Requests', 'message': 'Too Many Requests in a short period, please try again later', 'timestamp': 1779546078625, 'status': 429}",
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": null
+}

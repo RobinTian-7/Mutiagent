@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:05:51+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 6.164414002968976,
+  "job_id": "0e92a604a13e",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/frozen_skillbank_free_dag/runs/job_0e92a604a13e",
+  "run_id": "protocol_generated:pairwise_reduce_then_star_n8_seed103_1779537939038339000",
+  "started_at": "2026-05-23T12:02:33+00:00",
+  "status": "succeeded",
+  "token_cost": 22638
+}

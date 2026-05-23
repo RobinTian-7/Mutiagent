@@ -1,0 +1,23 @@
+{
+  "artifacts": {
+    "evidence_records": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_75212583c8c5/evidence_records.jsonl",
+    "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_75212583c8c5",
+    "patch_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skill_grounded/runs/job_75212583c8c5/patches"
+  },
+  "exact_match": false,
+  "final_rmse": 16.852299546352718,
+  "lessons": [
+    "Tree reduction is the budget-first CF policy.",
+    "Trace dynamics for tree expose reusable MAS coverage, aggregation, and merge-quality signals."
+  ],
+  "patch_counts": {
+    "merge": 2
+  },
+  "risk_notes": [
+    "Trace dynamics for tree expose reusable MAS coverage, aggregation, and merge-quality signals."
+  ],
+  "run_id": "protocol_tree_n8_seed103_1779540042335264000",
+  "token_cost": 22176,
+  "total_messages": 7,
+  "total_model_calls": 15
+}

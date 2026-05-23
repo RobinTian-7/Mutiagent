@@ -1,0 +1,69 @@
+{
+  "current_skill_versions": {},
+  "experiment_id": "protocol_mesh_star_n8_seed101_1779538012694815000",
+  "record_count": 2,
+  "topologies": {
+    "mesh_star": {
+      "condition_scope": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_1024",
+        "array_sizes": [
+          1024
+        ],
+        "condition_key": "agents_8__arrays_1024",
+        "max_agents": 8,
+        "max_array_size": 1024,
+        "min_agents": 8,
+        "min_array_size": 1024
+      },
+      "dynamics": {
+        "coverage_gain": 0.875,
+        "retry_attempts": 1.0,
+        "sink_best_rmse_gap": 4.447358293810279,
+        "trace_count": 1
+      },
+      "evidence_refs": [
+        "run:protocol_mesh_star_n8_seed101_1779538012694815000",
+        "trace:protocol_mesh_star_n8_seed101_1779538012694815000"
+      ],
+      "metrics": {
+        "exact_match_rate": 0.0,
+        "messages": 63.0,
+        "rmse": 19.87460691435179,
+        "token_cost": 52542.0
+      },
+      "n_agents": [
+        8
+      ],
+      "risk_tags": [
+        "full_coverage_wrong_answer",
+        "merge_retry_burden",
+        "non_exact_final",
+        "sink_quality_gap"
+      ],
+      "seeds": [
+        101
+      ],
+      "structure_features": {
+        "aggregation_pattern": "star_sink",
+        "evidence_metadata_keys": [
+          "compiled_from_topology",
+          "planner_generated"
+        ],
+        "generated_graph": false,
+        "mean_protocol_messages": 0.0,
+        "mean_protocol_steps": 0.0,
+        "motifs": [
+          "single_sink",
+          "peer_broadcast"
+        ],
+        "selected_primary_values": [],
+        "sink_pattern": "single_selected_primary",
+        "topology_name": "mesh_star"
+      }
+    }
+  }
+}

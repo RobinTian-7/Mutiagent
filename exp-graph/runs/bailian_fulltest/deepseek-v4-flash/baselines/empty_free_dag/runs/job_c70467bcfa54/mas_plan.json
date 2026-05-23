@@ -1,0 +1,133 @@
+{
+  "alternatives": [],
+  "config_overrides": {
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_3",
+        "fallback_topology": "hybrid",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "two_layer_hybrid",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise reduce to four intermediate agents",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Intermediate agents send to sink",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              2,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "fallback_skill_id": null,
+  "operators": [
+    "llm_generate_dag"
+  ],
+  "planner_mode": "graph_generate",
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_3",
+      "fallback_topology": "hybrid",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "two_layer_hybrid",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise reduce to four intermediate agents",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Intermediate agents send to sink",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            2,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "rationale": "First layer pairwise reduce to 4 agents, second layer all-to-one sink, ensuring full coverage with 8 messages.",
+  "score": 0.0,
+  "score_breakdown": {},
+  "skill_id": null,
+  "topology_name": "generated:two_layer_hybrid"
+}

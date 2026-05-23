@@ -1,0 +1,15 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": {
+    "raw_prompts": [],
+    "raw_responses": [],
+    "text": "{\n  \"alternatives\": [\n    {\n      \"skill_id\": \"cf_middle_ground_mesh_star\",\n      \"rationale\": \"Fits n_agents=8 and balanced objective, but incurs higher token cost (2600) than necessary for this scale.\"\n    }\n  ],\n  \"fallback_skill_id\": null,\n  \"operators\": [\n    \"local_solve\",\n    \"tree_reduce\"\n  ],\n  \"planner_mode\": \"operator_compose\",\n  \"rationale\": \"Selected 'cf_budget_tree' logic via operator composition. With n_agents=8 and a balanced objective, the tree structure offers superior stability and coverage compared to sparse random DAGs (which are explicitly avoided due to seed sensitivity). The 'tree_reduce' operator ensures efficient aggregation with logarithmic message complexity, preserving source provenance while minimizing token costs relative to mesh-based alternatives.\",\n  \"score\": 0.92,\n  \"score_breakdown\": {\n    \"accuracy_fit\": 0.95,\n    \"cost_fit\": 0.89\n  },\n  \"skill_id\": \"cf_budget_tree\",\n  \"topology_name\": \"balanced_tree\"\n}",
+    "usage": {
+      "completion_tokens": 257,
+      "model_calls": 1,
+      "prompt_tokens": 1428
+    }
+  }
+}

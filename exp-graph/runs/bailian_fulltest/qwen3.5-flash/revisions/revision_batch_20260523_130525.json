@@ -1,0 +1,99 @@
+{
+  "batch_id": "revision_batch_20260523_130525",
+  "counts": {
+    "added": 5
+  },
+  "revisions": [
+    {
+      "batch_id": "revision_batch_20260523_130525",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T13:05:25+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:cascading_snake_flow_n8_seed2_1779540788524129000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "cost_cf_topology_generated:cascading_snake_flow"
+      ],
+      "revision_id": "rev_cf_topology_generated:cascading_snake_flow__a8__arr1024_20260523_130525",
+      "skill_id": "cf_topology_generated:cascading_snake_flow__a8__arr1024",
+      "summary": "Added new planner skill cf_topology_generated:cascading_snake_flow__a8__arr1024.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_130525",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T13:05:25+00:00",
+      "evidence_refs": [
+        "run:protocol_mesh_star_n8_seed3_1779540924511326000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "result_cf_middle_ground_mesh_star"
+      ],
+      "revision_id": "rev_cf_middle_ground_mesh_star_20260523_130525",
+      "skill_id": "cf_middle_ground_mesh_star",
+      "summary": "Added new planner skill cf_middle_ground_mesh_star.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_130525",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T13:05:25+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:balanced_tree_reduce_n8_seed4_1779541165493723000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "result_cf_topology_generated:balanced_tree_reduce__a8__arr1024"
+      ],
+      "revision_id": "rev_cf_topology_generated:balanced_tree_reduce__a8__arr1024_20260523_130525",
+      "skill_id": "cf_topology_generated:balanced_tree_reduce__a8__arr1024",
+      "summary": "Added new planner skill cf_topology_generated:balanced_tree_reduce__a8__arr1024.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_130525",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T13:05:25+00:00",
+      "evidence_refs": [
+        "trace:protocol_generated:balanced_tree_reduce_n8_seed4_1779541165493723000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "trace_cf_topology_generated:balanced_tree_reduce"
+      ],
+      "revision_id": "rev_cf_topology_generated:balanced_tree_reduce_20260523_130525",
+      "skill_id": "cf_topology_generated:balanced_tree_reduce",
+      "summary": "Added new planner skill cf_topology_generated:balanced_tree_reduce.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_130525",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T13:05:25+00:00",
+      "evidence_refs": [
+        "trace:protocol_generated:cascading_snake_flow_n8_seed2_1779540788524129000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "trace_cf_topology_generated:cascading_snake_flow"
+      ],
+      "revision_id": "rev_cf_topology_generated:cascading_snake_flow_20260523_130525",
+      "skill_id": "cf_topology_generated:cascading_snake_flow",
+      "summary": "Added new planner skill cf_topology_generated:cascading_snake_flow.",
+      "to_version": "0.1.0"
+    }
+  ],
+  "warnings": []
+}

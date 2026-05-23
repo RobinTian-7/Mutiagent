@@ -1,0 +1,177 @@
+{
+  "alternatives": [],
+  "config_overrides": {
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "pairwise_reduce_then_star",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce: agents 0-1, 2-3, 4-5, 6-7 merge counts",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Send partial aggregates to primary 7",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Primary 7 broadcasts final count to all agents",
+          "operator": "broadcast",
+          "transmissions": [
+            [
+              7,
+              0
+            ],
+            [
+              7,
+              2
+            ],
+            [
+              7,
+              4
+            ],
+            [
+              7,
+              6
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "fallback_skill_id": null,
+  "operators": [
+    "llm_generate_dag"
+  ],
+  "planner_mode": "graph_generate",
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_0",
+      "fallback_topology": "tree",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "pairwise_reduce_then_star",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise local reduce: agents 0-1, 2-3, 4-5, 6-7 merge counts",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Send partial aggregates to primary 7",
+        "operator": "star_sink",
+        "transmissions": [
+          [
+            1,
+            7
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Primary 7 broadcasts final count to all agents",
+        "operator": "broadcast",
+        "transmissions": [
+          [
+            7,
+            0
+          ],
+          [
+            7,
+            2
+          ],
+          [
+            7,
+            4
+          ],
+          [
+            7,
+            6
+          ]
+        ]
+      }
+    ]
+  },
+  "rationale": "First round pairs agents for local reduction, second round sends partials to primary 7, third round primary broadcasts final count. Keeps messages low while ensuring coverage.",
+  "score": 0.0,
+  "score_breakdown": {},
+  "skill_id": null,
+  "topology_name": "generated:pairwise_reduce_then_star"
+}

@@ -1,0 +1,179 @@
+{
+  "candidate_id": "skill_cf_topology_generated_binary_tree_reduce__a8__arr1024",
+  "graph_plan": {
+    "candidate_id": "skill_cf_topology_generated_binary_tree_reduce__a8__arr1024",
+    "expected_tradeoff": {
+      "active_evidence_count": 2,
+      "exact_match_rate": 0.0,
+      "lesson": "Observed CF evidence for topology generated:binary_tree_reduce.",
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_norm_l1": 0.033203125,
+      "mean_rmse": 14.430772966062818,
+      "mean_token_cost": 19054.0,
+      "std_rmse": 0.0
+    },
+    "fallback_topology": "tree",
+    "graph_type": "temporal_dag",
+    "n_agents": 8,
+    "name": "binary_tree_reduce",
+    "rationale": "Replay executable DAG stored in skill cf_topology_generated:binary_tree_reduce__a8__arr1024.",
+    "selected_primary": 7,
+    "steps": [
+      {
+        "description": "Pairwise local reduce among leaves",
+        "edges": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ],
+        "operator_hint": "pairwise_local_reduce"
+      },
+      {
+        "description": "Reduce pairs to intermediate nodes",
+        "edges": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "operator_hint": "tree_reduce"
+      },
+      {
+        "description": "Final reduce to root",
+        "edges": [
+          [
+            3,
+            7
+          ]
+        ],
+        "operator_hint": "tree_reduce"
+      }
+    ]
+  },
+  "objective_score": -18.763145954541827,
+  "probe_scores": [
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 18.027756377319946,
+      "mean_token_cost": 19185.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 16.1245154965971,
+      "mean_token_cost": 18828.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 14.142135623730951,
+      "mean_token_cost": 19008.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 26.758176320519304,
+      "mean_token_cost": 19018.0,
+      "objective": "balanced"
+    }
+  ],
+  "protocol_messages": 7,
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "skill_cf_topology_generated_binary_tree_reduce__a8__arr1024",
+      "fallback_topology": "tree",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "binary_tree_reduce",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise local reduce among leaves",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Reduce pairs to intermediate nodes",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Final reduce to root",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "protocol_steps": 3,
+  "repair_notes": [],
+  "score_mode": "accuracy_max",
+  "selected_primary": 7,
+  "status": "selected",
+  "validation_errors": [],
+  "validation_warnings": []
+}

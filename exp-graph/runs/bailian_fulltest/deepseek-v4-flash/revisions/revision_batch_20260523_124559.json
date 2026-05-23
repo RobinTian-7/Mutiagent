@@ -1,0 +1,99 @@
+{
+  "batch_id": "revision_batch_20260523_124559",
+  "counts": {
+    "added": 3,
+    "merged": 1,
+    "skipped_already_applied": 4
+  },
+  "revisions": [
+    {
+      "batch_id": "revision_batch_20260523_124559",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T12:45:59+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:budget_aware_partial_n8_seed2_1779540271686063000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "counterexample_cf_avoid_generated:budget_aware_partial__a8__arr1024"
+      ],
+      "revision_id": "rev_cf_avoid_generated:budget_aware_partial__a8__arr1024_20260523_124559",
+      "skill_id": "cf_avoid_generated:budget_aware_partial__a8__arr1024",
+      "summary": "Added new planner skill cf_avoid_generated:budget_aware_partial__a8__arr1024.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_124559",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T12:45:59+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540303954998000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "counterexample_cf_avoid_generated:sparse_peer_exchange__a8__arr1024"
+      ],
+      "revision_id": "rev_cf_avoid_generated:sparse_peer_exchange__a8__arr1024_20260523_124559",
+      "skill_id": "cf_avoid_generated:sparse_peer_exchange__a8__arr1024",
+      "summary": "Added new planner skill cf_avoid_generated:sparse_peer_exchange__a8__arr1024.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_124559",
+      "changed_fields": [
+        "confidence",
+        "evidence",
+        "evidence_refs",
+        "expected_dynamics",
+        "expected_tradeoff",
+        "fallback",
+        "revision_history",
+        "risk_notes",
+        "trigger"
+      ],
+      "created_at": "2026-05-23T12:45:59+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779538540115170000",
+        "run:protocol_generated:sparse_peer_exchange_n8_seed3_1779540301728957000",
+        "run:protocol_generated:sparse_peer_exchange_n8_seed4_1779540303954998000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed3_1779540301728957000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed4_1779540303954998000"
+      ],
+      "from_version": "0.1.0",
+      "patch_ids": [
+        "insight_INS-001",
+        "insight_INS-002",
+        "insight_INS-003",
+        "insight_INS-004"
+      ],
+      "revision_id": "rev_cf_topology_generated:sparse_peer_exchange__a8__arr1024_20260523_124559",
+      "skill_id": "cf_topology_generated:sparse_peer_exchange__a8__arr1024",
+      "summary": "Updated cf_topology_generated:sparse_peer_exchange__a8__arr1024 fields: confidence, evidence, evidence_refs, expected_dynamics, expected_tradeoff, fallback, revision_history, risk_notes, trigger.",
+      "to_version": "0.2.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_124559",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T12:45:59+00:00",
+      "evidence_refs": [
+        "trace:protocol_generated:budget_aware_partial_n8_seed2_1779540271686063000",
+        "trace:protocol_generated:budget_aware_partial_n8_seed1_1779540325643063000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "trace_cf_topology_generated:budget_aware_partial"
+      ],
+      "revision_id": "rev_cf_topology_generated:budget_aware_partial_20260523_124559",
+      "skill_id": "cf_topology_generated:budget_aware_partial",
+      "summary": "Added new planner skill cf_topology_generated:budget_aware_partial.",
+      "to_version": "0.1.0"
+    }
+  ],
+  "warnings": []
+}

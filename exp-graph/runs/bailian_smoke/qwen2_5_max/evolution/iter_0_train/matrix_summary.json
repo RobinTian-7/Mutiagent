@@ -1,0 +1,21 @@
+{
+  "failed": 0,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen2_5_max/evolution/iter_0_train",
+  "skipped": 0,
+  "statuses": [
+    {
+      "ended_at": "2026-05-23T10:05:04+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 1.0,
+      "job_id": "490f7f46f5eb",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen2_5_max/evolution/iter_0_train/runs/job_490f7f46f5eb",
+      "run_id": "protocol_generated:hybrid_reduce_with_audit_n4_seed1_1779530611320084000",
+      "started_at": "2026-05-23T10:01:37+00:00",
+      "status": "succeeded",
+      "token_cost": 9953
+    }
+  ],
+  "succeeded": 1,
+  "total_jobs": 1
+}

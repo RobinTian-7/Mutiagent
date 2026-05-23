@@ -1,0 +1,46 @@
+{
+  "candidate_id": "candidate_3",
+  "objective_row": {
+    "exact_match_rate": 0.0,
+    "mean_messages": 7.0,
+    "mean_model_calls": 13.0,
+    "mean_rmse": 237.1623916222806,
+    "mean_token_cost": 16382.0,
+    "objective": "balanced"
+  },
+  "seed": 201,
+  "summary": {
+    "Agents": 8,
+    "AggregationMethod": "vote",
+    "AnswerAgentIds": [
+      7
+    ],
+    "ArraySize": 1024,
+    "AverageIncludedAgents": 1,
+    "AverageNormalizedL1Error": 0.724609375,
+    "AverageRMSE": 237.1623916222806,
+    "FinalExactMatch": false,
+    "FinalKey": "FREQ_JSON:{\"0\":20,\"1\":37,\"2\":24,\"3\":33,\"4\":28,\"5\":23,\"6\":30,\"7\":32,\"8\":26,\"9\":29}",
+    "FinalNormalizedL1Error": 0.724609375,
+    "FinalRMSE": 237.1623916222806,
+    "InitMode": "llm_local_solve",
+    "MergeMode": "llm_full_merge",
+    "Seed": 201,
+    "SelectedPrimary": "vote",
+    "Task": "count_frequency_protocol",
+    "Topology": "generated:hybrid_tree_star",
+    "TotalCompletionTokens": 3487,
+    "TotalDeterministicFallbacks": 0,
+    "TotalMessages": 7,
+    "TotalModelCalls": 13,
+    "TotalPromptTokens": 12895,
+    "TotalRetryAttempts": 0,
+    "TotalSteps": 2,
+    "ValueMax": 9,
+    "ValueMin": 0,
+    "VoteAverageDisagreementRMSE": 0.0,
+    "VoteNormalizedL1Error": 0.724609375,
+    "VoteRMSE": 237.1623916222806,
+    "VoteTopRatio": 1.0
+  }
+}

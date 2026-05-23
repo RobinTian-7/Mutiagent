@@ -1,0 +1,172 @@
+{
+  "candidate_id": "candidate_0",
+  "graph_plan": {
+    "candidate_id": "candidate_0",
+    "expected_tradeoff": {
+      "accuracy": "high",
+      "cost": "low"
+    },
+    "fallback_topology": "tree",
+    "graph_type": "temporal_dag",
+    "n_agents": 8,
+    "name": "balanced_tree_reduce",
+    "rationale": "Standard binary tree reduction ensures all 8 agents reach the sink in exactly 3 steps with minimal messages (7 total), satisfying the balanced objective by maximizing coverage efficiency.",
+    "selected_primary": 7,
+    "steps": [
+      {
+        "description": "Pairwise local aggregation: Even agents send to odd neighbors to form initial partial sums.",
+        "edges": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ],
+        "operator_hint": "pairwise_local_reduce"
+      },
+      {
+        "description": "Second layer reduce: Winners from step 1 forward their aggregated counts up the tree.",
+        "edges": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "operator_hint": "tree_reduce"
+      },
+      {
+        "description": "Final merge: The root of the left subtree sends its result to the global sink.",
+        "edges": [
+          [
+            3,
+            7
+          ]
+        ],
+        "operator_hint": "tree_reduce"
+      }
+    ]
+  },
+  "objective_score": -17.8031643376024,
+  "probe_scores": [
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 11.40175425099138,
+      "mean_token_cost": 22006.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 12.206555615733702,
+      "mean_token_cost": 22109.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 20.0,
+      "mean_token_cost": 22969.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 27.60434748368452,
+      "mean_token_cost": 21000.0,
+      "objective": "balanced"
+    }
+  ],
+  "protocol_messages": 7,
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_0",
+      "fallback_topology": "tree",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "balanced_tree_reduce",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise local aggregation: Even agents send to odd neighbors to form initial partial sums.",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Second layer reduce: Winners from step 1 forward their aggregated counts up the tree.",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Final merge: The root of the left subtree sends its result to the global sink.",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "protocol_steps": 3,
+  "repair_notes": [],
+  "score_mode": "accuracy_max",
+  "selected_primary": 7,
+  "status": "selected",
+  "validation_errors": [],
+  "validation_warnings": []
+}

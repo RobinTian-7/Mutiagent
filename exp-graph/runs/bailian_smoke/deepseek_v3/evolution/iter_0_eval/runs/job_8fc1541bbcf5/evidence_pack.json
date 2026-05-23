@@ -1,0 +1,79 @@
+{
+  "current_skill_versions": {
+    "cf_topology_generated:two_phase_partial_aggregation": "0.1.0",
+    "cf_topology_generated:two_phase_partial_aggregation__a4__arr64": "0.1.0"
+  },
+  "experiment_id": "protocol_generated:two_phase_partial_aggregation_n4_seed101_1779530462421927000",
+  "record_count": 2,
+  "topologies": {
+    "generated:two_phase_partial_aggregation": {
+      "condition_scope": {
+        "agent_bucket": "agents_4",
+        "agent_counts": [
+          4
+        ],
+        "array_size_bucket": "arrays_64",
+        "array_sizes": [
+          64
+        ],
+        "condition_key": "agents_4__arrays_64",
+        "max_agents": 4,
+        "max_array_size": 64,
+        "min_agents": 4,
+        "min_array_size": 64
+      },
+      "dynamics": {
+        "coverage_gain": 0.25,
+        "retry_attempts": 0.0,
+        "sink_best_rmse_gap": 0.0,
+        "trace_count": 1
+      },
+      "evidence_refs": [
+        "run:protocol_generated:two_phase_partial_aggregation_n4_seed101_1779530462421927000",
+        "trace:protocol_generated:two_phase_partial_aggregation_n4_seed101_1779530462421927000"
+      ],
+      "metrics": {
+        "exact_match_rate": 0.0,
+        "messages": 4.0,
+        "rmse": 1.0,
+        "token_cost": 7360.0
+      },
+      "n_agents": [
+        4
+      ],
+      "risk_tags": [
+        "non_exact_final"
+      ],
+      "seeds": [
+        101
+      ],
+      "structure_features": {
+        "aggregation_pattern": "unspecified",
+        "candidate_ids": [
+          "skill_cf_topology_generated_two_phase_partial_aggregation__a4__arr64"
+        ],
+        "evidence_metadata_keys": [
+          "candidate_id",
+          "fallback_topology",
+          "generated_graph",
+          "graph_type",
+          "max_messages",
+          "max_receiver_fan_in",
+          "max_steps",
+          "selected_primary"
+        ],
+        "generated_graph": true,
+        "mean_protocol_messages": 0.0,
+        "mean_protocol_steps": 0.0,
+        "motifs": [
+          "unspecified_generated_structure"
+        ],
+        "selected_primary_values": [
+          3
+        ],
+        "sink_pattern": "single_selected_primary",
+        "topology_name": "generated:two_phase_partial_aggregation"
+      }
+    }
+  }
+}

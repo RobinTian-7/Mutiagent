@@ -1,0 +1,7 @@
+{
+  "condition_count": 3,
+  "evidence_count": 24,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/fixed_topology/collected",
+  "patch_count": 10,
+  "run_count": 12
+}

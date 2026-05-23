@@ -1,0 +1,8 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [
+    "{\n  \"candidates\": [\n    {\n      \"candidate_id\": \"candidate_0\",\n      \"expected_tradeoff\": {\n        \"accuracy\": \"medium\",\n        \"cost\": \"low\"\n      },\n      \"fallback_topology\": \"tree\",\n      \"graph_type\": \"temporal_dag\",\n      \"n_agents\": 4,\n      \"name\": \"two_phase_partial_aggregation\",\n      \"rationale\": \"Uses a first phase of pairwise local reduce to minimize messages, then converges to selected_primary via a star pattern to ensure complete coverage.\",\n      \"selected_primary\": 3,\n      \"steps\": [\n        {\n          \"description\": \"Pairwise local reduce between agents 0-1 and 2-3\",\n          \"edges\": [\n            [0, 1],\n            [2, 3]\n          ],\n          \"operator_hint\": \"pairwise local reduce\"\n        },\n        {\n          \"description\": \"Forward aggregated partial counts to selected_primary 3\",\n          \"edges\": [\n            [1, 3],\n            [2, 3]\n          ],\n          \"operator_hint\": \"star sink\"\n        }\n      ]\n    }\n  ]\n}"
+  ],
+  "raw_response": null
+}

@@ -1,0 +1,32 @@
+{
+  "active_avoid_count": 4,
+  "active_count": 10,
+  "archive_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/skills_archive/self_evolved_free_dag_iter_5",
+  "archived_count": 3,
+  "condition_buckets": {
+    "{\"agent_bucket\": \"agents_8\", \"array_size_bucket\": \"arrays_1024\", \"objective\": \"balanced\", \"task_family\": \"count_frequency\"}": {
+      "archived": [
+        "cf_topology_generated:budget_aware_partial__a8__arr1024"
+      ],
+      "kept": [
+        "cf_topology_generated:two_stage_merge__a8__arr1024",
+        "cf_topology_generated:hybrid_reduce_audit__a8__arr1024",
+        "cf_topology_generated:sparse_peer_exchange__a8__arr1024"
+      ]
+    },
+    "{\"agent_bucket\": \"agents_any\", \"array_size_bucket\": \"arrays_any\", \"objective\": \"balanced\", \"task_family\": \"count_frequency\"}": {
+      "archived": [
+        "cf_topology_generated:budget_aware_partial",
+        "cf_topology_generated:two_stage_merge"
+      ],
+      "kept": [
+        "cf_topology_generated:sparse_peer_exchange",
+        "cf_topology_generated:hybrid_reduce_audit",
+        "cf_topology_generated:binary_tree_reduce"
+      ]
+    }
+  },
+  "input_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/skills_iter_5",
+  "max_per_condition": 3,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/skills_best_so_far"
+}

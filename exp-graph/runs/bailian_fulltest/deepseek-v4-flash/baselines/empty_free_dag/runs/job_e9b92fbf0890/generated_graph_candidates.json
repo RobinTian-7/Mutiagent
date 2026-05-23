@@ -1,0 +1,656 @@
+[
+  {
+    "candidate_id": "candidate_0",
+    "graph_plan": {
+      "candidate_id": "candidate_0",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "binary_tree_merge",
+      "rationale": "Balanced binary tree reduces messages to 7, all agents reach sink 7 in 3 steps.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Merge pairs into two groups",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Final merge to sink",
+          "edges": [
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -21.462200300909533,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 21.071307505705477,
+        "mean_token_cost": 19101.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 22.847319317591726,
+        "mean_token_cost": 18743.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 17.88854381999832,
+        "mean_token_cost": 18900.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 24.041630560342615,
+        "mean_token_cost": 18936.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "binary_tree_merge",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce among leaves",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Merge pairs into two groups",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Final merge to sink",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_1",
+    "graph_plan": {
+      "candidate_id": "candidate_1",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "medium"
+      },
+      "fallback_topology": "star",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "star_with_audit",
+      "rationale": "All agents send to sink 7 in step1, then sink sends back to one agent for audit, ensuring coverage.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "All agents send to primary sink",
+          "edges": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        },
+        {
+          "description": "Sink sends aggregated result to agent 0 for audit",
+          "edges": [
+            [
+              7,
+              0
+            ]
+          ],
+          "operator_hint": "audit_sink_with_extra_edge"
+        }
+      ]
+    },
+    "objective_score": -123.92062847849701,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 125.98015716770638,
+        "mean_token_cost": 14560.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 121.97540735738495,
+        "mean_token_cost": 14400.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 122.50714264890844,
+        "mean_token_cost": 14802.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 125.21980673998823,
+        "mean_token_cost": 12469.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 5,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_1",
+        "fallback_topology": "star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "star_with_audit",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "All agents send to primary sink",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Sink sends aggregated result to agent 0 for audit",
+          "operator": "audit_sink_with_extra_edge",
+          "transmissions": [
+            [
+              7,
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [
+      "removed fan-in overflow edge (4, 7) at step 0",
+      "removed fan-in overflow edge (5, 7) at step 0",
+      "removed fan-in overflow edge (6, 7) at step 0"
+    ],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [4, 5, 6]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_2",
+    "graph_plan": {
+      "candidate_id": "candidate_2",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "high"
+      },
+      "fallback_topology": "mesh",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "sparse_peer_exchange",
+      "rationale": "Sparse peer exchange in step1, then two-step tree reduce to sink 7, ensuring redundancy.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Sparse peer exchange among pairs",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Merge into two groups",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Final merge to sink",
+          "edges": [
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -18.507887980203197,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 20.09975124224178,
+        "mean_token_cost": 18916.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 17.435595774162696,
+        "mean_token_cost": 18991.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 18.16590212458495,
+        "mean_token_cost": 18939.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 18.33030277982336,
+        "mean_token_cost": 18973.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_2",
+        "fallback_topology": "mesh",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "sparse_peer_exchange",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Sparse peer exchange among pairs",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Merge into two groups",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Final merge to sink",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_3",
+    "graph_plan": {
+      "candidate_id": "candidate_3",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "budget_aware_partial",
+      "rationale": "Two-step tree with fan-in 4, then final merge, using only 6 messages.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Two groups merge to intermediates",
+          "edges": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "budget_aware_partial_aggregation"
+        },
+        {
+          "description": "Intermediates merge to sink",
+          "edges": [
+            [
+              2,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -21.10815591041456,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 19.595917942265423,
+        "mean_token_cost": 15759.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 27.422618401604176,
+        "mean_token_cost": 15703.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 16.24807680927192,
+        "mean_token_cost": 15569.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 12.0,
+        "mean_rmse": 21.166010488516726,
+        "mean_token_cost": 15574.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_3",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "budget_aware_partial",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Two groups merge to intermediates",
+          "operator": "budget_aware_partial_aggregation",
+          "transmissions": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Intermediates merge to sink",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              2,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  }
+]

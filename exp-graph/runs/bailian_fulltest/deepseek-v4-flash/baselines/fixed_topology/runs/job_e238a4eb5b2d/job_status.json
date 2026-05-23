@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T11:55:43+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 20.639767440550294,
+  "job_id": "e238a4eb5b2d",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/fixed_topology/runs/job_e238a4eb5b2d",
+  "run_id": "protocol_mesh_star_n8_seed102_1779537318451235000",
+  "started_at": "2026-05-23T11:55:18+00:00",
+  "status": "succeeded",
+  "token_cost": 42415
+}

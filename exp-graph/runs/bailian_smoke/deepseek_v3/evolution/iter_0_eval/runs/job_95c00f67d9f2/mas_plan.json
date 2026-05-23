@@ -1,0 +1,191 @@
+{
+  "alternatives": [],
+  "config_overrides": {
+    "protocol_spec": {
+      "metadata": {
+        "compiled_from_topology": "mesh_star",
+        "planner_generated": true
+      },
+      "n_agents": 4,
+      "name": "mas_balanced_4",
+      "operators": [
+        "local_solve",
+        "mesh_broadcast",
+        "star_sink"
+      ],
+      "steps": [
+        {
+          "description": "mesh: all agents broadcast to all other agents",
+          "operator": "mesh_broadcast",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              3
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              0
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              3,
+              0
+            ],
+            [
+              3,
+              1
+            ],
+            [
+              3,
+              2
+            ]
+          ]
+        },
+        {
+          "description": "mesh aggregation: star gather to agent 3",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              3
+            ],
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "fallback_skill_id": null,
+  "operators": [
+    "local_solve",
+    "mesh_broadcast",
+    "star_sink"
+  ],
+  "planner_mode": "operator_compose",
+  "protocol_spec": {
+    "metadata": {
+      "compiled_from_topology": "mesh_star",
+      "planner_generated": true
+    },
+    "n_agents": 4,
+    "name": "mas_balanced_4",
+    "operators": [
+      "local_solve",
+      "mesh_broadcast",
+      "star_sink"
+    ],
+    "steps": [
+      {
+        "description": "mesh: all agents broadcast to all other agents",
+        "operator": "mesh_broadcast",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            2
+          ],
+          [
+            0,
+            3
+          ],
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            0
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            0
+          ],
+          [
+            3,
+            1
+          ],
+          [
+            3,
+            2
+          ]
+        ]
+      },
+      {
+        "description": "mesh aggregation: star gather to agent 3",
+        "operator": "star_sink",
+        "transmissions": [
+          [
+            0,
+            3
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            3
+          ]
+        ]
+      }
+    ]
+  },
+  "rationale": "Composed finite ProtocolGraphSpec from organization operators: local_solve -> mesh_broadcast -> star_sink [free-graph-fallback: Error code: 400 - {'error': {'message': 'The product is not activated, please confirm that you have activated products and try again after activation.', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_parameter_error'}, 'request_id': '85a028ba-4516-9160-8243-e2ddd6fc1a29'}]",
+  "score": 0.0,
+  "score_breakdown": {},
+  "skill_id": null,
+  "topology_name": "mesh_star"
+}

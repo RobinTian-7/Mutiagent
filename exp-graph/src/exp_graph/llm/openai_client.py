@@ -29,11 +29,16 @@ class OpenAIChatClient:
         model_name: str,
         temperature: float | None = None,
     ) -> LLMResponse:
+        request_options: dict[str, object] = {}
+        if model_name.startswith(("qwen3.5-", "qwen3.6-")):
+            request_options["extra_body"] = {"enable_thinking": False}
+
         response = self._client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0 if temperature is None else temperature,
             response_format={"type": "json_object"},
+            **request_options,
         )
         text = response.choices[0].message.content or "{}"
         usage = response.usage

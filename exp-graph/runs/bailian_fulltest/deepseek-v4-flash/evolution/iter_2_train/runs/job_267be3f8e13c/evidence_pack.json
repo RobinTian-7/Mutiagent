@@ -1,0 +1,85 @@
+{
+  "current_skill_versions": {
+    "cf_avoid_generated:binary_tree_reduce__a8__arr1024": "0.1.0",
+    "cf_topology_generated:binary_tree_reduce": "0.1.0",
+    "cf_topology_generated:budget_aware_partial": "0.1.0",
+    "cf_topology_generated:budget_aware_partial__a8__arr1024": "0.2.0",
+    "cf_topology_generated:hybrid_reduce_audit__a8__arr1024": "0.1.0",
+    "cf_topology_generated:sparse_peer_exchange": "0.2.0",
+    "cf_topology_generated:sparse_peer_exchange__a8__arr1024": "0.1.0"
+  },
+  "experiment_id": "protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+  "record_count": 2,
+  "topologies": {
+    "generated:hybrid_reduce_audit": {
+      "condition_scope": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_1024",
+        "array_sizes": [
+          1024
+        ],
+        "condition_key": "agents_8__arrays_1024",
+        "max_agents": 8,
+        "max_array_size": 1024,
+        "min_agents": 8,
+        "min_array_size": 1024
+      },
+      "dynamics": {
+        "coverage_gain": 0.1875,
+        "retry_attempts": 0.0,
+        "sink_best_rmse_gap": 0.0,
+        "trace_count": 1
+      },
+      "evidence_refs": [
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000"
+      ],
+      "metrics": {
+        "exact_match_rate": 0.0,
+        "messages": 8.0,
+        "rmse": 11.224972160321824,
+        "token_cost": 19322.0
+      },
+      "n_agents": [
+        8
+      ],
+      "risk_tags": [
+        "full_coverage_wrong_answer",
+        "non_exact_final"
+      ],
+      "seeds": [
+        1
+      ],
+      "structure_features": {
+        "aggregation_pattern": "unspecified",
+        "candidate_ids": [
+          "skill_cf_topology_generated_hybrid_reduce_audit__a8__arr1024"
+        ],
+        "evidence_metadata_keys": [
+          "candidate_id",
+          "fallback_topology",
+          "generated_graph",
+          "graph_type",
+          "max_messages",
+          "max_receiver_fan_in",
+          "max_steps",
+          "selected_primary"
+        ],
+        "generated_graph": true,
+        "mean_protocol_messages": 0.0,
+        "mean_protocol_steps": 0.0,
+        "motifs": [
+          "unspecified_generated_structure"
+        ],
+        "selected_primary_values": [
+          7
+        ],
+        "sink_pattern": "single_selected_primary",
+        "topology_name": "generated:hybrid_reduce_audit"
+      }
+    }
+  }
+}

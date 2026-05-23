@@ -1,0 +1,57 @@
+{
+  "failed": 0,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_3_eval",
+  "skipped": 0,
+  "statuses": [
+    {
+      "ended_at": "2026-05-23T12:49:41+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 10.198039027185569,
+      "job_id": "03b5c8808ecf",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_3_eval/runs/job_03b5c8808ecf",
+      "run_id": "protocol_generated:pairwise_then_star_n8_seed104_1779540571671311000",
+      "started_at": "2026-05-23T12:45:59+00:00",
+      "status": "succeeded",
+      "token_cost": 16593
+    },
+    {
+      "ended_at": "2026-05-23T12:49:48+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 12.569805089976535,
+      "job_id": "46a54c8ba7bb",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_3_eval/runs/job_46a54c8ba7bb",
+      "run_id": "protocol_generated:hybrid_reduce_audit_n8_seed103_1779540576194207000",
+      "started_at": "2026-05-23T12:45:59+00:00",
+      "status": "succeeded",
+      "token_cost": 19235
+    },
+    {
+      "ended_at": "2026-05-23T12:49:22+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 23.769728648009426,
+      "job_id": "ba92bbba1098",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_3_eval/runs/job_ba92bbba1098",
+      "run_id": "protocol_generated:pairwise_then_star_n8_seed102_1779540551943578000",
+      "started_at": "2026-05-23T12:45:59+00:00",
+      "status": "succeeded",
+      "token_cost": 16869
+    },
+    {
+      "ended_at": "2026-05-23T12:49:53+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 165.2573750245356,
+      "job_id": "e5a5d59a1ccf",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_3_eval/runs/job_e5a5d59a1ccf",
+      "run_id": "protocol_generated:sparse_peer_exchange_n8_seed101_1779540575972725000",
+      "started_at": "2026-05-23T12:45:59+00:00",
+      "status": "succeeded",
+      "token_cost": 35001
+    }
+  ],
+  "succeeded": 4,
+  "total_jobs": 4
+}

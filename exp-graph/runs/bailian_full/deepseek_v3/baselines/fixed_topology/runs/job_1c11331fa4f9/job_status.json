@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T10:43:28+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 17.204650534085253,
+  "job_id": "1c11331fa4f9",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_1c11331fa4f9",
+  "run_id": "protocol_tree_n8_seed103_1779532952470450000",
+  "started_at": "2026-05-23T10:42:32+00:00",
+  "status": "succeeded",
+  "token_cost": 18799
+}

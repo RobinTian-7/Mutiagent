@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T11:34:40+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 54.49770637375485,
+  "job_id": "f5025ef52f54",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3_6_27b/baselines/fixed_topology/runs/job_f5025ef52f54",
+  "run_id": "protocol_mesh_star_n8_seed101_1779536030137783000",
+  "started_at": "2026-05-23T11:33:50+00:00",
+  "status": "succeeded",
+  "token_cost": 38643
+}

@@ -1,0 +1,716 @@
+[
+  {
+    "candidate_id": "candidate_0",
+    "graph_plan": {
+      "candidate_id": "candidate_0",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "balanced_tree_reduce",
+      "rationale": "Standard binary tree reduction ensures all 8 agents reach the sink in exactly 3 steps with minimal messages (7 total), satisfying the balanced objective by maximizing coverage efficiency.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local aggregation: Even agents send to odd neighbors to form initial partial sums.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Second layer reduce: Winners from step 1 forward their aggregated counts up the tree.",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Final merge: The root of the left subtree sends its result to the global sink.",
+          "edges": [
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -17.8031643376024,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 11.40175425099138,
+        "mean_token_cost": 22006.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 12.206555615733702,
+        "mean_token_cost": 22109.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 20.0,
+        "mean_token_cost": 22969.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 27.60434748368452,
+        "mean_token_cost": 21000.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "balanced_tree_reduce",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local aggregation: Even agents send to odd neighbors to form initial partial sums.",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Second layer reduce: Winners from step 1 forward their aggregated counts up the tree.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Final merge: The root of the left subtree sends its result to the global sink.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_1",
+    "graph_plan": {
+      "candidate_id": "candidate_1",
+      "expected_tradeoff": {
+        "accuracy": "very_high",
+        "cost": "medium"
+      },
+      "fallback_topology": "mesh_star",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "hybrid_mesh_sink",
+      "rationale": "Uses a mesh-like broadcast for redundancy before converging to a single sink. This adds robustness against message loss or LLM hallucination at the cost of slightly higher token usage compared to pure tree.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Initial peer exchange: Agents 0-3 broadcast to 4-7 to ensure cross-pool awareness.",
+          "edges": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Convergence phase: All non-sink agents send their current state to the sink.",
+          "edges": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -213.62059106463485,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 283.47133893923035,
+        "mean_token_cost": 19072.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 258.6658075587108,
+        "mean_token_cost": 18407.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 178.5917131336166,
+        "mean_token_cost": 18476.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 8.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 133.75350462698165,
+        "mean_token_cost": 23307.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 8,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_1",
+        "fallback_topology": "mesh_star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "hybrid_mesh_sink",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Initial peer exchange: Agents 0-3 broadcast to 4-7 to ensure cross-pool awareness.",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              5
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Convergence phase: All non-sink agents send their current state to the sink.",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [
+      "removed fan-in overflow edge (4, 7) at step 1",
+      "removed fan-in overflow edge (5, 7) at step 1",
+      "removed fan-in overflow edge (6, 7) at step 1"
+    ],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [4, 5, 6]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_2",
+    "graph_plan": {
+      "candidate_id": "candidate_2",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "very_low"
+      },
+      "fallback_topology": "budget_tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "linear_chain_audit",
+      "rationale": "A linear chain minimizes fan-in constraints and message count but increases latency. An audit edge is added to allow the sink to verify intermediate states if needed, though it risks higher variance in accuracy.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Linear propagation: Data flows sequentially from agent 0 to 7.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "budget_aware_partial_aggregation"
+        }
+      ]
+    },
+    "objective_score": -245.64375840079555,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 244.02458892496878,
+        "mean_token_cost": 21496.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 244.42994906516674,
+        "mean_token_cost": 21350.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 247.54393549428755,
+        "mean_token_cost": 22011.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 246.57656011875906,
+        "mean_token_cost": 21857.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_2",
+        "fallback_topology": "budget_tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "linear_chain_audit",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Linear propagation: Data flows sequentially from agent 0 to 7.",
+          "operator": "budget_aware_partial_aggregation",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 1,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [0, 1, 2, 3, 4, 5]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_3",
+    "graph_plan": {
+      "candidate_id": "candidate_3",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "dual_fan_in_reduce",
+      "rationale": "Optimizes for the max_receiver_fan_in=4 constraint by using a dual-fan structure where two intermediate nodes aggregate half the population each, then merge at the sink. This balances load better than a deep tree.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "First split: Agents 0-3 send to node 4; Agents 4-7 send to node 5? No, restructure for disjoint sets.",
+          "edges": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "budget_aware_partial_aggregation"
+        },
+        {
+          "description": "Correction: Step 1 must be simultaneous. Let's define clear halves.",
+          "edges": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "budget_aware_partial_aggregation"
+        }
+      ]
+    },
+    "objective_score": -203.23622538767825,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 14.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 202.1385663350762,
+        "mean_token_cost": 21531.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 14.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 204.06861591141347,
+        "mean_token_cost": 22887.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 14.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 203.69585170051943,
+        "mean_token_cost": 22427.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 14.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 203.04186760370385,
+        "mean_token_cost": 23071.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 14,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_3",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "dual_fan_in_reduce",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "First split: Agents 0-3 send to node 4; Agents 4-7 send to node 5? No, restructure for disjoint sets.",
+          "operator": "budget_aware_partial_aggregation",
+          "transmissions": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Correction: Step 1 must be simultaneous. Let's define clear halves.",
+          "operator": "budget_aware_partial_aggregation",
+          "transmissions": [
+            [
+              0,
+              4
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ],
+            [
+              6,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [0, 1, 2, 3, 4]"
+    ]
+  }
+]

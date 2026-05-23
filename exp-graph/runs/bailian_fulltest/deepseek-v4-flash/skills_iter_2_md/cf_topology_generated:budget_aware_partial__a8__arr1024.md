@@ -1,0 +1,342 @@
+---
+skill_id: cf_topology_generated:budget_aware_partial__a8__arr1024
+version: 0.2.0
+task_family: count_frequency
+objective: balanced
+---
+# cf_topology_generated:budget_aware_partial__a8__arr1024
+
+## Organization Policy
+
+```json
+{
+  "operation_recommendations": [
+    {
+      "action_type": "preserve",
+      "conditions": {
+        "agent_bucket": "agents_8",
+        "array_size_bucket": "arrays_1024",
+        "condition_key": "agents_8__arrays_1024"
+      },
+      "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+      "target": "condition_trigger"
+    },
+    {
+      "action_type": "preserve",
+      "expected_effect": {
+        "final_answer_noise": "decrease"
+      },
+      "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+      "target": "final_reducer"
+    },
+    {
+      "action_type": "mutate",
+      "expected_effect": {
+        "candidate_diversity": "increase"
+      },
+      "instruction": "When exploring variants, change fan-in, sink placement, or audit edges while keeping full temporal reachability to the selected primary.",
+      "target": "free_graph_generation"
+    },
+    {
+      "action_type": "change_merge_mode",
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8,
+        "objective": "balanced"
+      },
+      "expected_effect": "Reduce full coverage wrong answer rate by improving merge quality.",
+      "instruction": "Replace llm_full_merge with a multi-step merge that first clusters similar answers then reconciles differences.",
+      "target": "sink"
+    },
+    {
+      "action_type": "increase_fan_in",
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8,
+        "objective": "balanced"
+      },
+      "expected_effect": "Increase mean final coverage to at least 0.5.",
+      "instruction": "Set minimum fan-in to 2 for all agents to ensure each receives at least two partial answers.",
+      "target": "all_agents"
+    },
+    {
+      "action_type": "change_objective",
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8
+      },
+      "expected_effect": "Increase budget for edges and messages, improving accuracy.",
+      "instruction": "Switch objective from 'balanced' to 'accuracy_first' for this task family.",
+      "target": "planner"
+    },
+    {
+      "action_type": "change_graph_search_mode",
+      "conditions": {
+        "array_size": 1024,
+        "n_agents": 8,
+        "objective": "balanced"
+      },
+      "expected_effect": "Increase diversity of partial answers, potentially improving merge quality.",
+      "instruction": "Replace topk with a diversity-aware search that selects edges from different clusters.",
+      "target": "planner"
+    }
+  ],
+  "operators": [],
+  "planner_mode": "graph_generate",
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "skill_cf_topology_generated_budget_aware_partial__a8__arr1024",
+      "fallback_topology": "tree",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "budget_aware_partial",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise reduce: agents 0 and 1 merge into 1; 2 and 3 into 3; 4 and 5 into 5; 6 and 7 into 7.",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Agents 1,3,5 send to primary 7; agent 7 already has its own merged data.",
+        "operator": "budget_aware_partial_aggregation",
+        "transmissions": [
+          [
+            1,
+            7
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "rationale_rules": [
+    "Mean final coverage is only 0.28125, meaning most agents did not receive enough information to contribute meaningfully. The budget-aware partial topology likely limited edges to save cost, but this starved the sink of diverse partial answers.",
+    "Mean token cost is low (16532) but RMSE is high (19.85). The budget-aware partial topology saved cost at the expense of accuracy, but the accuracy loss is so severe that the topology is not useful. The tradeoff is unfavorable.",
+    "Observed CF evidence for topology generated:budget_aware_partial."
+  ],
+  "structure_features": {
+    "aggregation_pattern": "unspecified",
+    "candidate_ids": [
+      "skill_cf_topology_generated_budget_aware_partial__a8__arr1024"
+    ],
+    "evidence_metadata_keys": [
+      "candidate_id",
+      "fallback_topology",
+      "generated_graph",
+      "graph_type",
+      "max_messages",
+      "max_receiver_fan_in",
+      "max_steps",
+      "selected_primary"
+    ],
+    "generated_graph": true,
+    "mean_protocol_messages": 0.0,
+    "mean_protocol_steps": 0.0,
+    "motifs": [
+      "unspecified_generated_structure"
+    ],
+    "selected_primary_values": [
+      7
+    ],
+    "sink_pattern": "single_selected_primary",
+    "topology_name": "generated:budget_aware_partial"
+  },
+  "topology_name": "generated:budget_aware_partial"
+}
+```
+
+## Expected Tradeoff
+
+```json
+{
+  "active_evidence_count": 1,
+  "exact_match_rate": 0.0,
+  "mean_messages": 7.0,
+  "mean_model_calls": 13.0,
+  "mean_norm_l1": 0.0390625,
+  "mean_rmse": 19.849433241279208,
+  "mean_token_cost": 16532.0,
+  "std_rmse": 0.0,
+  "strength": "lowest observed communication cost",
+  "weakness": "may sacrifice accuracy compared with peer propagation"
+}
+```
+
+## Expected Dynamics
+
+```json
+{
+  "aggregation_reliability": {
+    "mean_sink_best_rmse_gap": 0.0,
+    "mean_sink_coverage": 1.0
+  },
+  "condition_buckets": [
+    {
+      "array_size": 1024,
+      "n_agents": 8,
+      "objective": "balanced"
+    }
+  ],
+  "condition_scope": {
+    "agent_bucket": "agents_8",
+    "agent_counts": [
+      8
+    ],
+    "array_size_bucket": "arrays_1024",
+    "array_sizes": [
+      1024
+    ],
+    "condition_key": "agents_8__arrays_1024",
+    "max_agents": 8,
+    "max_array_size": 1024,
+    "min_agents": 8,
+    "min_array_size": 1024
+  },
+  "coverage_growth": {
+    "mean_coverage_gain": 0.15625,
+    "mean_final_coverage": 0.28125,
+    "mean_final_max_coverage": 1.0
+  },
+  "merge_quality": {
+    "mean_avg_fan_in": 0.5384615384615384,
+    "mean_parse_errors": 0.0,
+    "mean_retry_attempts": 0.0
+  },
+  "protocol_spec_hash": "ebfa8b55ef61",
+  "risk_tags": [
+    "full_coverage_wrong_answer"
+  ],
+  "structure_features": {
+    "aggregation_pattern": "unspecified",
+    "candidate_ids": [
+      "skill_cf_topology_generated_budget_aware_partial__a8__arr1024"
+    ],
+    "evidence_metadata_keys": [
+      "candidate_id",
+      "fallback_topology",
+      "generated_graph",
+      "graph_type",
+      "max_messages",
+      "max_receiver_fan_in",
+      "max_steps",
+      "selected_primary"
+    ],
+    "generated_graph": true,
+    "mean_protocol_messages": 0.0,
+    "mean_protocol_steps": 0.0,
+    "motifs": [
+      "unspecified_generated_structure"
+    ],
+    "selected_primary_values": [
+      7
+    ],
+    "sink_pattern": "single_selected_primary",
+    "topology_name": "generated:budget_aware_partial"
+  }
+}
+```
+
+## Evidence Refs
+
+```json
+[
+  "run:protocol_generated:budget_aware_partial_n8_seed1_1779538525994199000",
+  "run:protocol_generated:budget_aware_partial_n8_seed3_1779539266148317000",
+  "trace:protocol_generated:budget_aware_partial_n8_seed3_1779539266148317000"
+]
+```
+
+## Evidence
+
+```json
+[]
+```
+
+## Risk Notes
+
+```json
+[
+  {
+    "insight_id": "insight_001",
+    "metric_snapshot": {
+      "exact_match_rate": 0.0,
+      "full_coverage_wrong_answer_rate": 1.0,
+      "mean_final_coverage": 0.28125,
+      "mean_rmse": 19.849433241279208
+    },
+    "source": "llm_insight_minister",
+    "summary": "The topology achieved full coverage (all agents contributed) but all answers were wrong, indicating that the merge step (llm_full_merge) produced an incorrect final answer despite having all partial information. This is a systematic failure in the reducer or final answer extraction."
+  },
+  {
+    "confidence": 0.9,
+    "patch_id": "insight_insight_001",
+    "source": "llm_insight_minister",
+    "summary": "The topology achieved full coverage (all agents contributed) but all answers were wrong, indicating that the merge step (llm_full_merge) produced an incorrect final answer despite having all partial information. This is a systematic failure in the reducer or final answer extraction."
+  },
+  {
+    "confidence": 0.8,
+    "patch_id": "insight_insight_002",
+    "source": "llm_insight_minister",
+    "summary": "Mean final coverage is only 0.28125, meaning most agents did not receive enough information to contribute meaningfully. The budget-aware partial topology likely limited edges to save cost, but this starved the sink of diverse partial answers."
+  },
+  {
+    "confidence": 0.9,
+    "patch_id": "insight_insight_003",
+    "source": "llm_insight_minister",
+    "summary": "Mean token cost is low (16532) but RMSE is high (19.85). The budget-aware partial topology saved cost at the expense of accuracy, but the accuracy loss is so severe that the topology is not useful. The tradeoff is unfavorable."
+  },
+  {
+    "confidence": 0.6,
+    "patch_id": "insight_insight_004",
+    "source": "llm_insight_minister",
+    "summary": "The graph search mode is topk, which selects the top-k edges based on some score. This may lead to homogeneous information flow, reducing the diversity of partial answers reaching the sink. Combined with low coverage, this could explain the full coverage wrong answer."
+  },
+  {
+    "confidence": 0.75,
+    "patch_id": "result_cf_topology_generated:budget_aware_partial__a8__arr1024",
+    "source": "result_analyst",
+    "summary": "Observed CF evidence for topology generated:budget_aware_partial."
+  }
+]
+```
+
+## Fallback
+
+```json
+{
+  "budget_first": "cf_budget_tree"
+}
+```

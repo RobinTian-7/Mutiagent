@@ -1,0 +1,71 @@
+{
+  "conditions": [
+    {
+      "array_size": 1024,
+      "exact_match_rate": 0.0,
+      "fallback_rate": 0.0,
+      "full_coverage_wrong_answer_rate": 1.0,
+      "generated_graph_rate": 1.0,
+      "graph_search_mode": "topk",
+      "init_mode": "llm_local_solve",
+      "mean_candidate_count": 4.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 13.0,
+      "mean_parse_errors": 0.0,
+      "mean_protocol_messages": 7.0,
+      "mean_protocol_steps": 2.0,
+      "mean_rejected_candidate_count": 0.0,
+      "mean_retry_attempts": 0.0,
+      "mean_rmse": 17.821856040103604,
+      "mean_selected_candidate_score": -18.08446701647059,
+      "mean_token_cost": 16589.5,
+      "merge_mode": "llm_full_merge",
+      "n_agents": 8,
+      "objective": "balanced",
+      "planner_policy": "free_graph",
+      "run_count": 2,
+      "seeds": [
+        1,
+        2
+      ],
+      "skill_grounding_rate": 0.0,
+      "std_rmse": 4.937757313378479,
+      "topology_name": "generated:budget_aware_partial",
+      "valid_plan_rate": 1.0
+    },
+    {
+      "array_size": 1024,
+      "exact_match_rate": 0.0,
+      "fallback_rate": 0.0,
+      "full_coverage_wrong_answer_rate": 1.0,
+      "generated_graph_rate": 1.0,
+      "graph_search_mode": "topk",
+      "init_mode": "llm_local_solve",
+      "mean_candidate_count": 4.0,
+      "mean_messages": 20.0,
+      "mean_model_calls": 25.0,
+      "mean_parse_errors": 0.0,
+      "mean_protocol_messages": 20.0,
+      "mean_protocol_steps": 3.0,
+      "mean_rejected_candidate_count": 0.0,
+      "mean_retry_attempts": 0.0,
+      "mean_rmse": 15.618009471685337,
+      "mean_selected_candidate_score": -17.64260142612288,
+      "mean_token_cost": 35097.5,
+      "merge_mode": "llm_full_merge",
+      "n_agents": 8,
+      "objective": "balanced",
+      "planner_policy": "free_graph",
+      "run_count": 2,
+      "seeds": [
+        3,
+        4
+      ],
+      "skill_grounding_rate": 0.0,
+      "std_rmse": 5.922649756852678,
+      "topology_name": "generated:sparse_peer_exchange",
+      "valid_plan_rate": 1.0
+    }
+  ],
+  "created_at": "2026-05-23T12:45:35+00:00"
+}

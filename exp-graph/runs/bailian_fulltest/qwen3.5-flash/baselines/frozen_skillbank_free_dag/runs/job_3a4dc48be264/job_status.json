@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:28:47+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 23.2379000772445,
+  "job_id": "3a4dc48be264",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/frozen_skillbank_free_dag/runs/job_3a4dc48be264",
+  "run_id": "protocol_generated:balanced_tree_reduce_n8_seed102_1779539295630563000",
+  "started_at": "2026-05-23T12:17:16+00:00",
+  "status": "succeeded",
+  "token_cost": 22506
+}

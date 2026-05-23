@@ -1,0 +1,48 @@
+[
+  {
+    "created_at": "2026-05-23T11:25:45+00:00",
+    "dynamics": {
+      "aggregation_reliability": {
+        "average_rmse": 14.2828568570857,
+        "best_agent_global_rmse": 14.2828568570857,
+        "is_sink_topology": true,
+        "sink_agent_id": 7,
+        "sink_best_rmse_gap": 0.0,
+        "sink_coverage_ratio": 1.0,
+        "sink_global_rmse": 14.2828568570857,
+        "vote_rmse": 14.2828568570857
+      },
+      "coverage_growth": {
+        "final_full_coverage_agents": 8,
+        "final_max_coverage": 1.0,
+        "final_mean_coverage": 1.0,
+        "initial_max_coverage": 0.125,
+        "initial_mean_coverage": 0.125,
+        "max_coverage_gain": 0.875,
+        "mean_coverage_gain": 0.875
+      },
+      "merge_quality": {
+        "avg_fan_in": 0.9393939393939394,
+        "completion_tokens": 39191,
+        "parse_error_count": 20,
+        "prompt_tokens": 137095,
+        "retry_attempts": 53,
+        "trace_rows": 33
+      }
+    },
+    "evidence_id": "trace:protocol_one_peer_exponential_dag_star_n8_seed101_1779535325578676000",
+    "metrics": {},
+    "n_agents": 8,
+    "risk_tags": [
+      "full_coverage_wrong_answer",
+      "merge_parse_error",
+      "merge_retry_burden"
+    ],
+    "seed": 101,
+    "source_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/qwen3_5_27b/baselines/fixed_topology/runs/job_17d5c211ae78/traces/protocol_one_peer_exponential_dag_star_n8_seed101_1779535325578676000.jsonl",
+    "source_type": "trace",
+    "status": "observed",
+    "task_family": "count_frequency",
+    "topology_name": "one_peer_exponential_dag_star"
+  }
+]

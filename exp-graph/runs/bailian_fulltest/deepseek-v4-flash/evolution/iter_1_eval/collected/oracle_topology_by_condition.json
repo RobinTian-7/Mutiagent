@@ -1,0 +1,13 @@
+{
+  "conditions": {
+    "{\"array_size\": 1024, \"init_mode\": \"llm_local_solve\", \"merge_mode\": \"llm_full_merge\", \"n_agents\": 8, \"objective\": \"balanced\"}": {
+      "mean_messages": 7.0,
+      "mean_rmse": 12.24744871391589,
+      "mean_token_cost": 16533.0,
+      "planner_policy": "free_graph",
+      "score": -9.469864099741123,
+      "topology_name": "generated:budget_aware_partial"
+    }
+  },
+  "created_at": "2026-05-23T12:32:27+00:00"
+}

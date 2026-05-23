@@ -1,0 +1,33 @@
+active_receiver,active_sender,agent_id,coverage_ratio,exact_match,global_exact_match,global_normalized_l1_error,global_rmse,known_item_count,known_source_count,known_sources,local_exact_match,local_normalized_l1_error,local_rmse,normalized_l1_error,phase,received_count,rmse,sent_count,step_idx,topology
+False,False,0,0.125,False,False,0.875,284.4187054326772,128,1,[0],False,0.078125,4.0,0.078125,initial,0,4.0,0,-1,generated:balanced_tree_reduce
+False,False,1,0.125,False,False,0.875,284.7735942814923,128,1,[1],False,0.078125,4.0,0.078125,initial,0,4.0,0,-1,generated:balanced_tree_reduce
+False,False,2,0.125,False,False,0.875,284.48901560517237,128,1,[2],False,0.03125,2.0,0.03125,initial,0,2.0,0,-1,generated:balanced_tree_reduce
+False,False,3,0.125,False,False,0.875,284.5347079004598,128,1,[3],False,0.0625,4.242640687119285,0.0625,initial,0,4.242640687119285,0,-1,generated:balanced_tree_reduce
+False,False,4,0.125,False,False,0.86328125,280.4104135013534,128,1,[4],False,0.109375,4.69041575982343,0.109375,initial,0,4.69041575982343,0,-1,generated:balanced_tree_reduce
+False,False,5,0.125,False,False,0.875,284.16896382258216,128,1,[5],False,0.125,7.874007874011811,0.125,initial,0,7.874007874011811,0,-1,generated:balanced_tree_reduce
+False,False,6,0.125,False,False,0.875,284.20063335608523,128,1,[6],False,0.140625,8.831760866327848,0.140625,initial,0,8.831760866327848,0,-1,generated:balanced_tree_reduce
+False,False,7,0.125,False,False,0.873046875,283.86616564853233,128,1,[7],False,0.203125,12.165525060596439,0.203125,initial,0,12.165525060596439,0,-1,generated:balanced_tree_reduce
+False,True,0,0.125,False,False,0.875,284.4187054326772,128,1,[0],False,0.078125,4.0,0.078125,after_step,0,4.0,1,0,generated:balanced_tree_reduce
+True,False,1,0.25,False,False,0.75,244.46676665755612,256,2,"[0, 1]",False,0.0390625,4.0,0.0390625,after_step,1,4.0,0,0,generated:balanced_tree_reduce
+False,True,2,0.125,False,False,0.875,284.48901560517237,128,1,[2],False,0.03125,2.0,0.03125,after_step,0,2.0,1,0,generated:balanced_tree_reduce
+True,False,3,0.25,False,False,0.75,244.24987205728482,256,2,"[2, 3]",False,0.046875,5.0990195135927845,0.046875,after_step,1,5.0990195135927845,0,0,generated:balanced_tree_reduce
+False,True,4,0.125,False,False,0.86328125,280.4104135013534,128,1,[4],False,0.109375,4.69041575982343,0.109375,after_step,0,4.69041575982343,1,0,generated:balanced_tree_reduce
+True,False,5,0.25,False,False,0.73828125,239.72484226712925,256,2,"[4, 5]",False,0.109375,10.954451150103322,0.109375,after_step,1,10.954451150103322,0,0,generated:balanced_tree_reduce
+False,True,6,0.125,False,False,0.875,284.20063335608523,128,1,[6],False,0.140625,8.831760866327848,0.140625,after_step,0,8.831760866327848,1,0,generated:balanced_tree_reduce
+True,False,7,0.25,False,False,0.748046875,243.23651041733024,256,2,"[6, 7]",False,0.1015625,10.488088481701515,0.1015625,after_step,1,10.488088481701515,0,0,generated:balanced_tree_reduce
+False,False,0,0.125,False,False,0.875,284.4187054326772,128,1,[0],False,0.078125,4.0,0.078125,after_step,0,4.0,0,1,generated:balanced_tree_reduce
+False,True,1,0.25,False,False,0.75,244.46676665755612,256,2,"[0, 1]",False,0.0390625,4.0,0.0390625,after_step,0,4.0,1,1,generated:balanced_tree_reduce
+False,False,2,0.125,False,False,0.875,284.48901560517237,128,1,[2],False,0.03125,2.0,0.03125,after_step,0,2.0,0,1,generated:balanced_tree_reduce
+True,False,3,0.5,False,False,0.5,163.63373735266208,512,4,"[0, 1, 2, 3]",False,0.01953125,4.0,0.01953125,after_step,1,4.0,0,1,generated:balanced_tree_reduce
+False,False,4,0.125,False,False,0.86328125,280.4104135013534,128,1,[4],False,0.109375,4.69041575982343,0.109375,after_step,0,4.69041575982343,0,1,generated:balanced_tree_reduce
+False,True,5,0.25,False,False,0.73828125,239.72484226712925,256,2,"[4, 5]",False,0.109375,10.954451150103322,0.109375,after_step,0,10.954451150103322,1,1,generated:balanced_tree_reduce
+False,False,6,0.125,False,False,0.875,284.20063335608523,128,1,[6],False,0.140625,8.831760866327848,0.140625,after_step,0,8.831760866327848,0,1,generated:balanced_tree_reduce
+True,False,7,0.5,False,False,0.486328125,158.39823231336896,512,4,"[4, 5, 6, 7]",False,0.08203125,17.08800749063506,0.08203125,after_step,1,17.08800749063506,0,1,generated:balanced_tree_reduce
+False,False,0,0.125,False,False,0.875,284.4187054326772,128,1,[0],False,0.078125,4.0,0.078125,after_step,0,4.0,0,2,generated:balanced_tree_reduce
+False,False,1,0.25,False,False,0.75,244.46676665755612,256,2,"[0, 1]",False,0.0390625,4.0,0.0390625,after_step,0,4.0,0,2,generated:balanced_tree_reduce
+False,False,2,0.125,False,False,0.875,284.48901560517237,128,1,[2],False,0.03125,2.0,0.03125,after_step,0,2.0,0,2,generated:balanced_tree_reduce
+False,True,3,0.5,False,False,0.5,163.63373735266208,512,4,"[0, 1, 2, 3]",False,0.01953125,4.0,0.01953125,after_step,0,4.0,1,2,generated:balanced_tree_reduce
+False,False,4,0.125,False,False,0.86328125,280.4104135013534,128,1,[4],False,0.109375,4.69041575982343,0.109375,after_step,0,4.69041575982343,0,2,generated:balanced_tree_reduce
+False,False,5,0.25,False,False,0.73828125,239.72484226712925,256,2,"[4, 5]",False,0.109375,10.954451150103322,0.109375,after_step,0,10.954451150103322,0,2,generated:balanced_tree_reduce
+False,False,6,0.125,False,False,0.875,284.20063335608523,128,1,[6],False,0.140625,8.831760866327848,0.140625,after_step,0,8.831760866327848,0,2,generated:balanced_tree_reduce
+True,False,7,1.0,False,False,0.0390625,16.61324772583615,1024,8,"[0, 1, 2, 3, 4, 5, 6, 7]",False,0.0390625,16.61324772583615,0.0390625,after_step,1,16.61324772583615,0,2,generated:balanced_tree_reduce

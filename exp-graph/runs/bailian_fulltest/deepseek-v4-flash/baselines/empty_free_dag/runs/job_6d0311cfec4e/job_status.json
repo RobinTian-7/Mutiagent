@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:01:09+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 20.688160865577203,
+  "job_id": "6d0311cfec4e",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/empty_free_dag/runs/job_6d0311cfec4e",
+  "run_id": "protocol_generated:binary_tree_merge_n8_seed102_1779537658816259000",
+  "started_at": "2026-05-23T11:55:43+00:00",
+  "status": "succeeded",
+  "token_cost": 15654
+}

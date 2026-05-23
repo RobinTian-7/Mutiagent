@@ -1,0 +1,726 @@
+[
+  {
+    "action": "merge",
+    "candidate_skill": {
+      "confidence": {},
+      "counterexamples": [],
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:binary_tree_merge_n8_seed102_1779537658816259000",
+        "run:protocol_generated:binary_tree_merge_n8_seed101_1779537743548838000"
+      ],
+      "expected_dynamics": {
+        "condition_scope": {
+          "agent_bucket": "agents_8",
+          "agent_counts": [
+            8
+          ],
+          "array_size_bucket": "arrays_1024",
+          "array_sizes": [
+            1024
+          ],
+          "condition_key": "agents_8__arrays_1024",
+          "max_agents": 8,
+          "max_array_size": 1024,
+          "min_agents": 8,
+          "min_array_size": 1024
+        },
+        "protocol_spec_hash": "5d2f8fec75ae",
+        "structure_features": {
+          "aggregation_pattern": "hierarchical",
+          "candidate_ids": [
+            "candidate_0"
+          ],
+          "evidence_metadata_keys": [
+            "candidate_id",
+            "fallback_topology",
+            "generated_graph",
+            "graph_type",
+            "max_messages",
+            "max_receiver_fan_in",
+            "max_steps",
+            "selected_primary"
+          ],
+          "generated_graph": true,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "hierarchical_reduce"
+          ],
+          "selected_primary_values": [
+            7
+          ],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "generated:binary_tree_merge"
+        }
+      },
+      "expected_tradeoff": {
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:binary_tree_merge.",
+        "mean_messages": 7.0,
+        "mean_rmse": 20.688160865577203,
+        "mean_token_cost": 15654.0
+      },
+      "failure_modes": [],
+      "fallback": {
+        "budget_first": "cf_budget_tree"
+      },
+      "hypotheses": [],
+      "objective": "balanced",
+      "organization_policy": {
+        "operation_recommendations": [
+          {
+            "action_type": "preserve",
+            "conditions": {
+              "agent_bucket": "agents_8",
+              "array_size_bucket": "arrays_1024",
+              "condition_key": "agents_8__arrays_1024"
+            },
+            "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+            "target": "condition_trigger"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "coverage": "increase",
+              "message_cost": "bounded"
+            },
+            "instruction": "Use staged reduce edges where every receiver that aggregates partials can forward the merged state in a later step.",
+            "target": "edge_schedule"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "final_answer_noise": "decrease"
+            },
+            "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+            "target": "final_reducer"
+          },
+          {
+            "action_type": "mutate",
+            "expected_effect": {
+              "candidate_diversity": "increase"
+            },
+            "instruction": "When exploring variants, change fan-in, sink placement, or audit edges while keeping full temporal reachability to the selected primary.",
+            "target": "free_graph_generation"
+          }
+        ],
+        "operators": [],
+        "planner_mode": "graph_generate",
+        "protocol_spec": {
+          "metadata": {
+            "candidate_id": "candidate_0",
+            "fallback_topology": "tree",
+            "generated_graph": true,
+            "graph_type": "temporal_dag",
+            "max_messages": 32,
+            "max_receiver_fan_in": 4,
+            "max_steps": 4,
+            "selected_primary": 7
+          },
+          "n_agents": 8,
+          "name": "binary_tree_merge",
+          "operators": [
+            "llm_generate_dag"
+          ],
+          "steps": [
+            {
+              "description": "Pairwise local reduce among leaves",
+              "operator": "pairwise_local_reduce",
+              "transmissions": [
+                [
+                  0,
+                  2
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  3,
+                  5
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  6,
+                  7
+                ]
+              ]
+            },
+            {
+              "description": "Intermediate merge at level 1",
+              "operator": "tree_reduce",
+              "transmissions": [
+                [
+                  2,
+                  7
+                ],
+                [
+                  5,
+                  7
+                ]
+              ]
+            },
+            {
+              "description": "Final aggregation at sink",
+              "operator": "star_sink",
+              "transmissions": []
+            }
+          ]
+        },
+        "structure_features": {
+          "aggregation_pattern": "hierarchical",
+          "candidate_ids": [
+            "candidate_0"
+          ],
+          "evidence_metadata_keys": [
+            "candidate_id",
+            "fallback_topology",
+            "generated_graph",
+            "graph_type",
+            "max_messages",
+            "max_receiver_fan_in",
+            "max_steps",
+            "selected_primary"
+          ],
+          "generated_graph": true,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "hierarchical_reduce"
+          ],
+          "selected_primary_values": [
+            7
+          ],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "generated:binary_tree_merge"
+        },
+        "topology_name": "generated:binary_tree_merge"
+      },
+      "revision_history": [],
+      "risk_notes": [],
+      "skill_id": "cf_topology_generated:binary_tree_merge__a8__arr1024",
+      "skill_type": "planner_organization_policy",
+      "tags": [
+        "mas",
+        "emperor-skill",
+        "count-frequency",
+        "balanced"
+      ],
+      "task_family": "count_frequency",
+      "trigger": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_1024",
+        "array_sizes": [
+          1024
+        ],
+        "condition_key": "agents_8__arrays_1024",
+        "max_agents": 8,
+        "max_array_size": 1024,
+        "min_agents": 8,
+        "min_array_size": 1024,
+        "task_family": "count_frequency"
+      },
+      "update_rule": "batch_consolidate",
+      "validation_plan": [],
+      "version": "0.1.0"
+    },
+    "confidence": 0.75,
+    "evidence": [],
+    "evidence_refs": [
+      "run:protocol_generated:binary_tree_merge_n8_seed102_1779537658816259000",
+      "run:protocol_generated:binary_tree_merge_n8_seed101_1779537743548838000"
+    ],
+    "lesson": "Observed CF evidence for topology generated:binary_tree_merge.",
+    "patch_id": "result_cf_topology_generated:binary_tree_merge__a8__arr1024",
+    "source": "result_analyst",
+    "target_skill_id": "cf_topology_generated:binary_tree_merge__a8__arr1024",
+    "update": {
+      "organization_policy": {
+        "rationale_rules": [
+          "Observed CF evidence for topology generated:binary_tree_merge."
+        ]
+      }
+    }
+  },
+  {
+    "action": "merge",
+    "candidate_skill": {
+      "confidence": {},
+      "counterexamples": [],
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed103_1779537562330264000"
+      ],
+      "expected_dynamics": {
+        "condition_scope": {
+          "agent_bucket": "agents_8",
+          "agent_counts": [
+            8
+          ],
+          "array_size_bucket": "arrays_1024",
+          "array_sizes": [
+            1024
+          ],
+          "condition_key": "agents_8__arrays_1024",
+          "max_agents": 8,
+          "max_array_size": 1024,
+          "min_agents": 8,
+          "min_array_size": 1024
+        },
+        "protocol_spec_hash": "32f7c05f079a",
+        "structure_features": {
+          "aggregation_pattern": "peer_exchange",
+          "candidate_ids": [
+            "candidate_2"
+          ],
+          "evidence_metadata_keys": [
+            "candidate_id",
+            "fallback_topology",
+            "generated_graph",
+            "graph_type",
+            "max_messages",
+            "max_receiver_fan_in",
+            "max_steps",
+            "selected_primary"
+          ],
+          "generated_graph": true,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "peer_exchange"
+          ],
+          "selected_primary_values": [
+            7
+          ],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "generated:sparse_peer_exchange"
+        }
+      },
+      "expected_tradeoff": {
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:sparse_peer_exchange.",
+        "mean_messages": 7.0,
+        "mean_rmse": 7.745966692414834,
+        "mean_token_cost": 18857.0
+      },
+      "failure_modes": [],
+      "fallback": {
+        "budget_first": "cf_budget_tree"
+      },
+      "hypotheses": [],
+      "objective": "balanced",
+      "organization_policy": {
+        "operation_recommendations": [
+          {
+            "action_type": "preserve",
+            "conditions": {
+              "agent_bucket": "agents_8",
+              "array_size_bucket": "arrays_1024",
+              "condition_key": "agents_8__arrays_1024"
+            },
+            "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+            "target": "condition_trigger"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "final_answer_noise": "decrease"
+            },
+            "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+            "target": "final_reducer"
+          },
+          {
+            "action_type": "mutate",
+            "expected_effect": {
+              "candidate_diversity": "increase"
+            },
+            "instruction": "When exploring variants, change fan-in, sink placement, or audit edges while keeping full temporal reachability to the selected primary.",
+            "target": "free_graph_generation"
+          }
+        ],
+        "operators": [],
+        "planner_mode": "graph_generate",
+        "protocol_spec": {
+          "metadata": {
+            "candidate_id": "candidate_2",
+            "fallback_topology": "mesh",
+            "generated_graph": true,
+            "graph_type": "temporal_dag",
+            "max_messages": 32,
+            "max_receiver_fan_in": 4,
+            "max_steps": 4,
+            "selected_primary": 7
+          },
+          "n_agents": 8,
+          "name": "sparse_peer_exchange",
+          "operators": [
+            "llm_generate_dag"
+          ],
+          "steps": [
+            {
+              "description": "Sparse peer exchange among pairs",
+              "operator": "sparse_peer_exchange",
+              "transmissions": [
+                [
+                  0,
+                  1
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  6,
+                  7
+                ]
+              ]
+            },
+            {
+              "description": "Merge into two groups",
+              "operator": "pairwise_local_reduce",
+              "transmissions": [
+                [
+                  1,
+                  3
+                ],
+                [
+                  5,
+                  7
+                ]
+              ]
+            },
+            {
+              "description": "Final merge to sink",
+              "operator": "tree_reduce",
+              "transmissions": [
+                [
+                  3,
+                  7
+                ]
+              ]
+            }
+          ]
+        },
+        "structure_features": {
+          "aggregation_pattern": "peer_exchange",
+          "candidate_ids": [
+            "candidate_2"
+          ],
+          "evidence_metadata_keys": [
+            "candidate_id",
+            "fallback_topology",
+            "generated_graph",
+            "graph_type",
+            "max_messages",
+            "max_receiver_fan_in",
+            "max_steps",
+            "selected_primary"
+          ],
+          "generated_graph": true,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "peer_exchange"
+          ],
+          "selected_primary_values": [
+            7
+          ],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "generated:sparse_peer_exchange"
+        },
+        "topology_name": "generated:sparse_peer_exchange"
+      },
+      "revision_history": [],
+      "risk_notes": [],
+      "skill_id": "cf_topology_generated:sparse_peer_exchange__a8__arr1024",
+      "skill_type": "planner_organization_policy",
+      "tags": [
+        "mas",
+        "emperor-skill",
+        "count-frequency",
+        "balanced"
+      ],
+      "task_family": "count_frequency",
+      "trigger": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_1024",
+        "array_sizes": [
+          1024
+        ],
+        "condition_key": "agents_8__arrays_1024",
+        "max_agents": 8,
+        "max_array_size": 1024,
+        "min_agents": 8,
+        "min_array_size": 1024,
+        "task_family": "count_frequency"
+      },
+      "update_rule": "batch_consolidate",
+      "validation_plan": [],
+      "version": "0.1.0"
+    },
+    "confidence": 0.75,
+    "evidence": [],
+    "evidence_refs": [
+      "run:protocol_generated:sparse_peer_exchange_n8_seed103_1779537562330264000"
+    ],
+    "lesson": "Observed CF evidence for topology generated:sparse_peer_exchange.",
+    "patch_id": "result_cf_topology_generated:sparse_peer_exchange__a8__arr1024",
+    "source": "result_analyst",
+    "target_skill_id": "cf_topology_generated:sparse_peer_exchange__a8__arr1024",
+    "update": {
+      "organization_policy": {
+        "rationale_rules": [
+          "Observed CF evidence for topology generated:sparse_peer_exchange."
+        ]
+      }
+    }
+  },
+  {
+    "action": "merge",
+    "candidate_skill": {
+      "confidence": {},
+      "counterexamples": [],
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_generated:two_layer_hybrid_n8_seed104_1779537660889628000"
+      ],
+      "expected_dynamics": {
+        "condition_scope": {
+          "agent_bucket": "agents_8",
+          "agent_counts": [
+            8
+          ],
+          "array_size_bucket": "arrays_1024",
+          "array_sizes": [
+            1024
+          ],
+          "condition_key": "agents_8__arrays_1024",
+          "max_agents": 8,
+          "max_array_size": 1024,
+          "min_agents": 8,
+          "min_array_size": 1024
+        },
+        "protocol_spec_hash": "3c3223548fc0",
+        "structure_features": {
+          "aggregation_pattern": "unspecified",
+          "candidate_ids": [
+            "candidate_3"
+          ],
+          "evidence_metadata_keys": [
+            "candidate_id",
+            "fallback_topology",
+            "generated_graph",
+            "graph_type",
+            "max_messages",
+            "max_receiver_fan_in",
+            "max_steps",
+            "selected_primary"
+          ],
+          "generated_graph": true,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "unspecified_generated_structure"
+          ],
+          "selected_primary_values": [
+            7
+          ],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "generated:two_layer_hybrid"
+        }
+      },
+      "expected_tradeoff": {
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:two_layer_hybrid.",
+        "mean_messages": 7.0,
+        "mean_rmse": 84.15461959987698,
+        "mean_token_cost": 15368.0
+      },
+      "failure_modes": [],
+      "fallback": {
+        "budget_first": "cf_budget_tree"
+      },
+      "hypotheses": [],
+      "objective": "balanced",
+      "organization_policy": {
+        "operation_recommendations": [
+          {
+            "action_type": "preserve",
+            "conditions": {
+              "agent_bucket": "agents_8",
+              "array_size_bucket": "arrays_1024",
+              "condition_key": "agents_8__arrays_1024"
+            },
+            "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+            "target": "condition_trigger"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "final_answer_noise": "decrease"
+            },
+            "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+            "target": "final_reducer"
+          },
+          {
+            "action_type": "mutate",
+            "expected_effect": {
+              "candidate_diversity": "increase"
+            },
+            "instruction": "When exploring variants, change fan-in, sink placement, or audit edges while keeping full temporal reachability to the selected primary.",
+            "target": "free_graph_generation"
+          }
+        ],
+        "operators": [],
+        "planner_mode": "graph_generate",
+        "protocol_spec": {
+          "metadata": {
+            "candidate_id": "candidate_3",
+            "fallback_topology": "hybrid",
+            "generated_graph": true,
+            "graph_type": "temporal_dag",
+            "max_messages": 32,
+            "max_receiver_fan_in": 4,
+            "max_steps": 4,
+            "selected_primary": 7
+          },
+          "n_agents": 8,
+          "name": "two_layer_hybrid",
+          "operators": [
+            "llm_generate_dag"
+          ],
+          "steps": [
+            {
+              "description": "Pairwise reduce to four intermediate agents",
+              "operator": "pairwise_local_reduce",
+              "transmissions": [
+                [
+                  0,
+                  2
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  3,
+                  5
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  6,
+                  7
+                ]
+              ]
+            },
+            {
+              "description": "Intermediate agents send to sink",
+              "operator": "tree_reduce",
+              "transmissions": [
+                [
+                  2,
+                  7
+                ],
+                [
+                  5,
+                  7
+                ]
+              ]
+            }
+          ]
+        },
+        "structure_features": {
+          "aggregation_pattern": "unspecified",
+          "candidate_ids": [
+            "candidate_3"
+          ],
+          "evidence_metadata_keys": [
+            "candidate_id",
+            "fallback_topology",
+            "generated_graph",
+            "graph_type",
+            "max_messages",
+            "max_receiver_fan_in",
+            "max_steps",
+            "selected_primary"
+          ],
+          "generated_graph": true,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "unspecified_generated_structure"
+          ],
+          "selected_primary_values": [
+            7
+          ],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "generated:two_layer_hybrid"
+        },
+        "topology_name": "generated:two_layer_hybrid"
+      },
+      "revision_history": [],
+      "risk_notes": [],
+      "skill_id": "cf_topology_generated:two_layer_hybrid__a8__arr1024",
+      "skill_type": "planner_organization_policy",
+      "tags": [
+        "mas",
+        "emperor-skill",
+        "count-frequency",
+        "balanced"
+      ],
+      "task_family": "count_frequency",
+      "trigger": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_1024",
+        "array_sizes": [
+          1024
+        ],
+        "condition_key": "agents_8__arrays_1024",
+        "max_agents": 8,
+        "max_array_size": 1024,
+        "min_agents": 8,
+        "min_array_size": 1024,
+        "task_family": "count_frequency"
+      },
+      "update_rule": "batch_consolidate",
+      "validation_plan": [],
+      "version": "0.1.0"
+    },
+    "confidence": 0.75,
+    "evidence": [],
+    "evidence_refs": [
+      "run:protocol_generated:two_layer_hybrid_n8_seed104_1779537660889628000"
+    ],
+    "lesson": "Observed CF evidence for topology generated:two_layer_hybrid.",
+    "patch_id": "result_cf_topology_generated:two_layer_hybrid__a8__arr1024",
+    "source": "result_analyst",
+    "target_skill_id": "cf_topology_generated:two_layer_hybrid__a8__arr1024",
+    "update": {
+      "organization_policy": {
+        "rationale_rules": [
+          "Observed CF evidence for topology generated:two_layer_hybrid."
+        ]
+      }
+    }
+  }
+]

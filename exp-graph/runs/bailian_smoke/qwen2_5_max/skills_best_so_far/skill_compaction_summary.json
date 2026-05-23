@@ -1,0 +1,23 @@
+{
+  "active_avoid_count": 0,
+  "active_count": 2,
+  "archive_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen2_5_max/skills_archive/self_evolved_free_dag_iter_1",
+  "archived_count": 0,
+  "condition_buckets": {
+    "{\"agent_bucket\": \"agents_4\", \"array_size_bucket\": \"arrays_64\", \"objective\": \"balanced\", \"task_family\": \"count_frequency\"}": {
+      "archived": [],
+      "kept": [
+        "cf_topology_generated:hybrid_reduce_with_audit__a4__arr64"
+      ]
+    },
+    "{\"agent_bucket\": \"agents_any\", \"array_size_bucket\": \"arrays_any\", \"objective\": \"balanced\", \"task_family\": \"count_frequency\"}": {
+      "archived": [],
+      "kept": [
+        "cf_topology_generated:hybrid_reduce_with_audit"
+      ]
+    }
+  },
+  "input_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen2_5_max/skills_iter_1",
+  "max_per_condition": 3,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_smoke/qwen2_5_max/skills_best_so_far"
+}

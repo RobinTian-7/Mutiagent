@@ -1,0 +1,7 @@
+{
+  "condition_count": 1,
+  "evidence_count": 8,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/empty_free_dag/collected",
+  "patch_count": 2,
+  "run_count": 4
+}

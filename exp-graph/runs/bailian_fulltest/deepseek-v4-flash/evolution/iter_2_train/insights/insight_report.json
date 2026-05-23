@@ -1,0 +1,318 @@
+{
+  "executive_summary": "Batch-level MAS insights extracted from matrix evidence.",
+  "experiment_id": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_2_train/collected/batch_evidence.jsonl",
+  "followup_experiments": [],
+  "key_insights": [
+    {
+      "affected_skills": [],
+      "claim_status": "observed",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "init_mode": "llm_local_solve",
+          "merge_mode": "llm_full_merge",
+          "n_agents": 8,
+          "objective": "balanced"
+        }
+      ],
+      "confidence": 0.9,
+      "evidence_refs": [
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539757656430000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "falsification_test": "Run with reduced fan-in and check if accuracy improves while coverage remains acceptable.",
+      "insight_id": "insight_001",
+      "insight_type": "risk_pattern",
+      "metric_snapshot": {
+        "full_coverage_wrong_answer_rate": 1.0,
+        "mean_final_coverage": 0.3125,
+        "mean_rmse": 15.65
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "modify_edge_order",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Lower coverage but higher accuracy by preventing wrong answers from being aggregated.",
+          "instruction": "Reduce fan-in to sinks in audit phase to limit propagation of incorrect information.",
+          "target": "planner_policy"
+        }
+      ],
+      "recommended_actions": [
+        "Decrease sink fan-in in audit phase",
+        "Add verification step before merging"
+      ],
+      "summary": "The generated hybrid reduce audit topology achieves full coverage (all agents contribute) but results in 100% wrong answers, indicating that the audit mechanism fails to correct errors and may propagate incorrect information.",
+      "title": "Hybrid reduce audit topology leads to full coverage but wrong answers"
+    },
+    {
+      "affected_skills": [],
+      "claim_status": "observed",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "n_agents": 8
+        }
+      ],
+      "confidence": 0.85,
+      "evidence_refs": [
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539757656430000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "falsification_test": "Run with more sinks and measure coverage gain.",
+      "insight_id": "insight_002",
+      "insight_type": "dynamics_pattern",
+      "metric_snapshot": {
+        "mean_coverage_gain": 0.1875,
+        "mean_final_coverage": 0.3125
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "modify_sink_selection",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Higher coverage gain and final coverage.",
+          "instruction": "Increase number of sinks or use different sink selection strategy to improve information dissemination.",
+          "target": "planner_policy"
+        }
+      ],
+      "recommended_actions": [
+        "Increase sink count",
+        "Use random sink selection instead of top-k"
+      ],
+      "summary": "Mean coverage gain is only 0.1875, meaning agents barely improve their knowledge through communication. The topology fails to spread correct information.",
+      "title": "Low coverage gain indicates ineffective information sharing"
+    },
+    {
+      "affected_skills": [],
+      "claim_status": "observed",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "n_agents": 8
+        }
+      ],
+      "confidence": 0.8,
+      "evidence_refs": [
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539757656430000",
+        "run:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "falsification_test": "Run with reduced messages and check if cost decreases while accuracy remains similar.",
+      "insight_id": "insight_003",
+      "insight_type": "tradeoff",
+      "metric_snapshot": {
+        "mean_rmse": 15.65,
+        "mean_token_cost": 19284.33
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "modify_provenance_flow",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Lower token cost without sacrificing accuracy (which is already zero).",
+          "instruction": "Reduce number of messages or model calls by limiting redundant communication.",
+          "target": "planner_policy"
+        }
+      ],
+      "recommended_actions": [
+        "Reduce message count",
+        "Implement early stopping if accuracy is low"
+      ],
+      "summary": "Mean token cost is high (19284) while accuracy is zero. The topology consumes resources without delivering correct answers.",
+      "title": "High token cost with no accuracy benefit suggests inefficiency"
+    },
+    {
+      "affected_skills": [],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "init_mode": "llm_local_solve"
+        }
+      ],
+      "confidence": 0.6,
+      "evidence_refs": [
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed1_1779539795894468000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed2_1779539757656430000",
+        "trace:protocol_generated:hybrid_reduce_audit_n8_seed4_1779539785168668000"
+      ],
+      "falsification_test": "Run with random init and compare accuracy.",
+      "insight_id": "insight_004",
+      "insight_type": "hypothesis",
+      "metric_snapshot": {
+        "init_mode": "llm_local_solve",
+        "mean_final_coverage": 0.3125
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "modify_trigger_buckets",
+          "conditions": {
+            "init_mode": "llm_local_solve"
+          },
+          "expected_effect": "If accuracy improves, the topology is sensitive to initialization.",
+          "instruction": "Test with different init modes (e.g., random) to see if accuracy improves.",
+          "target": "planner_policy"
+        }
+      ],
+      "recommended_actions": [
+        "Experiment with random init",
+        "Compare coverage gain across init modes"
+      ],
+      "summary": "With llm_local_solve init, agents start with partial solutions. The hybrid reduce audit may be reinforcing local errors rather than correcting them.",
+      "title": "Topology may be overfitting to local solve initialization"
+    },
+    {
+      "affected_skills": [],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "init_mode": "llm_local_solve",
+          "merge_mode": "llm_full_merge",
+          "n_agents": 8,
+          "objective": "balanced"
+        }
+      ],
+      "confidence": 0.8,
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed3_1779539791688312000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed3_1779539791688312000"
+      ],
+      "falsification_test": "Run with a global reduction step and verify that full_coverage_wrong_answer_rate drops below 0.5.",
+      "insight_id": "insight_001",
+      "insight_type": "risk_pattern",
+      "metric_snapshot": {
+        "full_coverage_wrong_answer_rate": 1.0,
+        "mean_final_coverage": 0.5625,
+        "mean_rmse": 9.486832980505138,
+        "mean_token_cost": 35717.0
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_edge_order",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Reduce full_coverage_wrong_answer_rate by ensuring a consensus or verification mechanism.",
+          "instruction": "Add a final global reduction step after peer exchange to aggregate and verify answers before final output.",
+          "target": "sparse_peer_exchange"
+        },
+        {
+          "action_type": "change_sink_selection",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Improve answer accuracy by introducing verification points.",
+          "instruction": "Designate a subset of agents as sinks that collect and cross-check results from peers before finalizing.",
+          "target": "sparse_peer_exchange"
+        }
+      ],
+      "recommended_actions": [
+        "Add global reduction step",
+        "Introduce sink verification"
+      ],
+      "summary": "The sparse peer exchange topology with top-k graph search mode achieved full coverage (mean_final_coverage=0.5625, but full_coverage_wrong_answer_rate=1.0) meaning all agents converged on an answer but it was incorrect. This suggests that the exchange of partial solutions among peers without a global reduction or verification step can propagate errors.",
+      "title": "Sparse peer exchange with top-k selection leads to full coverage but wrong answers"
+    },
+    {
+      "affected_skills": [],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "n_agents": 8
+        }
+      ],
+      "confidence": 0.7,
+      "evidence_refs": [
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed3_1779539791688312000"
+      ],
+      "falsification_test": "Run with increased fan-in (e.g., each agent connects to 4 peers) and measure mean coverage gain > 0.6.",
+      "insight_id": "insight_002",
+      "insight_type": "dynamics_pattern",
+      "metric_snapshot": {
+        "mean_coverage_gain": 0.4375,
+        "mean_final_coverage": 0.5625
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_fan_in",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Higher mean coverage gain and final coverage.",
+          "instruction": "Increase the number of peers each agent exchanges with (fan-in) to improve information spread.",
+          "target": "sparse_peer_exchange"
+        },
+        {
+          "action_type": "change_provenance_flow",
+          "conditions": {
+            "array_size": 1024,
+            "n_agents": 8
+          },
+          "expected_effect": "Increase coverage gain by ensuring all agents have a baseline of shared information.",
+          "instruction": "Add a broadcast phase after initial local solves to share all partial results before peer exchange.",
+          "target": "sparse_peer_exchange"
+        }
+      ],
+      "recommended_actions": [
+        "Increase fan-in",
+        "Add broadcast phase"
+      ],
+      "summary": "Mean coverage gain of 0.4375 indicates that on average, agents only improved their coverage by less than half during the protocol. Combined with low final coverage (0.5625), this suggests that the sparse peer exchange structure does not effectively propagate information across all agents.",
+      "title": "Low mean coverage gain suggests limited information propagation"
+    },
+    {
+      "affected_skills": [],
+      "claim_status": "hypothesis",
+      "condition_buckets": [
+        {
+          "array_size": 1024,
+          "graph_search_mode": "topk",
+          "n_agents": 8
+        }
+      ],
+      "confidence": 0.6,
+      "evidence_refs": [
+        "run:protocol_generated:sparse_peer_exchange_n8_seed3_1779539791688312000"
+      ],
+      "falsification_test": "Run with diversity-aware selection and check that full_coverage_wrong_answer_rate decreases.",
+      "insight_id": "insight_003",
+      "insight_type": "risk_pattern",
+      "metric_snapshot": {
+        "mean_candidate_count": 4.0,
+        "mean_selected_candidate_score": -15.396093592413017
+      },
+      "operation_recommendations": [
+        {
+          "action_type": "change_trigger_buckets",
+          "conditions": {
+            "graph_search_mode": "topk"
+          },
+          "expected_effect": "Reduce full_coverage_wrong_answer_rate by maintaining solution diversity.",
+          "instruction": "Replace top-k selection with a diversity-aware selection mechanism that avoids converging on similar wrong answers.",
+          "target": "sparse_peer_exchange"
+        }
+      ],
+      "recommended_actions": [
+        "Use diversity-aware selection"
+      ],
+      "summary": "Using top-k selection for graph search likely caused agents to favor high-scoring but incorrect partial solutions, leading to full coverage on a wrong answer. The mean selected candidate score (-15.4) indicates that the top-k selection was not effective at identifying correct partial solutions.",
+      "title": "Top-k graph search mode may cause premature convergence on wrong answers"
+    }
+  ],
+  "rejected_insights": [],
+  "report_id": "batch_insight_report_20260523_123710",
+  "skill_update_recommendations": []
+}

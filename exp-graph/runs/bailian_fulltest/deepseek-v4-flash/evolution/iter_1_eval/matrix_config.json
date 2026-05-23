@@ -1,0 +1,51 @@
+{
+  "array_sizes": [
+    1024
+  ],
+  "created_at": "2026-05-23T12:28:21+00:00",
+  "graph_candidate_score_mode": "accuracy_max",
+  "graph_max_messages": 32,
+  "graph_max_receiver_fan_in": 4,
+  "graph_max_steps": 4,
+  "graph_repair_attempts": 1,
+  "graph_search_mode": "topk",
+  "graph_top_k": 2,
+  "graph_validation_seeds": [
+    201,
+    202,
+    203,
+    204
+  ],
+  "init_mode": "llm_local_solve",
+  "llm_provider": "openai",
+  "max_parallel_agents": 15,
+  "max_parallel_ministers": 4,
+  "max_parallel_runs": 15,
+  "merge_mode": "llm_full_merge",
+  "model_name": "deepseek-chat",
+  "n_agents": [
+    8
+  ],
+  "num_graph_candidates": 4,
+  "objectives": [
+    "balanced"
+  ],
+  "phase": "test",
+  "planner_modes": [
+    "graph_generate"
+  ],
+  "planner_policies": [
+    "free_graph"
+  ],
+  "retain_traces": true,
+  "seeds": [
+    101,
+    102,
+    103,
+    104
+  ],
+  "skill_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/skills_iter_2",
+  "topologies": [],
+  "trace_enabled": true,
+  "verbose_events": true
+}

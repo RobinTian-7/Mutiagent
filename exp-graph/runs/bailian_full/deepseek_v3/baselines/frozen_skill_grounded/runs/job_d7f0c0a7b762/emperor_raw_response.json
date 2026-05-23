@@ -1,0 +1,6 @@
+{
+  "fallback_reason": "llm planner failed: Error code: 400 - {'error': {'message': '{\"request_id\":\"779534493877600921\",\"ResponseMeta\":{\"RequestId\":\"779534493877600921\",\"ErrorCode\":\"Forbidden\",\"ErrorMessage\":\"AccessKey:4TdUJvNBxCn-H-2drCpOZgMPHWF0g-JpYcn0cMATWZI IS UNAVAILABLE\"}}', 'type': 'invalid_request_error', 'param': None, 'code': 'invalid_parameter_error'}, 'request_id': '84e0e546-5fd2-9860-ab38-e86d456f8883'}",
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": null
+}

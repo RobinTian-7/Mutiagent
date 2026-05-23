@@ -1,0 +1,180 @@
+{
+  "candidate_id": "candidate_0",
+  "graph_plan": {
+    "candidate_id": "candidate_0",
+    "expected_tradeoff": {
+      "accuracy": "medium",
+      "cost": "low"
+    },
+    "fallback_topology": "tree",
+    "graph_type": "temporal_dag",
+    "n_agents": 8,
+    "name": "hybrid_reduce_audit",
+    "rationale": "Combines pairwise local reduce with intermediate tree reduce and an audit edge to ensure full coverage. Uses 7 messages and 3 steps, staying within constraints. Selected primary 7 receives all partial counts.",
+    "selected_primary": 7,
+    "steps": [
+      {
+        "description": "Pairwise local reduce among leaves",
+        "edges": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ],
+        "operator_hint": "pairwise_local_reduce"
+      },
+      {
+        "description": "Intermediate reduce: agents 1 and 3 send to agent 3; agents 5 and 7 send to agent 7",
+        "edges": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "operator_hint": "tree_reduce"
+      },
+      {
+        "description": "Final reduce: agent 3 sends to agent 7; audit edge from agent 0 to agent 7 to ensure coverage",
+        "edges": [
+          [
+            3,
+            7
+          ],
+          [
+            0,
+            7
+          ]
+        ],
+        "operator_hint": "audit_sink_with_extra_edge"
+      }
+    ]
+  },
+  "objective_score": -16.716783169323286,
+  "probe_scores": [
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 8.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 16.0,
+      "mean_token_cost": 19125.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 8.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 22.090722034374522,
+      "mean_token_cost": 19355.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 8.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 10.583005244258363,
+      "mean_token_cost": 19328.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 8.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 18.193405398660254,
+      "mean_token_cost": 20231.0,
+      "objective": "balanced"
+    }
+  ],
+  "protocol_messages": 8,
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_0",
+      "fallback_topology": "tree",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "hybrid_reduce_audit",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise local reduce among leaves",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Intermediate reduce: agents 1 and 3 send to agent 3; agents 5 and 7 send to agent 7",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Final reduce: agent 3 sends to agent 7; audit edge from agent 0 to agent 7 to ensure coverage",
+        "operator": "audit_sink_with_extra_edge",
+        "transmissions": [
+          [
+            3,
+            7
+          ],
+          [
+            0,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "protocol_steps": 3,
+  "repair_notes": [],
+  "score_mode": "accuracy_max",
+  "selected_primary": 7,
+  "status": "selected",
+  "validation_errors": [],
+  "validation_warnings": []
+}

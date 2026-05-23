@@ -1,0 +1,121 @@
+[
+  {
+    "candidate_id": "skill_cf_topology_generated_two_phase_partial_aggregation__a4__arr64",
+    "graph_plan": {
+      "candidate_id": "skill_cf_topology_generated_two_phase_partial_aggregation__a4__arr64",
+      "expected_tradeoff": {
+        "active_evidence_count": 1,
+        "exact_match_rate": 0.0,
+        "lesson": "Observed CF evidence for topology generated:two_phase_partial_aggregation.",
+        "mean_messages": 4.0,
+        "mean_model_calls": 7.0,
+        "mean_norm_l1": 0.0625,
+        "mean_rmse": 2.449489742783178,
+        "mean_token_cost": 7425.0,
+        "std_rmse": 0.0
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 4,
+      "name": "two_phase_partial_aggregation",
+      "rationale": "Replay executable DAG stored in skill cf_topology_generated:two_phase_partial_aggregation__a4__arr64.",
+      "selected_primary": 3,
+      "steps": [
+        {
+          "description": "Pairwise local reduce between agents 0-1 and 2-3",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "operator_hint": "pairwise local reduce"
+        },
+        {
+          "description": "Forward aggregated partial counts to selected_primary 3",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "operator_hint": "star sink"
+        }
+      ]
+    },
+    "objective_score": -7.615773105863909,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 4.0,
+        "mean_model_calls": 7.0,
+        "mean_rmse": 7.615773105863909,
+        "mean_token_cost": 7382.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 4,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "skill_cf_topology_generated_two_phase_partial_aggregation__a4__arr64",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 3
+      },
+      "n_agents": 4,
+      "name": "two_phase_partial_aggregation",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce between agents 0-1 and 2-3",
+          "operator": "pairwise local reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        },
+        {
+          "description": "Forward aggregated partial counts to selected_primary 3",
+          "operator": "star sink",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 3,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  }
+]

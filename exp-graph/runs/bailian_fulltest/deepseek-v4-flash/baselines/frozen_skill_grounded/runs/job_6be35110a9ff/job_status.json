@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:12:00+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 8.12403840463596,
+  "job_id": "6be35110a9ff",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/frozen_skill_grounded/runs/job_6be35110a9ff",
+  "run_id": "protocol_tree_n8_seed104_1779538309853904000",
+  "started_at": "2026-05-23T12:11:47+00:00",
+  "status": "succeeded",
+  "token_cost": 18931
+}

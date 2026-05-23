@@ -1,0 +1,160 @@
+{
+  "candidate_id": "candidate_3",
+  "graph_plan": {
+    "candidate_id": "candidate_3",
+    "expected_tradeoff": {
+      "accuracy": "medium",
+      "cost": "low"
+    },
+    "fallback_topology": "tree",
+    "graph_type": "temporal_dag",
+    "n_agents": 8,
+    "name": "budget_aware_partial",
+    "rationale": "First step reduces pairs, second step sends to primary 7 but only from agents that have data from two sources. Low cost (10 messages) but some agents never send.",
+    "selected_primary": 7,
+    "steps": [
+      {
+        "description": "Pairwise reduce: agents 0 and 1 merge into 1; 2 and 3 into 3; 4 and 5 into 5; 6 and 7 into 7.",
+        "edges": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ],
+        "operator_hint": "pairwise_local_reduce"
+      },
+      {
+        "description": "Agents 1,3,5 send to primary 7; agent 7 already has its own merged data.",
+        "edges": [
+          [
+            1,
+            7
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "operator_hint": "budget_aware_partial_aggregation"
+      }
+    ]
+  },
+  "objective_score": -16.038872491852896,
+  "probe_scores": [
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 13.0,
+      "mean_rmse": 22.360679774997898,
+      "mean_token_cost": 16505.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 13.0,
+      "mean_rmse": 16.61324772583615,
+      "mean_token_cost": 16534.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 13.0,
+      "mean_rmse": 7.745966692414834,
+      "mean_token_cost": 16516.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 13.0,
+      "mean_rmse": 17.435595774162696,
+      "mean_token_cost": 16910.0,
+      "objective": "balanced"
+    }
+  ],
+  "protocol_messages": 7,
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_3",
+      "fallback_topology": "tree",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "budget_aware_partial",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Pairwise reduce: agents 0 and 1 merge into 1; 2 and 3 into 3; 4 and 5 into 5; 6 and 7 into 7.",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Agents 1,3,5 send to primary 7; agent 7 already has its own merged data.",
+        "operator": "budget_aware_partial_aggregation",
+        "transmissions": [
+          [
+            1,
+            7
+          ],
+          [
+            3,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "protocol_steps": 2,
+  "repair_notes": [],
+  "score_mode": "accuracy_max",
+  "selected_primary": 7,
+  "status": "selected",
+  "validation_errors": [],
+  "validation_warnings": []
+}

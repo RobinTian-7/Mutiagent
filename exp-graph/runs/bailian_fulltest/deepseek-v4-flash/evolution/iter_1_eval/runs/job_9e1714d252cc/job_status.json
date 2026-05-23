@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:32:26+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 20.09975124224178,
+  "job_id": "9e1714d252cc",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_1_eval/runs/job_9e1714d252cc",
+  "run_id": "protocol_generated:hybrid_reduce_audit_n8_seed102_1779539532118742000",
+  "started_at": "2026-05-23T12:28:21+00:00",
+  "status": "succeeded",
+  "token_cost": 19730
+}

@@ -1,0 +1,17 @@
+run_id: protocol_tree_n8_seed101_1779532952470519000
+final_rmse: 19.339079605813716
+exact_match: False
+total_messages: 7
+total_model_calls: 15
+token_cost: 18864
+patch_counts:
+  merge: 2
+lessons:
+  - Tree reduction is the budget-first CF policy.
+  - Trace dynamics for tree expose reusable MAS coverage, aggregation, and merge-quality signals.
+risk_notes:
+  - Trace dynamics for tree expose reusable MAS coverage, aggregation, and merge-quality signals.
+artifacts:
+  evidence_records: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_0d75d3bfe0db/evidence_records.jsonl
+  output_dir: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_0d75d3bfe0db
+  patch_dir: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_0d75d3bfe0db/patches

@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T15:17:10+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 26.115129714401192,
+  "job_id": "ebd1bdf55287",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-plus-lessvalidation/baselines/fixed_topology/runs/job_ebd1bdf55287",
+  "run_id": "protocol_tree_n8_seed103_1779549388672886000",
+  "started_at": "2026-05-23T15:16:28+00:00",
+  "status": "succeeded",
+  "token_cost": 20598
+}

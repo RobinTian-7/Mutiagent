@@ -1,0 +1,15 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": {
+    "raw_prompts": [],
+    "raw_responses": [],
+    "text": "{\n  \"alternatives\": [],\n  \"fallback_skill_id\": null,\n  \"operators\": [\"local_solve\", \"mesh_broadcast\", \"star_sink\"],\n  \"planner_mode\": \"operator_compose\",\n  \"rationale\": \"For 8 agents, balanced objective, and count-frequency task, mesh_star skill provides good accuracy (RMSE 0.05) with moderate cost (63 messages, 2600 tokens). It avoids sparse random's instability and fits within normal budget.\",\n  \"score\": 0.85,\n  \"score_breakdown\": {\n    \"accuracy_fit\": 0.9,\n    \"cost_fit\": 0.8\n  },\n  \"skill_id\": \"cf_middle_ground_mesh_star\",\n  \"topology_name\": \"mesh_star\"\n}",
+    "usage": {
+      "completion_tokens": 176,
+      "model_calls": 1,
+      "prompt_tokens": 1356
+    }
+  }
+}

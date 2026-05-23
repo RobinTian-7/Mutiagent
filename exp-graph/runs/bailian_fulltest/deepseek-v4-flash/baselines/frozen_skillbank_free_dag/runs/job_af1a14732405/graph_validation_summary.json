@@ -1,0 +1,14 @@
+{
+  "candidate_count": 4,
+  "candidate_score_mode": "accuracy_max",
+  "created_at": "2026-05-23T12:05:45+00:00",
+  "fallback_reason": null,
+  "raw_response_count": 1,
+  "rejected_candidate_count": 0,
+  "selected_candidate_id": "candidate_1",
+  "selected_candidate_score": -19.02612558790316,
+  "top_k_candidate_ids": [
+    "candidate_1",
+    "candidate_0"
+  ]
+}

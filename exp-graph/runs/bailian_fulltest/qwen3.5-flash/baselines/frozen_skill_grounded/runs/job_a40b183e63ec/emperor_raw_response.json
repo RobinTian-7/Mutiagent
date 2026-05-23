@@ -1,0 +1,15 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": {
+    "raw_prompts": [],
+    "raw_responses": [],
+    "text": "{\n  \"alternatives\": [],\n  \"fallback_skill_id\": null,\n  \"operators\": [\n    \"local_solve\",\n    \"tree_reduce\"\n  ],\n  \"planner_mode\": \"operator_compose\",\n  \"rationale\": \"Selected 'cf_budget_tree' (compiled as local_solve + tree_reduce) because the request specifies n_agents=8 and a balanced objective. The 'avoid' skill explicitly warns against sparse random DAGs for count-frequency tasks due to seed sensitivity and coverage issues. While 'mesh_star' is an option for small groups, its quadratic message growth (mean_messages: 63) is less efficient than the logarithmic scaling of a tree structure for n=8, making it the optimal choice for balancing accuracy with token cost under normal budget constraints.\",\n  \"score\": 0.92,\n  \"score_breakdown\": {\n    \"accuracy_fit\": 0.95,\n    \"cost_fit\": 0.89\n  },\n  \"skill_id\": \"cf_budget_tree\",\n  \"topology_name\": \"balanced_tree\"\n}",
+    "usage": {
+      "completion_tokens": 235,
+      "model_calls": 1,
+      "prompt_tokens": 1428
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "condition_count": 3,
+  "evidence_count": 24,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3_6_27b/baselines/fixed_topology/collected",
+  "patch_count": 8,
+  "run_count": 12
+}

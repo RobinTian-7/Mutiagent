@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:49:22+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 23.769728648009426,
+  "job_id": "ba92bbba1098",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/evolution/iter_3_eval/runs/job_ba92bbba1098",
+  "run_id": "protocol_generated:pairwise_then_star_n8_seed102_1779540551943578000",
+  "started_at": "2026-05-23T12:45:59+00:00",
+  "status": "succeeded",
+  "token_cost": 16869
+}

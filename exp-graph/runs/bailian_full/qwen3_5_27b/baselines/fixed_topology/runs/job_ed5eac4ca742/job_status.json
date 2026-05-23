@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T11:25:14+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 26.962937525425527,
+  "job_id": "ed5eac4ca742",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/qwen3_5_27b/baselines/fixed_topology/runs/job_ed5eac4ca742",
+  "run_id": "protocol_one_peer_exponential_dag_star_n8_seed102_1779535355876645000",
+  "started_at": "2026-05-23T11:22:35+00:00",
+  "status": "succeeded",
+  "token_cost": 166591
+}

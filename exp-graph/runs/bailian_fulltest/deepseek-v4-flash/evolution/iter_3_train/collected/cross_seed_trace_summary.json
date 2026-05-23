@@ -1,0 +1,51 @@
+{
+  "conditions": [
+    {
+      "array_size": 1024,
+      "evidence_refs": [
+        "trace:protocol_generated:budget_aware_partial_n8_seed1_1779540325643063000",
+        "trace:protocol_generated:budget_aware_partial_n8_seed2_1779540271686063000"
+      ],
+      "graph_search_mode": "topk",
+      "init_mode": "llm_local_solve",
+      "mean_coverage_gain": 0.15625,
+      "mean_final_coverage": 0.28125,
+      "mean_parse_errors": 0.0,
+      "mean_retry_attempts": 0.0,
+      "mean_sink_best_rmse_gap": 0.0,
+      "merge_mode": "llm_full_merge",
+      "n_agents": 8,
+      "objective": "balanced",
+      "planner_policy": "free_graph",
+      "risk_tags": [
+        "full_coverage_wrong_answer"
+      ],
+      "topology_name": "generated:budget_aware_partial",
+      "trace_count": 2
+    },
+    {
+      "array_size": 1024,
+      "evidence_refs": [
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed3_1779540301728957000",
+        "trace:protocol_generated:sparse_peer_exchange_n8_seed4_1779540303954998000"
+      ],
+      "graph_search_mode": "topk",
+      "init_mode": "llm_local_solve",
+      "mean_coverage_gain": 0.4375,
+      "mean_final_coverage": 0.5625,
+      "mean_parse_errors": 0.0,
+      "mean_retry_attempts": 0.0,
+      "mean_sink_best_rmse_gap": 0.0,
+      "merge_mode": "llm_full_merge",
+      "n_agents": 8,
+      "objective": "balanced",
+      "planner_policy": "free_graph",
+      "risk_tags": [
+        "full_coverage_wrong_answer"
+      ],
+      "topology_name": "generated:sparse_peer_exchange",
+      "trace_count": 2
+    }
+  ],
+  "created_at": "2026-05-23T12:45:35+00:00"
+}

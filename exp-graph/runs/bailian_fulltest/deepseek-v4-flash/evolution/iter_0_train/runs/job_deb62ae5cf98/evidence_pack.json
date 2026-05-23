@@ -1,0 +1,77 @@
+{
+  "current_skill_versions": {},
+  "experiment_id": "protocol_generated:binary_tree_reduce_n8_seed2_1779538582850335000",
+  "record_count": 2,
+  "topologies": {
+    "generated:binary_tree_reduce": {
+      "condition_scope": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_1024",
+        "array_sizes": [
+          1024
+        ],
+        "condition_key": "agents_8__arrays_1024",
+        "max_agents": 8,
+        "max_array_size": 1024,
+        "min_agents": 8,
+        "min_array_size": 1024
+      },
+      "dynamics": {
+        "coverage_gain": 0.1875,
+        "retry_attempts": 0.0,
+        "sink_best_rmse_gap": 0.0,
+        "trace_count": 1
+      },
+      "evidence_refs": [
+        "run:protocol_generated:binary_tree_reduce_n8_seed2_1779538582850335000",
+        "trace:protocol_generated:binary_tree_reduce_n8_seed2_1779538582850335000"
+      ],
+      "metrics": {
+        "exact_match_rate": 0.0,
+        "messages": 7.0,
+        "rmse": 17.029386365926403,
+        "token_cost": 18890.0
+      },
+      "n_agents": [
+        8
+      ],
+      "risk_tags": [
+        "full_coverage_wrong_answer",
+        "non_exact_final"
+      ],
+      "seeds": [
+        2
+      ],
+      "structure_features": {
+        "aggregation_pattern": "hierarchical",
+        "candidate_ids": [
+          "candidate_0"
+        ],
+        "evidence_metadata_keys": [
+          "candidate_id",
+          "fallback_topology",
+          "generated_graph",
+          "graph_type",
+          "max_messages",
+          "max_receiver_fan_in",
+          "max_steps",
+          "selected_primary"
+        ],
+        "generated_graph": true,
+        "mean_protocol_messages": 0.0,
+        "mean_protocol_steps": 0.0,
+        "motifs": [
+          "hierarchical_reduce"
+        ],
+        "selected_primary_values": [
+          7
+        ],
+        "sink_pattern": "single_selected_primary",
+        "topology_name": "generated:binary_tree_reduce"
+      }
+    }
+  }
+}

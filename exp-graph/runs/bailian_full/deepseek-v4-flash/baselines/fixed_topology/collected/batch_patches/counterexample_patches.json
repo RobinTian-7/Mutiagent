@@ -1,0 +1,469 @@
+[
+  {
+    "action": "merge",
+    "candidate_skill": {
+      "confidence": {},
+      "counterexamples": [
+        {
+          "evidence_id": "run:protocol_mesh_star_n8_seed102_1779537115390717000",
+          "mean_rmse": 11.661903789690601,
+          "topology_name": "mesh_star"
+        },
+        {
+          "evidence_id": "run:protocol_mesh_star_n8_seed103_1779537115395992000",
+          "mean_rmse": 14.89966442575134,
+          "topology_name": "mesh_star"
+        }
+      ],
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_mesh_star_n8_seed102_1779537115390717000",
+        "run:protocol_mesh_star_n8_seed103_1779537115395992000"
+      ],
+      "expected_dynamics": {
+        "condition_scope": {
+          "agent_bucket": "agents_8",
+          "agent_counts": [
+            8
+          ],
+          "array_size_bucket": "arrays_512",
+          "array_sizes": [
+            512
+          ],
+          "condition_key": "agents_8__arrays_512",
+          "max_agents": 8,
+          "max_array_size": 512,
+          "min_agents": 8,
+          "min_array_size": 512
+        },
+        "protocol_spec_hash": null,
+        "structure_features": {
+          "aggregation_pattern": "star_sink",
+          "evidence_metadata_keys": [],
+          "generated_graph": false,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "single_sink",
+            "peer_broadcast"
+          ],
+          "selected_primary_values": [],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "mesh_star"
+        }
+      },
+      "expected_tradeoff": {
+        "strength": "negative routing evidence",
+        "weakness": "dominated by stronger CF topology choices"
+      },
+      "failure_modes": [],
+      "fallback": {
+        "budget_first": "cf_budget_tree"
+      },
+      "hypotheses": [],
+      "objective": "balanced",
+      "organization_policy": {
+        "operation_recommendations": [
+          {
+            "action_type": "preserve",
+            "conditions": {
+              "agent_bucket": "agents_8",
+              "array_size_bucket": "arrays_512",
+              "condition_key": "agents_8__arrays_512"
+            },
+            "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+            "target": "condition_trigger"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "final_answer_noise": "decrease"
+            },
+            "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+            "target": "final_reducer"
+          }
+        ],
+        "operators": [],
+        "planner_mode": "topology_select",
+        "protocol_spec": null,
+        "structure_features": {
+          "aggregation_pattern": "star_sink",
+          "evidence_metadata_keys": [],
+          "generated_graph": false,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "single_sink",
+            "peer_broadcast"
+          ],
+          "selected_primary_values": [],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "mesh_star"
+        },
+        "topology_name": "mesh_star"
+      },
+      "revision_history": [],
+      "risk_notes": [],
+      "skill_id": "cf_avoid_mesh_star",
+      "skill_type": "planner_organization_policy",
+      "tags": [
+        "mas",
+        "emperor-skill",
+        "count-frequency",
+        "balanced"
+      ],
+      "task_family": "count_frequency",
+      "trigger": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_512",
+        "array_sizes": [
+          512
+        ],
+        "condition_key": "agents_8__arrays_512",
+        "max_agents": 8,
+        "max_array_size": 512,
+        "min_agents": 8,
+        "min_array_size": 512,
+        "task_family": "count_frequency"
+      },
+      "update_rule": "batch_consolidate",
+      "validation_plan": [],
+      "version": "0.1.0"
+    },
+    "confidence": 0.7,
+    "evidence": [],
+    "evidence_refs": [
+      "run:protocol_mesh_star_n8_seed102_1779537115390717000",
+      "run:protocol_mesh_star_n8_seed103_1779537115395992000"
+    ],
+    "lesson": "Avoid mesh_star as a default CF planner choice.",
+    "patch_id": "counterexample_mesh_star",
+    "source": "counterexample_analyst",
+    "target_skill_id": "cf_avoid_mesh_star",
+    "update": {
+      "risk_notes": [
+        {
+          "source": "counterexample_analyst",
+          "summary": "mesh_star is dominated in observed CF evidence."
+        }
+      ]
+    }
+  },
+  {
+    "action": "merge",
+    "candidate_skill": {
+      "confidence": {},
+      "counterexamples": [
+        {
+          "evidence_id": "run:protocol_one_peer_exponential_dag_star_n8_seed103_1779537115387667000",
+          "mean_rmse": 14.696938456699069,
+          "topology_name": "one_peer_exponential_dag_star"
+        },
+        {
+          "evidence_id": "run:protocol_one_peer_exponential_dag_star_n8_seed104_1779537115393694000",
+          "mean_rmse": 12.609520212918492,
+          "topology_name": "one_peer_exponential_dag_star"
+        }
+      ],
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_one_peer_exponential_dag_star_n8_seed103_1779537115387667000",
+        "run:protocol_one_peer_exponential_dag_star_n8_seed104_1779537115393694000"
+      ],
+      "expected_dynamics": {
+        "condition_scope": {
+          "agent_bucket": "agents_8",
+          "agent_counts": [
+            8
+          ],
+          "array_size_bucket": "arrays_512",
+          "array_sizes": [
+            512
+          ],
+          "condition_key": "agents_8__arrays_512",
+          "max_agents": 8,
+          "max_array_size": 512,
+          "min_agents": 8,
+          "min_array_size": 512
+        },
+        "protocol_spec_hash": null,
+        "structure_features": {
+          "aggregation_pattern": "star_sink",
+          "evidence_metadata_keys": [],
+          "generated_graph": false,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "single_sink",
+            "peer_exchange",
+            "log_distance_peer_exchange"
+          ],
+          "selected_primary_values": [],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "one_peer_exponential_dag_star"
+        }
+      },
+      "expected_tradeoff": {
+        "strength": "negative routing evidence",
+        "weakness": "dominated by stronger CF topology choices"
+      },
+      "failure_modes": [],
+      "fallback": {
+        "budget_first": "cf_budget_tree"
+      },
+      "hypotheses": [],
+      "objective": "balanced",
+      "organization_policy": {
+        "operation_recommendations": [
+          {
+            "action_type": "preserve",
+            "conditions": {
+              "agent_bucket": "agents_8",
+              "array_size_bucket": "arrays_512",
+              "condition_key": "agents_8__arrays_512"
+            },
+            "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+            "target": "condition_trigger"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "final_answer_noise": "decrease"
+            },
+            "instruction": "Set selected_primary to the final sink and score only that answer holder for generated DAG runs.",
+            "target": "final_reducer"
+          }
+        ],
+        "operators": [],
+        "planner_mode": "topology_select",
+        "protocol_spec": null,
+        "structure_features": {
+          "aggregation_pattern": "star_sink",
+          "evidence_metadata_keys": [],
+          "generated_graph": false,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "single_sink",
+            "peer_exchange",
+            "log_distance_peer_exchange"
+          ],
+          "selected_primary_values": [],
+          "sink_pattern": "single_selected_primary",
+          "topology_name": "one_peer_exponential_dag_star"
+        },
+        "topology_name": "one_peer_exponential_dag_star"
+      },
+      "revision_history": [],
+      "risk_notes": [],
+      "skill_id": "cf_avoid_one_peer_exponential_dag_star",
+      "skill_type": "planner_organization_policy",
+      "tags": [
+        "mas",
+        "emperor-skill",
+        "count-frequency",
+        "balanced"
+      ],
+      "task_family": "count_frequency",
+      "trigger": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_512",
+        "array_sizes": [
+          512
+        ],
+        "condition_key": "agents_8__arrays_512",
+        "max_agents": 8,
+        "max_array_size": 512,
+        "min_agents": 8,
+        "min_array_size": 512,
+        "task_family": "count_frequency"
+      },
+      "update_rule": "batch_consolidate",
+      "validation_plan": [],
+      "version": "0.1.0"
+    },
+    "confidence": 0.7,
+    "evidence": [],
+    "evidence_refs": [
+      "run:protocol_one_peer_exponential_dag_star_n8_seed103_1779537115387667000",
+      "run:protocol_one_peer_exponential_dag_star_n8_seed104_1779537115393694000"
+    ],
+    "lesson": "Avoid one_peer_exponential_dag_star as a default CF planner choice.",
+    "patch_id": "counterexample_one_peer_exponential_dag_star",
+    "source": "counterexample_analyst",
+    "target_skill_id": "cf_avoid_one_peer_exponential_dag_star",
+    "update": {
+      "risk_notes": [
+        {
+          "source": "counterexample_analyst",
+          "summary": "one_peer_exponential_dag_star is dominated in observed CF evidence."
+        }
+      ]
+    }
+  },
+  {
+    "action": "merge",
+    "candidate_skill": {
+      "confidence": {},
+      "counterexamples": [
+        {
+          "evidence_id": "run:protocol_tree_n8_seed102_1779537115394555000",
+          "mean_rmse": 12.922847983320086,
+          "topology_name": "tree"
+        },
+        {
+          "evidence_id": "run:protocol_tree_n8_seed103_1779537115393814000",
+          "mean_rmse": 12.884098726725126,
+          "topology_name": "tree"
+        },
+        {
+          "evidence_id": "run:protocol_tree_n8_seed104_1779537115393221000",
+          "mean_rmse": 13.601470508735444,
+          "topology_name": "tree"
+        }
+      ],
+      "evidence": [],
+      "evidence_refs": [
+        "run:protocol_tree_n8_seed102_1779537115394555000",
+        "run:protocol_tree_n8_seed103_1779537115393814000",
+        "run:protocol_tree_n8_seed104_1779537115393221000"
+      ],
+      "expected_dynamics": {
+        "condition_scope": {
+          "agent_bucket": "agents_8",
+          "agent_counts": [
+            8
+          ],
+          "array_size_bucket": "arrays_512",
+          "array_sizes": [
+            512
+          ],
+          "condition_key": "agents_8__arrays_512",
+          "max_agents": 8,
+          "max_array_size": 512,
+          "min_agents": 8,
+          "min_array_size": 512
+        },
+        "protocol_spec_hash": null,
+        "structure_features": {
+          "aggregation_pattern": "hierarchical",
+          "evidence_metadata_keys": [],
+          "generated_graph": false,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "hierarchical_reduce"
+          ],
+          "selected_primary_values": [],
+          "sink_pattern": "not_explicit",
+          "topology_name": "tree"
+        }
+      },
+      "expected_tradeoff": {
+        "strength": "negative routing evidence",
+        "weakness": "dominated by stronger CF topology choices"
+      },
+      "failure_modes": [],
+      "fallback": {
+        "budget_first": "cf_budget_tree"
+      },
+      "hypotheses": [],
+      "objective": "balanced",
+      "organization_policy": {
+        "operation_recommendations": [
+          {
+            "action_type": "preserve",
+            "conditions": {
+              "agent_bucket": "agents_8",
+              "array_size_bucket": "arrays_512",
+              "condition_key": "agents_8__arrays_512"
+            },
+            "instruction": "Apply this skill only inside the recorded agent and array-size condition bucket unless held-out evidence expands it.",
+            "target": "condition_trigger"
+          },
+          {
+            "action_type": "preserve",
+            "expected_effect": {
+              "coverage": "increase",
+              "message_cost": "bounded"
+            },
+            "instruction": "Use staged reduce edges where every receiver that aggregates partials can forward the merged state in a later step.",
+            "target": "edge_schedule"
+          }
+        ],
+        "operators": [],
+        "planner_mode": "topology_select",
+        "protocol_spec": null,
+        "structure_features": {
+          "aggregation_pattern": "hierarchical",
+          "evidence_metadata_keys": [],
+          "generated_graph": false,
+          "mean_protocol_messages": 0.0,
+          "mean_protocol_steps": 0.0,
+          "motifs": [
+            "hierarchical_reduce"
+          ],
+          "selected_primary_values": [],
+          "sink_pattern": "not_explicit",
+          "topology_name": "tree"
+        },
+        "topology_name": "tree"
+      },
+      "revision_history": [],
+      "risk_notes": [],
+      "skill_id": "cf_avoid_tree",
+      "skill_type": "planner_organization_policy",
+      "tags": [
+        "mas",
+        "emperor-skill",
+        "count-frequency",
+        "balanced"
+      ],
+      "task_family": "count_frequency",
+      "trigger": {
+        "agent_bucket": "agents_8",
+        "agent_counts": [
+          8
+        ],
+        "array_size_bucket": "arrays_512",
+        "array_sizes": [
+          512
+        ],
+        "condition_key": "agents_8__arrays_512",
+        "max_agents": 8,
+        "max_array_size": 512,
+        "min_agents": 8,
+        "min_array_size": 512,
+        "task_family": "count_frequency"
+      },
+      "update_rule": "batch_consolidate",
+      "validation_plan": [],
+      "version": "0.1.0"
+    },
+    "confidence": 0.7,
+    "evidence": [],
+    "evidence_refs": [
+      "run:protocol_tree_n8_seed102_1779537115394555000",
+      "run:protocol_tree_n8_seed103_1779537115393814000",
+      "run:protocol_tree_n8_seed104_1779537115393221000"
+    ],
+    "lesson": "Avoid tree as a default CF planner choice.",
+    "patch_id": "counterexample_tree",
+    "source": "counterexample_analyst",
+    "target_skill_id": "cf_avoid_tree",
+    "update": {
+      "risk_notes": [
+        {
+          "source": "counterexample_analyst",
+          "summary": "tree is dominated in observed CF evidence."
+        }
+      ]
+    }
+  }
+]

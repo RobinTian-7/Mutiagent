@@ -1,0 +1,12 @@
+{
+  "ended_at": "2026-05-23T12:53:36+00:00",
+  "error": "",
+  "exact_match": false,
+  "final_rmse": 14.560219778561036,
+  "job_id": "79ef85b365bc",
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/evolution/iter_0_train/runs/job_79ef85b365bc",
+  "run_id": "protocol_generated:cascading_snake_flow_n8_seed2_1779540788524129000",
+  "started_at": "2026-05-23T12:43:20+00:00",
+  "status": "succeeded",
+  "token_cost": 21666
+}

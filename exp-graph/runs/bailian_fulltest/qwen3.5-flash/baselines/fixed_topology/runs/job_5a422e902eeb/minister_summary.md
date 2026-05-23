@@ -1,0 +1,17 @@
+run_id: protocol_one_peer_exponential_dag_star_n8_seed103_1779536596400467000
+final_rmse: 11.090536506409418
+exact_match: False
+total_messages: 31
+total_model_calls: 33
+token_cost: 60335
+patch_counts:
+  merge: 2
+lessons:
+  - Peer propagation followed by star sink is the accuracy-first CF policy.
+  - Trace dynamics for one_peer_exponential_dag_star expose reusable MAS coverage, aggregation, and merge-quality signals.
+risk_notes:
+  - Trace dynamics for one_peer_exponential_dag_star expose reusable MAS coverage, aggregation, and merge-quality signals.
+artifacts:
+  evidence_records: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/fixed_topology/runs/job_5a422e902eeb/evidence_records.jsonl
+  output_dir: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/fixed_topology/runs/job_5a422e902eeb
+  patch_dir: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/baselines/fixed_topology/runs/job_5a422e902eeb/patches

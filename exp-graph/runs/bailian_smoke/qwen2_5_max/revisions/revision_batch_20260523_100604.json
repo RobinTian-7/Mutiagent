@@ -1,0 +1,45 @@
+{
+  "batch_id": "revision_batch_20260523_100604",
+  "counts": {
+    "added": 2
+  },
+  "revisions": [
+    {
+      "batch_id": "revision_batch_20260523_100604",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T10:06:04+00:00",
+      "evidence_refs": [
+        "run:protocol_generated:hybrid_reduce_with_audit_n4_seed1_1779530611320084000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "result_cf_topology_generated:hybrid_reduce_with_audit__a4__arr64"
+      ],
+      "revision_id": "rev_cf_topology_generated:hybrid_reduce_with_audit__a4__arr64_20260523_100604",
+      "skill_id": "cf_topology_generated:hybrid_reduce_with_audit__a4__arr64",
+      "summary": "Added new planner skill cf_topology_generated:hybrid_reduce_with_audit__a4__arr64.",
+      "to_version": "0.1.0"
+    },
+    {
+      "batch_id": "revision_batch_20260523_100604",
+      "changed_fields": [
+        "skill"
+      ],
+      "created_at": "2026-05-23T10:06:04+00:00",
+      "evidence_refs": [
+        "trace:protocol_generated:hybrid_reduce_with_audit_n4_seed1_1779530611320084000"
+      ],
+      "from_version": null,
+      "patch_ids": [
+        "trace_cf_topology_generated:hybrid_reduce_with_audit"
+      ],
+      "revision_id": "rev_cf_topology_generated:hybrid_reduce_with_audit_20260523_100604",
+      "skill_id": "cf_topology_generated:hybrid_reduce_with_audit",
+      "summary": "Added new planner skill cf_topology_generated:hybrid_reduce_with_audit.",
+      "to_version": "0.1.0"
+    }
+  ],
+  "warnings": []
+}

@@ -1,0 +1,634 @@
+[
+  {
+    "candidate_id": "candidate_0",
+    "graph_plan": {
+      "candidate_id": "candidate_0",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "balanced_tree_reduce",
+      "rationale": "Standard binary tree reduction ensures all 8 agents merge into a single root in log2(8)=3 steps with minimal messages (7 total). Agent 7 acts as the final sink.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local aggregation: Even agents send to odd neighbors to form initial partial sums.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Cross-layer merge: Winners of first round aggregate from lower indices to higher indices.",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Final consolidation: The two remaining partials merge at the primary sink.",
+          "edges": [
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "audit_sink"
+        }
+      ]
+    },
+    "objective_score": -17.343053591104635,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 10.583005244258363,
+        "mean_token_cost": 21534.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 18.0,
+        "mean_token_cost": 21552.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 20.149441679609886,
+        "mean_token_cost": 22699.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 20.639767440550294,
+        "mean_token_cost": 22655.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "balanced_tree_reduce",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local aggregation: Even agents send to odd neighbors to form initial partial sums.",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Cross-layer merge: Winners of first round aggregate from lower indices to higher indices.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Final consolidation: The two remaining partials merge at the primary sink.",
+          "operator": "audit_sink",
+          "transmissions": [
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_1",
+    "graph_plan": {
+      "candidate_id": "candidate_1",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "very_low"
+      },
+      "fallback_topology": "star",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "sparse_star_gather",
+      "rationale": "Direct star topology where all non-primary agents send directly to agent 7. Minimizes steps to 1 but concentrates fan-in on the sink.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Global gather: All source agents transmit their local count maps directly to the primary sink.",
+          "edges": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -156.46668665177236,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 4.0,
+        "mean_model_calls": 9.0,
+        "mean_rmse": 160.08122938058665,
+        "mean_token_cost": 11824.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 4.0,
+        "mean_model_calls": 9.0,
+        "mean_rmse": 128.87978895078933,
+        "mean_token_cost": 11509.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 4.0,
+        "mean_model_calls": 9.0,
+        "mean_rmse": 155.0129026887762,
+        "mean_token_cost": 12420.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 4.0,
+        "mean_model_calls": 9.0,
+        "mean_rmse": 181.89282558693733,
+        "mean_token_cost": 11474.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 4,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_1",
+        "fallback_topology": "star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "sparse_star_gather",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Global gather: All source agents transmit their local count maps directly to the primary sink.",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 1,
+    "repair_notes": [
+      "removed fan-in overflow edge (4, 7) at step 0",
+      "removed fan-in overflow edge (5, 7) at step 0",
+      "removed fan-in overflow edge (6, 7) at step 0"
+    ],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [4, 5, 6]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_2",
+    "graph_plan": {
+      "candidate_id": "candidate_2",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "medium"
+      },
+      "fallback_topology": "snake",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "cascading_snake_flow",
+      "rationale": "Linear chain propagation where data flows sequentially 0->1->...->7. Guarantees full coverage with exactly 7 messages over 7 steps, but here optimized to 4 steps by skipping nodes in later stages.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "First hop: Neighbors exchange to begin accumulation.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Second hop: Aggregated blocks move forward by stride 2.",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Third hop: Intermediate node 3 forwards its accumulated block to the sink.",
+          "edges": [
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "budget_aware_partial_aggregation"
+        }
+      ]
+    },
+    "objective_score": -15.50678501006377,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 12.884098726725126,
+        "mean_token_cost": 22853.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 15.165750888103101,
+        "mean_token_cost": 21129.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 15.811388300841896,
+        "mean_token_cost": 23142.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 15.0,
+        "mean_rmse": 18.16590212458495,
+        "mean_token_cost": 21177.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_2",
+        "fallback_topology": "snake",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "cascading_snake_flow",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "First hop: Neighbors exchange to begin accumulation.",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Second hop: Aggregated blocks move forward by stride 2.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Third hop: Intermediate node 3 forwards its accumulated block to the sink.",
+          "operator": "budget_aware_partial_aggregation",
+          "transmissions": [
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_3",
+    "graph_plan": {
+      "candidate_id": "candidate_3",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "low"
+      },
+      "fallback_topology": "hybrid",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "dual_cluster_merge",
+      "rationale": "Splits agents into two clusters (0-3 and 4-7) that reduce internally, then merges the two cluster leaders. Reduces fan-in pressure on the final step compared to a pure star.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Cluster A internal reduction: Agents 0-3 merge towards leader 3.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Cluster B internal reduction: Agents 4-7 merge towards leader 7.",
+          "edges": [
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Cross-cluster merge: Leader 3 sends its partial sum to Leader 7 for final aggregation.",
+          "edges": [
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "audit_sink"
+        }
+      ]
+    },
+    "objective_score": -172.5080218947091,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 170.9444354168921,
+        "mean_token_cost": 17846.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 168.06546343612658,
+        "mean_token_cost": 18324.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 170.0470523119998,
+        "mean_token_cost": 21242.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 180.9751364138179,
+        "mean_token_cost": 17549.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 5,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_3",
+        "fallback_topology": "hybrid",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "dual_cluster_merge",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Cluster A internal reduction: Agents 0-3 merge towards leader 3.",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        },
+        {
+          "description": "Cluster B internal reduction: Agents 4-7 merge towards leader 7.",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Cross-cluster merge: Leader 3 sends its partial sum to Leader 7 for final aggregation.",
+          "operator": "audit_sink",
+          "transmissions": [
+            [
+              3,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [0, 1, 4, 5]"
+    ]
+  }
+]

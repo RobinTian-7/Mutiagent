@@ -1,0 +1,52 @@
+{
+  "array_sizes": [
+    1024
+  ],
+  "created_at": "2026-05-23T15:16:28+00:00",
+  "graph_candidate_score_mode": "accuracy_max",
+  "graph_max_messages": 32,
+  "graph_max_receiver_fan_in": 4,
+  "graph_max_steps": 4,
+  "graph_repair_attempts": 1,
+  "graph_search_mode": "topk",
+  "graph_top_k": 2,
+  "graph_validation_seeds": [
+    201
+  ],
+  "init_mode": "llm_local_solve",
+  "llm_provider": "openai",
+  "max_parallel_agents": 4,
+  "max_parallel_ministers": 4,
+  "max_parallel_runs": 4,
+  "merge_mode": "llm_full_merge",
+  "model_name": "qwen3.5-plus",
+  "n_agents": [
+    8
+  ],
+  "num_graph_candidates": 4,
+  "objectives": [
+    "balanced"
+  ],
+  "phase": "test",
+  "planner_modes": [
+    "operator_compose"
+  ],
+  "planner_policies": [
+    "fixed_topology"
+  ],
+  "retain_traces": true,
+  "seeds": [
+    101,
+    102,
+    103,
+    104
+  ],
+  "skill_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/configs/mas_skills",
+  "topologies": [
+    "tree",
+    "one_peer_exponential_dag_star",
+    "mesh_star"
+  ],
+  "trace_enabled": true,
+  "verbose_events": true
+}

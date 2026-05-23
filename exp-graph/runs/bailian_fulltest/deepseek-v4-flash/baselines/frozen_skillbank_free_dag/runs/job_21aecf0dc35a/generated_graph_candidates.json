@@ -1,0 +1,670 @@
+[
+  {
+    "candidate_id": "candidate_0",
+    "graph_plan": {
+      "candidate_id": "candidate_0",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "pairwise_reduce_then_star",
+      "rationale": "First step pairs agents for local reduction, second step sends partials to primary 7, minimizing messages while ensuring coverage.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce: agents 0-1, 2-3, 4-5, 6-7 merge counts.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Each pair's holder sends aggregated count to primary 7.",
+          "edges": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        }
+      ]
+    },
+    "objective_score": -79.84248270116461,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 245.07549857135862,
+        "mean_token_cost": 16754.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 33.2264954516723,
+        "mean_token_cost": 16583.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 18.33030277982336,
+        "mean_token_cost": 16606.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 13.0,
+        "mean_rmse": 22.737634001804146,
+        "mean_token_cost": 17030.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_0",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "pairwise_reduce_then_star",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce: agents 0-1, 2-3, 4-5, 6-7 merge counts.",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Each pair's holder sends aggregated count to primary 7.",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              1,
+              7
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "selected",
+    "validation_errors": [],
+    "validation_warnings": []
+  },
+  {
+    "candidate_id": "candidate_1",
+    "graph_plan": {
+      "candidate_id": "candidate_1",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "medium"
+      },
+      "fallback_topology": "mesh_star",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "two_layer_tree",
+      "rationale": "Two-layer binary tree: first layer reduces pairs, second layer reduces to root 7. Ensures full coverage with log steps.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "First layer: pairs reduce locally.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        },
+        {
+          "description": "Second layer: partials from first layer sent to root 7.",
+          "edges": [
+            [
+              1,
+              3
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -84.87795512027807,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 84.38009243891595,
+        "mean_token_cost": 17724.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 86.35971282953643,
+        "mean_token_cost": 17689.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 84.34453153583817,
+        "mean_token_cost": 17961.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 7.0,
+        "mean_model_calls": 14.0,
+        "mean_rmse": 84.42748367682174,
+        "mean_token_cost": 17915.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 7,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_1",
+        "fallback_topology": "mesh_star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "two_layer_tree",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "First layer: pairs reduce locally.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Second layer: partials from first layer sent to root 7.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              1,
+              3
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              5,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [0, 1]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_2",
+    "graph_plan": {
+      "candidate_id": "candidate_2",
+      "expected_tradeoff": {
+        "accuracy": "medium",
+        "cost": "low"
+      },
+      "fallback_topology": "star",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "star_with_audit",
+      "rationale": "All agents send directly to primary 7 in step 1, then primary sends back to one agent for audit in step 2, ensuring correctness.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "All agents send their local counts to primary 7.",
+          "edges": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ],
+          "operator_hint": "star_sink"
+        },
+        {
+          "description": "Primary 7 sends aggregated count to agent 0 for audit.",
+          "edges": [
+            [
+              7,
+              0
+            ]
+          ],
+          "operator_hint": "audit_sink_with_extra_edge"
+        }
+      ]
+    },
+    "objective_score": -124.56785331194511,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 124.15313125330347,
+        "mean_token_cost": 12714.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 125.24376231972593,
+        "mean_token_cost": 13629.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 122.74363527287271,
+        "mean_token_cost": 13462.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 5.0,
+        "mean_model_calls": 10.0,
+        "mean_rmse": 126.13088440187835,
+        "mean_token_cost": 12792.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 5,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_2",
+        "fallback_topology": "star",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "star_with_audit",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "All agents send their local counts to primary 7.",
+          "operator": "star_sink",
+          "transmissions": [
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              7
+            ],
+            [
+              2,
+              7
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Primary 7 sends aggregated count to agent 0 for audit.",
+          "operator": "audit_sink_with_extra_edge",
+          "transmissions": [
+            [
+              7,
+              0
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 2,
+    "repair_notes": [
+      "removed fan-in overflow edge (4, 7) at step 0",
+      "removed fan-in overflow edge (5, 7) at step 0",
+      "removed fan-in overflow edge (6, 7) at step 0"
+    ],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": [
+      "agents without temporal path to selected_primary 7: [4, 5, 6]"
+    ]
+  },
+  {
+    "candidate_id": "candidate_3",
+    "graph_plan": {
+      "candidate_id": "candidate_3",
+      "expected_tradeoff": {
+        "accuracy": "high",
+        "cost": "medium"
+      },
+      "fallback_topology": "tree",
+      "graph_type": "temporal_dag",
+      "n_agents": 8,
+      "name": "three_layer_butterfly",
+      "rationale": "Butterfly-style reduction: first step pairs, second step cross-pair exchange, third step final reduce to primary 7. Ensures redundancy and accuracy.",
+      "selected_primary": 7,
+      "steps": [
+        {
+          "description": "Pairwise local reduce.",
+          "edges": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "pairwise_local_reduce"
+        },
+        {
+          "description": "Cross-pair exchange: each pair sends to adjacent pair's holder.",
+          "edges": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ],
+          "operator_hint": "sparse_peer_exchange"
+        },
+        {
+          "description": "Final reduce to primary 7.",
+          "edges": [
+            [
+              2,
+              7
+            ],
+            [
+              4,
+              7
+            ],
+            [
+              6,
+              7
+            ]
+          ],
+          "operator_hint": "tree_reduce"
+        }
+      ]
+    },
+    "objective_score": -126.82367744021157,
+    "probe_scores": [
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 18.0,
+        "mean_rmse": 18.973665961010276,
+        "mean_token_cost": 48100.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 18.0,
+        "mean_rmse": 119.9499895789908,
+        "mean_token_cost": 42094.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 17.0,
+        "mean_rmse": 122.16382443260362,
+        "mean_token_cost": 31345.0,
+        "objective": "balanced"
+      },
+      {
+        "exact_match_rate": 0.0,
+        "mean_messages": 10.0,
+        "mean_model_calls": 16.0,
+        "mean_rmse": 246.2072297882416,
+        "mean_token_cost": 21194.0,
+        "objective": "balanced"
+      }
+    ],
+    "protocol_messages": 10,
+    "protocol_spec": {
+      "metadata": {
+        "candidate_id": "candidate_3",
+        "fallback_topology": "tree",
+        "generated_graph": true,
+        "graph_type": "temporal_dag",
+        "max_messages": 32,
+        "max_receiver_fan_in": 4,
+        "max_steps": 4,
+        "selected_primary": 7
+      },
+      "n_agents": 8,
+      "name": "three_layer_butterfly",
+      "operators": [
+        "llm_generate_dag"
+      ],
+      "steps": [
+        {
+          "description": "Pairwise local reduce.",
+          "operator": "pairwise_local_reduce",
+          "transmissions": [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        },
+        {
+          "description": "Cross-pair exchange: each pair sends to adjacent pair's holder.",
+          "operator": "sparse_peer_exchange",
+          "transmissions": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        },
+        {
+          "description": "Final reduce to primary 7.",
+          "operator": "tree_reduce",
+          "transmissions": [
+            [
+              2,
+              7
+            ],
+            [
+              4,
+              7
+            ],
+            [
+              6,
+              7
+            ]
+          ]
+        }
+      ]
+    },
+    "protocol_steps": 3,
+    "repair_notes": [],
+    "score_mode": "accuracy_max",
+    "selected_primary": 7,
+    "status": "evaluated",
+    "validation_errors": [],
+    "validation_warnings": []
+  }
+]

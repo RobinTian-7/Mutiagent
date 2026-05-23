@@ -1,0 +1,23 @@
+{
+  "artifacts": {
+    "evidence_records": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/fixed_topology/runs/job_e238a4eb5b2d/evidence_records.jsonl",
+    "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/fixed_topology/runs/job_e238a4eb5b2d",
+    "patch_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/deepseek-v4-flash/baselines/fixed_topology/runs/job_e238a4eb5b2d/patches"
+  },
+  "exact_match": false,
+  "final_rmse": 20.639767440550294,
+  "lessons": [
+    "Mesh broadcast plus star sink is a middle-ground coverage policy.",
+    "Trace dynamics for mesh_star expose reusable MAS coverage, aggregation, and merge-quality signals."
+  ],
+  "patch_counts": {
+    "merge": 2
+  },
+  "risk_notes": [
+    "Trace dynamics for mesh_star expose reusable MAS coverage, aggregation, and merge-quality signals."
+  ],
+  "run_id": "protocol_mesh_star_n8_seed102_1779537318451235000",
+  "token_cost": 42415,
+  "total_messages": 63,
+  "total_model_calls": 18
+}

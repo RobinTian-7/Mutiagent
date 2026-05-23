@@ -1,0 +1,153 @@
+{
+  "failed": 0,
+  "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology",
+  "skipped": 12,
+  "statuses": [
+    {
+      "ended_at": "2026-05-23T10:43:33+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 19.339079605813716,
+      "job_id": "0d75d3bfe0db",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_0d75d3bfe0db",
+      "run_id": "protocol_tree_n8_seed101_1779532952470519000",
+      "started_at": "2026-05-23T10:42:32+00:00",
+      "status": "skipped",
+      "token_cost": 18864
+    },
+    {
+      "ended_at": "2026-05-23T10:43:28+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 17.204650534085253,
+      "job_id": "1c11331fa4f9",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_1c11331fa4f9",
+      "run_id": "protocol_tree_n8_seed103_1779532952470450000",
+      "started_at": "2026-05-23T10:42:32+00:00",
+      "status": "skipped",
+      "token_cost": 18799
+    },
+    {
+      "ended_at": "2026-05-23T10:46:45+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 283.0194339616981,
+      "job_id": "1f044055aea5",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_1f044055aea5",
+      "run_id": "protocol_mesh_star_n8_seed102_1779533126979487000",
+      "started_at": "2026-05-23T10:45:26+00:00",
+      "status": "skipped",
+      "token_cost": 35326
+    },
+    {
+      "ended_at": "2026-05-23T10:43:29+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 20.92844953645635,
+      "job_id": "627ae40e82bf",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_627ae40e82bf",
+      "run_id": "protocol_tree_n8_seed102_1779532952470557000",
+      "started_at": "2026-05-23T10:42:32+00:00",
+      "status": "skipped",
+      "token_cost": 18739
+    },
+    {
+      "ended_at": "2026-05-23T10:46:58+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 281.9077863415624,
+      "job_id": "635ac20d2cbe",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_635ac20d2cbe",
+      "run_id": "protocol_mesh_star_n8_seed104_1779533139316938000",
+      "started_at": "2026-05-23T10:45:39+00:00",
+      "status": "skipped",
+      "token_cost": 35752
+    },
+    {
+      "ended_at": "2026-05-23T10:45:27+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 19.183326093250876,
+      "job_id": "6f5ce25a5a4a",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_6f5ce25a5a4a",
+      "run_id": "protocol_one_peer_exponential_dag_star_n8_seed103_1779533009941879000",
+      "started_at": "2026-05-23T10:43:29+00:00",
+      "status": "skipped",
+      "token_cost": 47752
+    },
+    {
+      "ended_at": "2026-05-23T10:43:26+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 22.181073012818835,
+      "job_id": "7814517c4acb",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_7814517c4acb",
+      "run_id": "protocol_tree_n8_seed104_1779532952470600000",
+      "started_at": "2026-05-23T10:42:32+00:00",
+      "status": "skipped",
+      "token_cost": 18693
+    },
+    {
+      "ended_at": "2026-05-23T10:46:46+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 281.04448046528154,
+      "job_id": "96e2aa475780",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_96e2aa475780",
+      "run_id": "protocol_mesh_star_n8_seed103_1779533127916916000",
+      "started_at": "2026-05-23T10:45:27+00:00",
+      "status": "skipped",
+      "token_cost": 35341
+    },
+    {
+      "ended_at": "2026-05-23T10:45:24+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 11.40175425099138,
+      "job_id": "bba6e9e74548",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_bba6e9e74548",
+      "run_id": "protocol_one_peer_exponential_dag_star_n8_seed101_1779533006795801000",
+      "started_at": "2026-05-23T10:43:26+00:00",
+      "status": "skipped",
+      "token_cost": 47699
+    },
+    {
+      "ended_at": "2026-05-23T10:45:39+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 15.684387141358123,
+      "job_id": "c92be246cfb2",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_c92be246cfb2",
+      "run_id": "protocol_one_peer_exponential_dag_star_n8_seed104_1779533013708625000",
+      "started_at": "2026-05-23T10:43:33+00:00",
+      "status": "skipped",
+      "token_cost": 47996
+    },
+    {
+      "ended_at": "2026-05-23T10:46:34+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 281.2507777767023,
+      "job_id": "c9b73ae72e1f",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_c9b73ae72e1f",
+      "run_id": "protocol_mesh_star_n8_seed101_1779533124773217000",
+      "started_at": "2026-05-23T10:45:24+00:00",
+      "status": "skipped",
+      "token_cost": 35263
+    },
+    {
+      "ended_at": "2026-05-23T10:45:26+00:00",
+      "error": "",
+      "exact_match": false,
+      "final_rmse": 14.071247279470288,
+      "job_id": "e916fd3d74c5",
+      "output_dir": "/Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_full/deepseek_v3/baselines/fixed_topology/runs/job_e916fd3d74c5",
+      "run_id": "protocol_one_peer_exponential_dag_star_n8_seed102_1779533009004786000",
+      "started_at": "2026-05-23T10:43:28+00:00",
+      "status": "skipped",
+      "token_cost": 47839
+    }
+  ],
+  "succeeded": 0,
+  "total_jobs": 12
+}

@@ -1,0 +1,280 @@
+{
+  "candidate_id": "candidate_2",
+  "graph_plan": {
+    "candidate_id": "candidate_2",
+    "expected_tradeoff": {
+      "accuracy": "high",
+      "cost": "high"
+    },
+    "fallback_topology": "mesh",
+    "graph_type": "temporal_dag",
+    "n_agents": 8,
+    "name": "sparse_peer_exchange",
+    "rationale": "Two rounds of peer exchange ensure all agents have global coverage, then converge to sink.",
+    "selected_primary": 7,
+    "steps": [
+      {
+        "description": "Sparse peer exchange: each agent sends to two neighbors",
+        "edges": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            7,
+            0
+          ]
+        ],
+        "operator_hint": "sparse_peer_exchange"
+      },
+      {
+        "description": "Second exchange to propagate further",
+        "edges": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            5,
+            7
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            7,
+            1
+          ]
+        ],
+        "operator_hint": "sparse_peer_exchange"
+      },
+      {
+        "description": "All agents send to sink for final aggregation",
+        "edges": [
+          [
+            0,
+            7
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            3,
+            7
+          ]
+        ],
+        "operator_hint": "star_sink"
+      }
+    ]
+  },
+  "objective_score": -18.795048909786313,
+  "probe_scores": [
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 20.0,
+      "mean_model_calls": 25.0,
+      "mean_rmse": 19.544820285692065,
+      "mean_token_cost": 34436.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 20.0,
+      "mean_model_calls": 25.0,
+      "mean_rmse": 21.0,
+      "mean_token_cost": 35396.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 20.0,
+      "mean_model_calls": 25.0,
+      "mean_rmse": 10.677078252031311,
+      "mean_token_cost": 34797.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 20.0,
+      "mean_model_calls": 25.0,
+      "mean_rmse": 23.958297101421877,
+      "mean_token_cost": 36791.0,
+      "objective": "balanced"
+    }
+  ],
+  "protocol_messages": 20,
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_2",
+      "fallback_topology": "mesh",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "sparse_peer_exchange",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Sparse peer exchange: each agent sends to two neighbors",
+        "operator": "sparse_peer_exchange",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            7,
+            0
+          ]
+        ]
+      },
+      {
+        "description": "Second exchange to propagate further",
+        "operator": "sparse_peer_exchange",
+        "transmissions": [
+          [
+            0,
+            2
+          ],
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            4,
+            6
+          ],
+          [
+            5,
+            7
+          ],
+          [
+            6,
+            0
+          ],
+          [
+            7,
+            1
+          ]
+        ]
+      },
+      {
+        "description": "All agents send to sink for final aggregation",
+        "operator": "star_sink",
+        "transmissions": [
+          [
+            0,
+            7
+          ],
+          [
+            1,
+            7
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "protocol_steps": 3,
+  "repair_notes": [
+    "removed fan-in overflow edge (4, 7) at step 2",
+    "removed fan-in overflow edge (5, 7) at step 2",
+    "removed fan-in overflow edge (6, 7) at step 2"
+  ],
+  "score_mode": "accuracy_max",
+  "selected_primary": 7,
+  "status": "selected",
+  "validation_errors": [],
+  "validation_warnings": []
+}

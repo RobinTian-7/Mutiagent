@@ -1,0 +1,15 @@
+{
+  "fallback_reason": null,
+  "free_graph_fallback_reason": null,
+  "free_graph_raw_responses": [],
+  "raw_response": {
+    "raw_prompts": [],
+    "raw_responses": [],
+    "text": "{\n  \"alternatives\": [],\n  \"fallback_skill_id\": \"cf_budget_tree\",\n  \"operators\": [\n    \"local_solve\",\n    \"tree_reduce\"\n  ],\n  \"planner_mode\": \"operator_compose\",\n  \"rationale\": \"Selected 'cf_budget_tree' as the primary skill because the request specifies n_agents=8 and a balanced objective. The 'avoid_or_counterexample_skills' explicitly warn against sparse random DAGs for count-frequency tasks due to seed sensitivity and coverage issues. While 'cf_middle_ground_mesh_star' offers high accuracy, its quadratic message growth (mean_messages: 63) is less efficient than the tree structure for this agent count under a normal budget. The tree topology ensures stable source coverage and provenance with significantly lower token costs (mean_token_cost: ~1400 vs 2600) while maintaining acceptable RMSE (0.42), aligning with the evidence-backed preference for structured aggregation over unvalidated random topologies.\",\n  \"score\": 0.92,\n  \"score_breakdown\": {\n    \"accuracy_fit\": 0.85,\n    \"cost_fit\": 0.95\n  },\n  \"skill_id\": \"cf_avoid_sparse_random\",\n  \"topology_name\": \"balanced_tree\"\n}",
+    "usage": {
+      "completion_tokens": 281,
+      "model_calls": 1,
+      "prompt_tokens": 1428
+    }
+  }
+}

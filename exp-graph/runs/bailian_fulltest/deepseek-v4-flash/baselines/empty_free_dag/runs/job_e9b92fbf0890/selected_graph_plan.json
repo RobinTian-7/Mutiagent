@@ -1,0 +1,172 @@
+{
+  "candidate_id": "candidate_2",
+  "graph_plan": {
+    "candidate_id": "candidate_2",
+    "expected_tradeoff": {
+      "accuracy": "high",
+      "cost": "high"
+    },
+    "fallback_topology": "mesh",
+    "graph_type": "temporal_dag",
+    "n_agents": 8,
+    "name": "sparse_peer_exchange",
+    "rationale": "Sparse peer exchange in step1, then two-step tree reduce to sink 7, ensuring redundancy.",
+    "selected_primary": 7,
+    "steps": [
+      {
+        "description": "Sparse peer exchange among pairs",
+        "edges": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ],
+        "operator_hint": "sparse_peer_exchange"
+      },
+      {
+        "description": "Merge into two groups",
+        "edges": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "operator_hint": "pairwise_local_reduce"
+      },
+      {
+        "description": "Final merge to sink",
+        "edges": [
+          [
+            3,
+            7
+          ]
+        ],
+        "operator_hint": "tree_reduce"
+      }
+    ]
+  },
+  "objective_score": -18.507887980203197,
+  "probe_scores": [
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 20.09975124224178,
+      "mean_token_cost": 18916.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 17.435595774162696,
+      "mean_token_cost": 18991.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 18.16590212458495,
+      "mean_token_cost": 18939.0,
+      "objective": "balanced"
+    },
+    {
+      "exact_match_rate": 0.0,
+      "mean_messages": 7.0,
+      "mean_model_calls": 15.0,
+      "mean_rmse": 18.33030277982336,
+      "mean_token_cost": 18973.0,
+      "objective": "balanced"
+    }
+  ],
+  "protocol_messages": 7,
+  "protocol_spec": {
+    "metadata": {
+      "candidate_id": "candidate_2",
+      "fallback_topology": "mesh",
+      "generated_graph": true,
+      "graph_type": "temporal_dag",
+      "max_messages": 32,
+      "max_receiver_fan_in": 4,
+      "max_steps": 4,
+      "selected_primary": 7
+    },
+    "n_agents": 8,
+    "name": "sparse_peer_exchange",
+    "operators": [
+      "llm_generate_dag"
+    ],
+    "steps": [
+      {
+        "description": "Sparse peer exchange among pairs",
+        "operator": "sparse_peer_exchange",
+        "transmissions": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            6,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Merge into two groups",
+        "operator": "pairwise_local_reduce",
+        "transmissions": [
+          [
+            1,
+            3
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      },
+      {
+        "description": "Final merge to sink",
+        "operator": "tree_reduce",
+        "transmissions": [
+          [
+            3,
+            7
+          ]
+        ]
+      }
+    ]
+  },
+  "protocol_steps": 3,
+  "repair_notes": [],
+  "score_mode": "accuracy_max",
+  "selected_primary": 7,
+  "status": "selected",
+  "validation_errors": [],
+  "validation_warnings": []
+}
