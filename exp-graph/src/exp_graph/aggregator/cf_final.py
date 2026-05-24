@@ -249,6 +249,7 @@ def answer_agents_for_topology(
         "chain",
         "tree",
         "dag_mesh",
+        "mesh_dag",
         "random",
         "random_dag",
         "static_exponential_dag",

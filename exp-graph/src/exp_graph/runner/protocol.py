@@ -72,6 +72,7 @@ class ProtocolRunnerConfig(BaseModel):
     verbose_events: bool = False
     run_id: str | None = None
     protocol_spec: ProtocolGraphSpec | None = None
+    llm_role_summary: dict[str, object] = Field(default_factory=dict)
 
     @classmethod
     def from_experiment_config(

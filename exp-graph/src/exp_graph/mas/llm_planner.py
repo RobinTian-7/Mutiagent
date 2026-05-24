@@ -9,9 +9,9 @@ from typing import Any
 from pydantic import ValidationError
 
 from exp_graph.llm.base import LLMClient, LLMResponse
-from exp_graph.llm.factory import create_llm_client
 from exp_graph.mas.operators import compose_protocol_from_operators
 from exp_graph.mas.planner import EmperorPlanner
+from exp_graph.mas.role_llm import create_role_llm_client, resolve_role_llm_config
 from exp_graph.mas.schemas import MASPlan, MASRuntimeConfig, PlannerRequest, SkillCard
 from exp_graph.mas.skill_bank import SkillBank
 
@@ -37,13 +37,14 @@ class LLMEmperorPlanner:
         """Return a validated MASPlan, falling back safely when needed."""
         self.last_raw_response = None
         self.last_fallback_reason = None
-        if self.runtime.llm_provider == "fake":
+        role_llm = resolve_role_llm_config(self.runtime, "emperor")
+        if role_llm.platform == "fake":
             return self._fallback_plan(
                 request,
                 reason="fake provider uses deterministic emperor planner",
             )
         try:
-            client = self.llm_client or create_llm_client(self.runtime.llm_provider)
+            client = self.llm_client or create_role_llm_client(self.runtime, "emperor")
             prompt = build_emperor_prompt(
                 request=request,
                 positive_skills=self.skill_bank.retrieve(request),
@@ -55,8 +56,8 @@ class LLMEmperorPlanner:
             )
             response = client.complete(
                 prompt,
-                model_name=self.runtime.model_name,
-                temperature=self.runtime.temperature,
+                model_name=role_llm.model_name,
+                temperature=role_llm.temperature,
             )
             self.last_raw_response = response
             plan = parse_llm_plan_response(response.text, request)

@@ -213,6 +213,25 @@ python ../run_cf_protocol_experiments.py \
 OPENAI_API_KEY=... python examples/run_array_search.py --llm-provider openai --model-name gpt-4o-mini
 ```
 
+MAS 也支持显式的角色模型配置，让 emperor、soldier、minister 使用不同的
+OpenAI-compatible 平台和模型。未传 `--role-llm-config` 时，旧的
+`--llm-provider` / `--model-name` 行为保持不变。传入角色配置后，soldier
+会被强制设为 non-thinking；emperor 和 minister 默认允许 thinking：
+
+```bash
+export DEEPSEEK_API_KEY=...
+export DASHSCOPE_API_KEY=...
+
+python -m exp_graph.mas.cli run \
+  --skill-dir configs/mas_skills \
+  --n-agents 8 \
+  --array-size 1024 \
+  --merge-mode llm_full_merge \
+  --init-mode llm_local_solve \
+  --role-llm-config configs/role_llm_profiles/deepseek_emperor_bailian_soldier.json \
+  --output-dir runs/role_llm_demo
+```
+
 控制真实 LLM sampling temperature：
 
 ```bash

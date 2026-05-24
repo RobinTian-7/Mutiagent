@@ -19,6 +19,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from exp_graph.mas.role_llm import load_role_llm_profiles
+
 
 WORKFLOW_NODES = [
     "train_matrix",
@@ -91,15 +93,23 @@ class MASWorkflowConfig(BaseModel):
         default_factory=lambda: ["accuracy_first", "budget_first", "balanced"]
     )
     topologies: list[str] = Field(
-        default_factory=lambda: ["tree", "one_peer_exponential_dag_star", "mesh_star"]
+        default_factory=lambda: [
+            "tree",
+            "one_peer_exponential_dag_star",
+            "mesh_dag",
+            "balanced_log_layer",
+        ]
     )
     n_agents: list[int] = Field(default_factory=lambda: [4, 8])
     array_sizes: list[int] = Field(default_factory=lambda: [32, 64])
+    value_min: int = 0
+    value_max: int = 9
     train_seeds: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5])
     test_seeds: list[int] = Field(default_factory=lambda: [9, 10, 11, 12, 13])
 
     llm_provider: str = "fake"
     model_name: str = "fake"
+    role_llm_config: str | None = None
     merge_mode: str = "deterministic"
     init_mode: str = "deterministic"
     max_parallel_runs: int = 1
@@ -342,10 +352,15 @@ def build_node_command(config: MASWorkflowConfig, node_name: str) -> list[str] |
         _join(config.n_agents),
         "--array-sizes",
         _join(config.array_sizes),
+        "--value-min",
+        str(config.value_min),
+        "--value-max",
+        str(config.value_max),
         "--llm-provider",
         config.llm_provider,
         "--model-name",
         config.model_name,
+        *_role_llm_args(config),
         "--merge-mode",
         config.merge_mode,
         "--init-mode",
@@ -391,6 +406,7 @@ def build_node_command(config: MASWorkflowConfig, node_name: str) -> list[str] |
             config.llm_provider,
             "--model-name",
             config.model_name,
+            *_role_llm_args(config),
             "--max-parallel-insight-shards",
             str(config.max_parallel_insight_shards),
             "--output-dir",
@@ -719,6 +735,12 @@ def _trace_args(config: MASWorkflowConfig) -> list[str]:
     return args
 
 
+def _role_llm_args(config: MASWorkflowConfig) -> list[str]:
+    if not config.role_llm_config:
+        return []
+    return ["--role-llm-config", str(config.role_llm_config)]
+
+
 def _graph_args(config: MASWorkflowConfig) -> list[str]:
     return [
         "--graph-search-mode",
@@ -784,13 +806,27 @@ def _workflow_artifacts(config: MASWorkflowConfig) -> dict[str, str]:
 def _guard_real_llm(config: MASWorkflowConfig, options: WorkflowRunOptions) -> None:
     if options.dry_run:
         return
-    if config.llm_provider != "openai":
+    if not _workflow_uses_real_llm(config):
         return
     if config.confirm_real_llm or os.environ.get("CONFIRM_REAL_LLM") == "YES":
         return
     raise RuntimeError(
-        "This workflow would launch real OpenAI jobs. Set CONFIRM_REAL_LLM=YES "
+        "This workflow would launch real LLM jobs. Set CONFIRM_REAL_LLM=YES "
         "or pass --confirm-real-llm when you intend to run it."
+    )
+
+
+def _workflow_uses_real_llm(config: MASWorkflowConfig) -> bool:
+    if config.llm_provider not in {"fake"}:
+        return True
+    if not config.role_llm_config:
+        return False
+    profiles = load_role_llm_profiles(config.role_llm_config)
+    if profiles is None:
+        return False
+    return any(
+        profile is not None and profile.platform != "fake"
+        for profile in (profiles.emperor, profiles.soldier, profiles.minister)
     )
 
 

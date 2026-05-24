@@ -41,7 +41,8 @@
   "topologies": [
     "tree",
     "one_peer_exponential_dag_star",
-    "mesh_star"
+    "mesh_dag",
+    "balanced_log_layer"
   ],
   "trace": true,
   "train_seeds": [

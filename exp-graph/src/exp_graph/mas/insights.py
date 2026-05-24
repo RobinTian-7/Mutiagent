@@ -10,7 +10,6 @@ from statistics import fmean
 from typing import Any
 
 from exp_graph.llm.base import LLMClient
-from exp_graph.llm.factory import create_llm_client
 from exp_graph.mas.evolution import (
     classify_topology,
     condition_specific_skill_id,
@@ -18,6 +17,7 @@ from exp_graph.mas.evolution import (
     infer_condition_scope,
     infer_topology_structure_features,
 )
+from exp_graph.mas.role_llm import create_role_llm_client, resolve_role_llm_config
 from exp_graph.mas.schemas import (
     EvidenceRecord,
     InsightReport,
@@ -41,17 +41,19 @@ def build_evidence_pack(
         by_topology[record.topology_name].append(record)
     topology_summaries = {}
     for topology, rows in sorted(by_topology.items()):
+        prompt_rows = _record_prompt_rows(rows)
         topology_summaries[topology] = {
             "evidence_refs": [row.evidence_id for row in rows],
             "n_agents": sorted({row.n_agents for row in rows if row.n_agents}),
             "seeds": sorted({row.seed for row in rows if row.seed is not None}),
             "metrics": _metric_summary(rows),
             "dynamics": _dynamics_summary(rows),
-            "condition_scope": infer_condition_scope(_record_prompt_rows(rows)),
+            "condition_scope": infer_condition_scope(prompt_rows),
             "structure_features": infer_topology_structure_features(
                 topology,
-                _record_prompt_rows(rows),
+                prompt_rows,
             ),
+            "topology_structures": topology_structures_from_records(rows),
             "risk_tags": sorted({tag for row in rows for tag in row.risk_tags}),
         }
     return {
@@ -85,16 +87,17 @@ class LLMInsightMinister:
         evidence_pack: dict[str, Any],
         skill_bank: SkillBank,
     ) -> InsightReport:
-        if self.runtime.llm_provider == "fake":
+        role_llm = resolve_role_llm_config(self.runtime, "minister")
+        if role_llm.platform == "fake":
             return verify_insight_report(
                 _deterministic_insight_report(evidence_pack, skill_bank)
             )
         try:
-            client = self.llm_client or create_llm_client(self.runtime.llm_provider)
+            client = self.llm_client or create_role_llm_client(self.runtime, "minister")
             response = client.complete(
                 build_insight_prompt(evidence_pack=evidence_pack),
-                model_name=self.runtime.model_name,
-                temperature=self.runtime.temperature,
+                model_name=role_llm.model_name,
+                temperature=role_llm.temperature,
             )
             self.last_raw_response = response.text
             report = InsightReport.model_validate(_loads_json_object(response.text))
@@ -499,6 +502,80 @@ def _record_prompt_rows(rows: list[EvidenceRecord]) -> list[dict[str, object]]:
         }
         for row in rows
     ]
+
+
+def topology_structures_from_records(
+    rows: list[EvidenceRecord],
+    *,
+    limit: int = 4,
+) -> list[dict[str, object]]:
+    """Return a deterministic, prompt-sized set of executed topology structures."""
+    by_hash: dict[str, dict[str, object]] = {}
+    for row in rows:
+        structure = row.metrics.get("topology_structure")
+        if not isinstance(structure, dict):
+            continue
+        structure_hash = str(
+            structure.get("structure_hash")
+            or row.metrics.get("topology_structure_hash")
+            or ""
+        )
+        if not structure_hash:
+            continue
+        item = by_hash.setdefault(
+            structure_hash,
+            {
+                "structure": structure,
+                "evidence_refs": [],
+                "rmse_values": [],
+            },
+        )
+        refs = item["evidence_refs"]
+        if isinstance(refs, list):
+            refs.append(row.evidence_id)
+        score = _record_metric_value(row, "mean_rmse", "final_rmse")
+        scores = item["rmse_values"]
+        if isinstance(scores, list) and score is not None:
+            scores.append(score)
+
+    candidates = []
+    for structure_hash, item in by_hash.items():
+        scores = item["rmse_values"]
+        mean_rmse = fmean(scores) if isinstance(scores, list) and scores else None
+        structure = dict(item["structure"]) if isinstance(item["structure"], dict) else {}
+        structure["evidence_refs"] = sorted(
+            str(ref) for ref in item["evidence_refs"] if ref is not None
+        )
+        if mean_rmse is not None:
+            structure["mean_rmse"] = mean_rmse
+        candidates.append(
+            (
+                mean_rmse if mean_rmse is not None else float("inf"),
+                structure_hash,
+                structure,
+            )
+        )
+    if not candidates:
+        return []
+
+    selected: dict[str, dict[str, object]] = {}
+    best = min(candidates, key=lambda item: (item[0], item[1]))
+    worst = max(candidates, key=lambda item: (item[0], item[1]))
+    for _, structure_hash, structure in [best, worst]:
+        selected[structure_hash] = structure
+    for _, structure_hash, structure in sorted(candidates, key=lambda item: item[1]):
+        if len(selected) >= limit:
+            break
+        selected.setdefault(structure_hash, structure)
+    return [selected[key] for key in sorted(selected)]
+
+
+def _record_metric_value(row: EvidenceRecord, *keys: str) -> float | None:
+    for key in keys:
+        value = row.metrics.get(key)
+        if value is not None:
+            return float(value)
+    return None
 
 
 def _mean_metric(metrics: list[dict[str, object]], *keys: str) -> float:

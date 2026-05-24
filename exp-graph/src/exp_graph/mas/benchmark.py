@@ -57,7 +57,8 @@ def build_benchmark_report(
     method_order = [
         "fixed_tree",
         "fixed_one_peer_exponential_dag_star",
-        "fixed_mesh_star",
+        "fixed_mesh_dag",
+        "fixed_balanced_log_layer",
         "llm_free",
         "frozen_skillbank_v0",
         "evolved_skillbank_v1",

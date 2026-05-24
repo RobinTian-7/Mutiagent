@@ -85,6 +85,13 @@ def test_dag_mesh_schedule_sweeps_destinations_in_topological_order() -> None:
     ]
 
 
+def test_mesh_dag_alias_matches_dag_mesh() -> None:
+    assert build_protocol_schedule("mesh_dag", n_agents=5) == build_protocol_schedule(
+        "dag_mesh",
+        n_agents=5,
+    )
+
+
 def test_random_dag_schedule_is_seeded_sparse_forwarding() -> None:
     schedule = build_protocol_schedule("random", n_agents=6, random_seed=7)
     same = build_protocol_schedule("random_dag", n_agents=6, random_seed=7)

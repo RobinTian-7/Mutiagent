@@ -6,9 +6,7 @@ set -euo pipefail
 #
 # Default mode runs the custom empty-skill free-DAG self-evolution loop:
 #   1. fixed topology baselines
-#   2. empty free-DAG baseline without learning
-#   3. frozen hand-written skillbank free-DAG baseline
-#   4. iterative train -> collect -> insight -> evolve -> held-out eval
+#   2. iterative train -> collect -> insight -> evolve -> held-out eval
 #
 # The existing LangGraph paper workflow is still available through:
 #   PIPELINE_MODE=langgraph_paper scripts/run_mas_autoskill_free_dag_pipeline.sh
@@ -27,15 +25,18 @@ PIPELINE_MODE="${PIPELINE_MODE:-autoskill_free_dag}"
 
 LLM_PROVIDER="${LLM_PROVIDER:-openai}"
 MODEL_NAME="${MODEL_NAME:-gpt-4o-mini}"
+ROLE_LLM_CONFIG="${ROLE_LLM_CONFIG:-}"
 MERGE_MODE="${MERGE_MODE:-llm_full_merge}"
 INIT_MODE="${INIT_MODE:-llm_local_solve}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 JSON_RETRY_ATTEMPTS="${JSON_RETRY_ATTEMPTS:-2}"
 
 OBJECTIVES="${OBJECTIVES:-balanced}"
-BASELINE_TOPOLOGIES="${BASELINE_TOPOLOGIES:-tree,one_peer_exponential_dag_star,mesh_star}"
+BASELINE_TOPOLOGIES="${BASELINE_TOPOLOGIES:-tree,one_peer_exponential_dag_star,mesh_dag,balanced_log_layer}"
 N_AGENTS="${N_AGENTS:-4,8}"
 ARRAY_SIZES="${ARRAY_SIZES:-32,64}"
+VALUE_MIN="${VALUE_MIN:-0}"
+VALUE_MAX="${VALUE_MAX:-9}"
 TRAIN_SEEDS="${TRAIN_SEEDS:-1,2,3}"
 EVAL_SEEDS="${EVAL_SEEDS:-101,102,103}"
 EVOLUTION_ITERS="${EVOLUTION_ITERS:-2}"
@@ -110,6 +111,14 @@ if [[ "$LLM_PROVIDER" == "openai" && -z "${OPENAI_API_KEY:-}" ]]; then
   echo "OPENAI_API_KEY is not set." >&2
   exit 2
 fi
+if [[ -n "$ROLE_LLM_CONFIG" && ! -f "$ROLE_LLM_CONFIG" ]]; then
+  echo "ROLE_LLM_CONFIG does not exist: $ROLE_LLM_CONFIG" >&2
+  exit 2
+fi
+if (( VALUE_MAX < VALUE_MIN )); then
+  echo "VALUE_MAX must be greater than or equal to VALUE_MIN." >&2
+  exit 2
+fi
 
 cd "$REPO"
 mkdir -p "$OUT_ROOT"
@@ -156,11 +165,16 @@ common_matrix_args=(
   --objectives "$OBJECTIVES"
   --n-agents "$N_AGENTS"
   --array-sizes "$ARRAY_SIZES"
+  --value-min "$VALUE_MIN"
+  --value-max "$VALUE_MAX"
   --llm-provider "$LLM_PROVIDER"
   --model-name "$MODEL_NAME"
   --merge-mode "$MERGE_MODE"
   --init-mode "$INIT_MODE"
 )
+if [[ -n "$ROLE_LLM_CONFIG" ]]; then
+  common_matrix_args+=(--role-llm-config "$ROLE_LLM_CONFIG")
+fi
 if ((${#trace_args[@]} > 0)); then
   common_matrix_args+=("${trace_args[@]}")
 fi
@@ -223,17 +237,24 @@ analyze_insights() {
   local skill_dir="$2"
   local collected_dir="$3"
   local output_dir="$4"
+  local -a insight_args
 
   echo "[insights:$label] -> $output_dir"
-  run_cli analyze-insights \
-    --skill-dir "$skill_dir" \
-    --evidence-file "$collected_dir/batch_evidence.jsonl" \
-    --summary-file "$collected_dir/cross_seed_metrics.json" \
-    --trace-summary-file "$collected_dir/cross_seed_trace_summary.json" \
-    --llm-provider "$LLM_PROVIDER" \
-    --model-name "$MODEL_NAME" \
-    --max-parallel-insight-shards "$MAX_PARALLEL_INSIGHT_SHARDS" \
+  insight_args=(
+    analyze-insights
+    --skill-dir "$skill_dir"
+    --evidence-file "$collected_dir/batch_evidence.jsonl"
+    --summary-file "$collected_dir/cross_seed_metrics.json"
+    --trace-summary-file "$collected_dir/cross_seed_trace_summary.json"
+    --llm-provider "$LLM_PROVIDER"
+    --model-name "$MODEL_NAME"
+    --max-parallel-insight-shards "$MAX_PARALLEL_INSIGHT_SHARDS"
     --output-dir "$output_dir"
+  )
+  if [[ -n "$ROLE_LLM_CONFIG" ]]; then
+    insight_args+=(--role-llm-config "$ROLE_LLM_CONFIG")
+  fi
+  run_cli "${insight_args[@]}"
 }
 
 prepare_empty_skill_dir() {
@@ -469,9 +490,6 @@ rows = []
 
 sources = [
     ("baseline_fixed_topology", root / "baselines" / "fixed_topology" / "collected"),
-    ("baseline_empty_free_dag", root / "baselines" / "empty_free_dag" / "collected"),
-    ("baseline_frozen_skillbank_free_dag", root / "baselines" / "frozen_skillbank_free_dag" / "collected"),
-    ("baseline_frozen_skill_grounded", root / "baselines" / "frozen_skill_grounded" / "collected"),
 ]
 for i in range(iters):
     sources.append((f"self_evolved_free_dag_iter_{i + 1}", root / "evolution" / f"iter_{i}_eval" / "collected"))
@@ -560,6 +578,8 @@ run_langgraph_paper_workflow() {
     --topologies "$BASELINE_TOPOLOGIES"
     --n-agents "$N_AGENTS"
     --array-sizes "$ARRAY_SIZES"
+    --value-min "$VALUE_MIN"
+    --value-max "$VALUE_MAX"
     --train-seeds "$TRAIN_SEEDS"
     --test-seeds "$EVAL_SEEDS"
     --llm-provider "$LLM_PROVIDER"
@@ -583,6 +603,9 @@ run_langgraph_paper_workflow() {
     --inspect-artifacts
     --confirm-real-llm
   )
+  if [[ -n "$ROLE_LLM_CONFIG" ]]; then
+    workflow_args+=(--role-llm-config "$ROLE_LLM_CONFIG")
+  fi
   if truthy "$LANGGRAPH_DRY_RUN"; then
     workflow_args+=(--dry-run)
   fi
@@ -612,9 +635,11 @@ echo "[config]"
 echo "  out_root: $OUT_ROOT"
 echo "  provider: $LLM_PROVIDER"
 echo "  model: $MODEL_NAME"
+echo "  role_llm_config: ${ROLE_LLM_CONFIG:-<none>}"
 echo "  objectives: $OBJECTIVES"
 echo "  n_agents: $N_AGENTS"
 echo "  array_sizes: $ARRAY_SIZES"
+echo "  value_range: [$VALUE_MIN, $VALUE_MAX]"
 echo "  train_seeds: $TRAIN_SEEDS"
 echo "  eval_seeds: $EVAL_SEEDS"
 echo "  evolution_iters: $EVOLUTION_ITERS"
@@ -631,30 +656,6 @@ if truthy "$RUN_BASELINES"; then
     "fixed_topology" \
     "$BASELINE_TOPOLOGIES" \
     "$OUT_ROOT/baselines/fixed_topology"
-
-  run_eval_matrix \
-    "empty_free_dag" \
-    "$EMPTY_SKILLS" \
-    "graph_generate" \
-    "free_graph" \
-    "" \
-    "$OUT_ROOT/baselines/empty_free_dag"
-
-  run_eval_matrix \
-    "frozen_skillbank_free_dag" \
-    "$HAND_SKILL_DIR" \
-    "graph_generate" \
-    "free_graph" \
-    "" \
-    "$OUT_ROOT/baselines/frozen_skillbank_free_dag"
-
-  run_eval_matrix \
-    "frozen_skill_grounded" \
-    "$HAND_SKILL_DIR" \
-    "operator_compose" \
-    "skill_grounded,llm_free" \
-    "$BASELINE_TOPOLOGIES" \
-    "$OUT_ROOT/baselines/frozen_skill_grounded"
 fi
 
 if truthy "$RUN_EVOLUTION"; then

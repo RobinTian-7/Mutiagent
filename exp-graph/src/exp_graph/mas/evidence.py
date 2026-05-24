@@ -287,7 +287,7 @@ def _aggregation_reliability(
         "average_rmse": _float(final_global.get("average_rmse")),
         "is_sink_topology": any(
             token in topology
-            for token in ["star", "tree", "sink", "dag_mesh", "random"]
+            for token in ["star", "tree", "sink", "dag_mesh", "mesh_dag", "random"]
         ),
     }
 

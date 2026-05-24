@@ -25,6 +25,7 @@ from exp_graph.mas.matrix import (
 )
 from exp_graph.mas.planner import EmperorPlanner
 from exp_graph.mas.pipeline import run_mas_pipeline
+from exp_graph.mas.role_llm import load_role_llm_profiles
 from exp_graph.mas.schemas import MASRuntimeConfig, PlannerRequest
 from exp_graph.mas.search import search_candidates
 from exp_graph.mas.skill_bank import (
@@ -38,6 +39,18 @@ from exp_graph.mas.workflow import (
     load_workflow_config,
     run_workflow,
 )
+
+
+LLM_PROVIDER_CHOICES = [
+    "auto",
+    "fake",
+    "openai",
+    "deepseek",
+    "bailian",
+    "dashscope",
+    "qwen",
+    "alibaba",
+]
 
 
 def main() -> None:
@@ -129,6 +142,8 @@ def main() -> None:
     run.add_argument("--fixed-topology", default=None)
     run.add_argument("--n-agents", type=int, required=True)
     run.add_argument("--array-size", type=int, default=64)
+    run.add_argument("--value-min", type=int, default=0)
+    run.add_argument("--value-max", type=int, default=9)
     run.add_argument("--seed", type=int, default=0)
     run.add_argument(
         "--merge-mode",
@@ -142,10 +157,11 @@ def main() -> None:
     )
     run.add_argument(
         "--llm-provider",
-        choices=["auto", "fake", "openai"],
+        choices=LLM_PROVIDER_CHOICES,
         default="fake",
     )
     run.add_argument("--model-name", default="fake")
+    run.add_argument("--role-llm-config", type=Path, default=None)
     run.add_argument("--temperature", type=float, default=0.0)
     run.add_argument("--json-retry-attempts", type=int, default=2)
     run.add_argument("--max-parallel-agents", type=int, default=1)
@@ -180,10 +196,11 @@ def main() -> None:
     insights.add_argument("--trace-summary-file", type=Path, required=True)
     insights.add_argument(
         "--llm-provider",
-        choices=["auto", "fake", "openai"],
+        choices=LLM_PROVIDER_CHOICES,
         default="fake",
     )
     insights.add_argument("--model-name", default="fake")
+    insights.add_argument("--role-llm-config", type=Path, default=None)
     insights.add_argument("--max-parallel-insight-shards", type=int, default=1)
     insights.add_argument("--output-dir", type=Path, required=True)
 
@@ -292,6 +309,7 @@ def main() -> None:
 
     if args.command == "run":
         bank = SkillBank.load_dir(args.skill_dir)
+        role_llm_profiles = load_role_llm_profiles(args.role_llm_config)
         request = PlannerRequest.from_names(
             n_agents=args.n_agents,
             objective=args.objective,
@@ -304,6 +322,10 @@ def main() -> None:
         runtime = MASRuntimeConfig(
             llm_provider=args.llm_provider,
             model_name=args.model_name,
+            role_llm_profiles=role_llm_profiles,
+            role_llm_config_path=(
+                str(args.role_llm_config) if args.role_llm_config is not None else None
+            ),
             temperature=args.temperature,
             json_retry_attempts=args.json_retry_attempts,
             max_parallel_agents=args.max_parallel_agents,
@@ -321,6 +343,8 @@ def main() -> None:
             graph_max_receiver_fan_in=args.graph_max_receiver_fan_in,
             graph_repair_attempts=args.graph_repair_attempts,
             graph_validation_seeds=_parse_int_list(args.graph_validation_seeds),
+            value_min=args.value_min,
+            value_max=args.value_max,
         )
         result = run_mas_pipeline(
             request=request,
@@ -347,6 +371,7 @@ def main() -> None:
         return
 
     if args.command in {"run-matrix", "eval-matrix"}:
+        role_llm_profiles = load_role_llm_profiles(args.role_llm_config)
         result = run_matrix(
             skill_dir=args.skill_dir,
             output_dir=args.output_dir,
@@ -356,9 +381,15 @@ def main() -> None:
             topologies=_parse_str_list(args.topologies),
             n_agents_values=_parse_int_list(args.n_agents),
             array_sizes=_parse_int_list(args.array_sizes),
+            value_min=args.value_min,
+            value_max=args.value_max,
             seeds=_parse_int_list(args.seeds),
             llm_provider=args.llm_provider,
             model_name=args.model_name,
+            role_llm_profiles=role_llm_profiles,
+            role_llm_config_path=(
+                str(args.role_llm_config) if args.role_llm_config is not None else None
+            ),
             merge_mode=args.merge_mode,
             init_mode=args.init_mode,
             trace_enabled=args.trace,
@@ -390,6 +421,7 @@ def main() -> None:
         return
 
     if args.command == "analyze-insights":
+        role_llm_profiles = load_role_llm_profiles(args.role_llm_config)
         report = analyze_matrix_insights(
             skill_dir=args.skill_dir,
             evidence_file=args.evidence_file,
@@ -397,6 +429,10 @@ def main() -> None:
             trace_summary_file=args.trace_summary_file,
             llm_provider=args.llm_provider,
             model_name=args.model_name,
+            role_llm_profiles=role_llm_profiles,
+            role_llm_config_path=(
+                str(args.role_llm_config) if args.role_llm_config is not None else None
+            ),
             max_parallel_insight_shards=args.max_parallel_insight_shards,
             output_dir=args.output_dir,
         )
@@ -472,13 +508,16 @@ def _add_matrix_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--topologies", default="")
     parser.add_argument("--n-agents", required=True)
     parser.add_argument("--array-sizes", required=True)
+    parser.add_argument("--value-min", type=int, default=0)
+    parser.add_argument("--value-max", type=int, default=9)
     parser.add_argument("--seeds", required=True)
     parser.add_argument(
         "--llm-provider",
-        choices=["auto", "fake", "openai"],
+        choices=LLM_PROVIDER_CHOICES,
         default="fake",
     )
     parser.add_argument("--model-name", default="fake")
+    parser.add_argument("--role-llm-config", type=Path, default=None)
     parser.add_argument(
         "--merge-mode",
         choices=["deterministic", "llm_belief_merge", "llm_full_merge"],
@@ -514,14 +553,17 @@ def _add_workflow_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--topologies", default=None)
     parser.add_argument("--n-agents", default=None)
     parser.add_argument("--array-sizes", default=None)
+    parser.add_argument("--value-min", type=int, default=None)
+    parser.add_argument("--value-max", type=int, default=None)
     parser.add_argument("--train-seeds", default=None)
     parser.add_argument("--test-seeds", default=None)
     parser.add_argument(
         "--llm-provider",
-        choices=["auto", "fake", "openai"],
+        choices=LLM_PROVIDER_CHOICES,
         default=None,
     )
     parser.add_argument("--model-name", default=None)
+    parser.add_argument("--role-llm-config", type=Path, default=None)
     parser.add_argument(
         "--merge-mode",
         choices=["deterministic", "llm_belief_merge", "llm_full_merge"],
@@ -573,10 +615,13 @@ def _workflow_overrides(args: argparse.Namespace) -> dict:
         "topologies",
         "n_agents",
         "array_sizes",
+        "value_min",
+        "value_max",
         "train_seeds",
         "test_seeds",
         "llm_provider",
         "model_name",
+        "role_llm_config",
         "merge_mode",
         "init_mode",
         "max_parallel_runs",
@@ -600,6 +645,8 @@ def _workflow_overrides(args: argparse.Namespace) -> dict:
         overrides["skill_dir"] = str(args.skill_dir)
     if args.output_dir is not None:
         overrides["output_dir"] = str(args.output_dir)
+    if args.role_llm_config is not None:
+        overrides["role_llm_config"] = str(args.role_llm_config)
     if args.verbose_events:
         overrides["verbose_events"] = True
     if args.confirm_real_llm:

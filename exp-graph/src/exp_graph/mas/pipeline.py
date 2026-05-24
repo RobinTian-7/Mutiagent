@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +39,12 @@ from exp_graph.mas.schemas import (
     MinisterSummary,
     PlannerRequest,
     SkillPatch,
+    TopologyStructure,
+)
+from exp_graph.mas.role_llm import (
+    create_role_llm_client,
+    resolve_role_llm_config,
+    role_llm_summary,
 )
 from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.runner import ProtocolExperimentResult, ProtocolRunner, ProtocolRunnerConfig
@@ -74,6 +81,8 @@ def run_mas_pipeline(
     adapter = task_adapter or CountFrequencyTaskAdapter()
     task = global_task or adapter.build_global_task(
         array_size=request.array_size or 64,
+        value_min=runtime.value_min,
+        value_max=runtime.value_max,
         seed=seed,
     )
     output_dir = Path(runtime.output_dir or f"mas_pipeline_{_stamp()}")
@@ -141,15 +150,16 @@ def run_mas_pipeline(
             print("[emperor-plan-fallback]")
             print(free_graph_fallback_reason)
 
+    soldier_llm = resolve_role_llm_config(runtime, "soldier")
     config = ProtocolRunnerConfig(
         topology_name=plan.topology_name,
         n_agents=request.n_agents,
         seed=seed,
-        model_name=runtime.model_name,
+        model_name=soldier_llm.model_name,
         merge_mode=request.merge_mode,  # type: ignore[arg-type]
         init_mode=request.init_mode,  # type: ignore[arg-type]
-        llm_provider=runtime.llm_provider,
-        temperature=runtime.temperature,
+        llm_provider=soldier_llm.platform,
+        temperature=soldier_llm.temperature,
         json_retry_attempts=runtime.json_retry_attempts,
         allow_deterministic_repair=runtime.allow_deterministic_repair,
         max_parallel_agents=runtime.max_parallel_agents,
@@ -158,10 +168,18 @@ def run_mas_pipeline(
         trace_dir=runtime.trace_dir,
         verbose_events=runtime.verbose_events,
         protocol_spec=plan.protocol_spec,
+        llm_role_summary=role_llm_summary(runtime),
         **{
             key: value
             for key, value in plan.config_overrides.items()
-            if key != "protocol_spec"
+            if key
+            not in {
+                "protocol_spec",
+                "model_name",
+                "llm_provider",
+                "temperature",
+                "llm_role_summary",
+            }
         },
     )
     if print_sections:
@@ -170,6 +188,11 @@ def run_mas_pipeline(
         config=config,
         task_adapter=adapter,
         global_task=task,
+        llm_client=(
+            create_role_llm_client(runtime, "soldier")
+            if _request_needs_soldier_llm(request)
+            else None
+        ),
     ).run()
     summary = protocol_result.to_summary_dict()
     _write_json(
@@ -283,11 +306,16 @@ def _run_ministers(
         return {futures[future]: future.result() for future in futures}
 
 
+def _request_needs_soldier_llm(request: PlannerRequest) -> bool:
+    return request.init_mode == "llm_local_solve" or request.merge_mode != "deterministic"
+
+
 def _evidence_records_from_result(
     result: ProtocolExperimentResult,
 ) -> list[EvidenceRecord]:
     created_at = datetime.now(UTC).replace(microsecond=0).isoformat()
     summary = result.to_summary_dict()
+    topology_structure = _topology_structure_from_result(result)
     run_record = EvidenceRecord(
         evidence_id=f"run:{result.run_id}",
         source_dir=result.trace_path or "",
@@ -298,6 +326,8 @@ def _evidence_records_from_result(
         metrics={
             "job_id": result.config.run_id,
             "array_size": summary["ArraySize"],
+            "value_min": summary["ValueMin"],
+            "value_max": summary["ValueMax"],
             "merge_mode": summary["MergeMode"],
             "init_mode": summary["InitMode"],
             "provider": result.config.llm_provider,
@@ -340,11 +370,48 @@ def _evidence_records_from_result(
                 if result.config.protocol_spec is not None
                 else None
             ),
+            "topology_structure_hash": topology_structure.structure_hash,
+            "topology_structure": topology_structure.model_dump(mode="json"),
+            "llm_roles": result.config.llm_role_summary,
         },
         risk_tags=_run_risk_tags(summary),
         created_at=created_at,
     )
     return [run_record, _trace_record_from_result(result, created_at)]
+
+
+def _topology_structure_from_result(
+    result: ProtocolExperimentResult,
+) -> TopologyStructure:
+    steps = [
+        {
+            "step_idx": step.step_idx,
+            "description": step.description,
+            "transmissions": [[src, dst] for src, dst in step.transmissions],
+        }
+        for step in result.schedule
+    ]
+    selected_primary: int | str | None = None
+    if result.config.protocol_spec is not None:
+        raw_primary = result.config.protocol_spec.metadata.get("selected_primary")
+        if raw_primary is not None:
+            selected_primary = (
+                raw_primary if isinstance(raw_primary, (int, str)) else str(raw_primary)
+            )
+    if selected_primary is None:
+        selected_primary = result.final_result.selected_primary
+    payload = {
+        "topology_name": result.config.topology_name,
+        "n_agents": result.config.n_agents,
+        "selected_primary": selected_primary,
+        "total_steps": result.total_steps,
+        "total_messages": result.total_messages,
+        "steps": steps,
+    }
+    digest = hashlib.sha1(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:12]
+    return TopologyStructure(structure_hash=digest, **payload)
 
 
 def _trace_record_from_result(
@@ -382,7 +449,7 @@ def _trace_record_from_result(
             "average_rmse": final.average_rmse,
             "is_sink_topology": any(
                 token in result.config.topology_name
-                for token in ["star", "tree", "sink", "dag_mesh", "random"]
+                for token in ["star", "tree", "sink", "dag_mesh", "mesh_dag", "random"]
             ),
         },
         "merge_quality": {

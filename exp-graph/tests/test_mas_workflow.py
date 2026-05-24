@@ -29,6 +29,8 @@ def _small_config(tmp_path: Path) -> MASWorkflowConfig:
         topologies=["tree"],
         n_agents=[2],
         array_sizes=[8],
+        value_min=0,
+        value_max=3,
         train_seeds=[1],
         test_seeds=[2],
         llm_provider="fake",
@@ -53,6 +55,7 @@ def test_workflow_command_builders_match_expected_cli(tmp_path) -> None:
     assert "run-matrix" in train
     assert "topology_sweep" in train
     assert str(SKILL_DIR) in train
+    assert train[train.index("--value-max") + 1] == "3"
 
     evolve = build_node_command(config, "evolve_skills")
     assert evolve is not None
@@ -62,6 +65,37 @@ def test_workflow_command_builders_match_expected_cli(tmp_path) -> None:
     benchmark = build_node_command(config, "benchmark_report")
     assert benchmark is not None
     assert "benchmark-report" in benchmark
+
+
+def test_workflow_command_builders_include_role_llm_config(tmp_path) -> None:
+    config = _small_config(tmp_path).model_copy(
+        update={"role_llm_config": "configs/role_llm_profiles/demo.json"}
+    )
+
+    train = build_node_command(config, "train_matrix")
+    insights = build_node_command(config, "analyze_insights")
+    test_fixed = build_node_command(config, "test_fixed")
+
+    assert train is not None
+    assert insights is not None
+    assert test_fixed is not None
+    for command in [train, insights, test_fixed]:
+        idx = command.index("--role-llm-config")
+        assert command[idx + 1] == "configs/role_llm_profiles/demo.json"
+
+
+def test_workflow_real_role_llm_config_requires_confirmation(tmp_path) -> None:
+    role_config = tmp_path / "roles.json"
+    role_config.write_text(
+        json.dumps({"emperor": {"platform": "openai", "model_name": "gpt-test"}}),
+        encoding="utf-8",
+    )
+    config = _small_config(tmp_path).model_copy(
+        update={"role_llm_config": str(role_config)}
+    )
+
+    with pytest.raises(RuntimeError, match="real LLM jobs"):
+        run_workflow(config, WorkflowRunOptions(workflow_backend="shell"))
 
 
 def test_workflow_dry_run_writes_plan_without_running_jobs(tmp_path) -> None:

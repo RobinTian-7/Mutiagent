@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from exp_graph.mas.matrix import (
@@ -6,7 +7,7 @@ from exp_graph.mas.matrix import (
     expand_matrix_jobs,
     run_matrix,
 )
-from exp_graph.mas.schemas import EvidenceRecord
+from exp_graph.mas.schemas import EvidenceRecord, RoleLLMConfig, RoleLLMProfiles
 from exp_graph.mas.skill_bank import SkillBank
 
 
@@ -60,6 +61,92 @@ def test_run_matrix_expands_free_graph_jobs_without_topology_cross_product() -> 
     assert all(job.graph_search_mode == "topk" for job in jobs)
     assert all(job.num_graph_candidates == 3 for job in jobs)
     assert all(job.graph_candidate_score_mode == "accuracy_max" for job in jobs)
+
+
+def test_matrix_jobs_preserve_role_llm_config() -> None:
+    profiles = RoleLLMProfiles(
+        emperor=RoleLLMConfig(platform="deepseek", model_name="deepseek-v4-flash"),
+        soldier=RoleLLMConfig(
+            platform="bailian",
+            model_name="qwen3.5-flash",
+            thinking_enabled=False,
+        ),
+    )
+    jobs = expand_matrix_jobs(
+        objectives=["accuracy_first"],
+        planner_modes=["topology_select"],
+        planner_policies=["fixed_topology"],
+        topologies=["tree"],
+        n_agents_values=[2],
+        array_sizes=[8],
+        value_min=0,
+        value_max=1023,
+        seeds=[1],
+        merge_mode="deterministic",
+        init_mode="deterministic",
+        llm_provider="fake",
+        model_name="fake",
+        role_llm_profiles=profiles,
+        role_llm_config_path="configs/role_llm_profiles/demo.json",
+        skill_bank=SkillBank.load_dir(SKILL_DIR),
+    )
+
+    job = jobs[0]
+    assert job.role_llm_config_path == "configs/role_llm_profiles/demo.json"
+    assert job.value_min == 0
+    assert job.value_max == 1023
+    assert job.role_llm_profiles is not None
+    assert job.role_llm_profiles.emperor.model_name == "deepseek-v4-flash"
+    assert job.role_llm_profiles.soldier.thinking_enabled is False
+
+
+def test_run_matrix_serializes_role_llm_config(tmp_path) -> None:
+    profiles = RoleLLMProfiles(
+        emperor=RoleLLMConfig(platform="fake", model_name="emperor-fake"),
+        soldier=RoleLLMConfig(
+            platform="fake",
+            model_name="soldier-fake",
+            thinking_enabled=False,
+        ),
+        minister=RoleLLMConfig(platform="fake", model_name="minister-fake"),
+    )
+
+    run_matrix(
+        skill_dir=SKILL_DIR,
+        output_dir=tmp_path,
+        objectives=["budget_first"],
+        planner_modes=["topology_select"],
+        planner_policies=["fixed_topology"],
+        topologies=["tree"],
+        n_agents_values=[2],
+        array_sizes=[8],
+        value_min=0,
+        value_max=3,
+        seeds=[1],
+        llm_provider="fake",
+        model_name="legacy-fake",
+        role_llm_profiles=profiles,
+        role_llm_config_path="configs/role_llm_profiles/demo.json",
+        merge_mode="deterministic",
+        init_mode="deterministic",
+        trace_enabled=True,
+        retain_traces=True,
+        max_parallel_runs=1,
+        max_parallel_agents=1,
+        max_parallel_ministers=1,
+    )
+
+    config = json.loads((tmp_path / "matrix_config.json").read_text())
+    manifest_row = json.loads(
+        (tmp_path / "matrix_manifest.jsonl").read_text().splitlines()[0]
+    )
+
+    assert config["role_llm_config_path"] == "configs/role_llm_profiles/demo.json"
+    assert config["value_max"] == 3
+    assert manifest_row["value_min"] == 0
+    assert manifest_row["value_max"] == 3
+    assert config["role_llm_profiles"]["minister"]["model_name"] == "minister-fake"
+    assert manifest_row["role_llm_profiles"]["soldier"]["model_name"] == "soldier-fake"
 
 
 def test_run_matrix_resume_skips_success(tmp_path) -> None:

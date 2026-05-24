@@ -22,7 +22,8 @@ class SearchResult:
 
 SUPPORTED_SEARCH_TOPOLOGIES = [
     "tree",
-    "mesh_star",
+    "mesh_dag",
+    "balanced_log_layer",
     "one_peer_exponential_dag_star",
     "dag_mesh",
     "random",

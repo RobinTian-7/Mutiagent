@@ -84,7 +84,7 @@ def build_protocol_schedule(
     }:
         return _build_mesh_protocol(n_agents, aggregation="star")
 
-    if topology == "dag_mesh":
+    if topology in {"dag_mesh", "mesh_dag"}:
         return _build_dag_mesh_schedule(n_agents)
 
     if topology in {"random", "random_dag"}:

@@ -1,0 +1,21 @@
+{
+  "emperor": {
+    "platform": "deepseek",
+    "model_name": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "thinking_enabled": true
+  },
+  "soldier": {
+    "platform": "bailian",
+    "model_name": "qwen3.5-flash",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "thinking_enabled": false
+  },
+  "minister": {
+    "platform": "deepseek",
+    "model_name": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "thinking_enabled": true
+  }
+}

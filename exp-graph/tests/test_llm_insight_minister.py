@@ -23,6 +23,26 @@ def test_fake_llm_insight_minister_outputs_verified_patch_candidates():
                 "total_messages": 3,
                 "token_cost": 100,
                 "final_exact_match": False,
+                "topology_structure": {
+                    "structure_hash": "tree-a",
+                    "topology_name": "tree",
+                    "n_agents": 4,
+                    "selected_primary": 3,
+                    "total_steps": 2,
+                    "total_messages": 3,
+                    "steps": [
+                        {
+                            "step_idx": 0,
+                            "description": "pair reduce",
+                            "transmissions": [[0, 1], [2, 3]],
+                        },
+                        {
+                            "step_idx": 1,
+                            "description": "final reduce",
+                            "transmissions": [[1, 3]],
+                        },
+                    ],
+                },
             },
             risk_tags=["non_exact_final"],
         )
@@ -32,6 +52,9 @@ def test_fake_llm_insight_minister_outputs_verified_patch_candidates():
         skill_bank=bank,
         experiment_id="abc",
     )
+    structures = pack["topologies"]["tree"]["topology_structures"]
+    assert structures[0]["structure_hash"] == "tree-a"
+    assert structures[0]["steps"][0]["transmissions"] == [[0, 1], [2, 3]]
 
     report = LLMInsightMinister(
         runtime=MASRuntimeConfig(llm_provider="fake", model_name="fake")

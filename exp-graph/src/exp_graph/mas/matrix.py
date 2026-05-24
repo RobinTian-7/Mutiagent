@@ -16,7 +16,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from exp_graph.llm.factory import create_llm_client
 from exp_graph.mas.consolidation import write_patch_file
 from exp_graph.mas.evidence import read_evidence_jsonl, write_evidence_jsonl
 from exp_graph.mas.evolution import (
@@ -31,21 +30,34 @@ from exp_graph.mas.evolution import (
     infer_topology_structure_features,
 )
 from exp_graph.mas.formatting import format_insight_report
-from exp_graph.mas.insights import insight_report_to_patches
+from exp_graph.mas.insights import (
+    insight_report_to_patches,
+    topology_structures_from_records,
+)
 from exp_graph.mas.pipeline import run_mas_pipeline
+from exp_graph.mas.role_llm import (
+    create_role_llm_client,
+    resolve_role_llm_config,
+)
 from exp_graph.mas.schemas import (
     EvidenceRecord,
     InsightReport,
     MASInsight,
     MASRuntimeConfig,
     PlannerRequest,
+    RoleLLMProfiles,
     SkillCard,
     SkillPatch,
 )
 from exp_graph.mas.skill_bank import SkillBank
 
 
-DEFAULT_TOPOLOGIES = ["tree", "one_peer_exponential_dag_star", "mesh_star"]
+DEFAULT_TOPOLOGIES = [
+    "tree",
+    "one_peer_exponential_dag_star",
+    "mesh_dag",
+    "balanced_log_layer",
+]
 
 
 class MatrixJob(BaseModel):
@@ -59,11 +71,15 @@ class MatrixJob(BaseModel):
     topology_name: str | None = None
     n_agents: int
     array_size: int
+    value_min: int = 0
+    value_max: int = 9
     seed: int
     merge_mode: str
     init_mode: str
     llm_provider: str
     model_name: str
+    role_llm_profiles: RoleLLMProfiles | None = None
+    role_llm_config_path: str | None = None
     skill_bank_version: str = ""
     graph_search_mode: str = "single"
     num_graph_candidates: int = 1
@@ -126,6 +142,10 @@ def expand_matrix_jobs(
     llm_provider: str,
     model_name: str,
     skill_bank: SkillBank,
+    value_min: int = 0,
+    value_max: int = 9,
+    role_llm_profiles: RoleLLMProfiles | None = None,
+    role_llm_config_path: str | None = None,
     graph_search_mode: str = "single",
     num_graph_candidates: int = 1,
     graph_top_k: int = 1,
@@ -139,6 +159,11 @@ def expand_matrix_jobs(
 ) -> list[MatrixJob]:
     """Expand objective x policy x topology x size x seed into deterministic jobs."""
     skill_version = _skill_bank_version(skill_bank)
+    role_profiles_payload = (
+        role_llm_profiles.model_dump(mode="json")
+        if role_llm_profiles is not None
+        else None
+    )
     topology_values = topologies or DEFAULT_TOPOLOGIES
     jobs: list[MatrixJob] = []
     for objective in objectives:
@@ -161,11 +186,15 @@ def expand_matrix_jobs(
                                     "topology_name": topology_name,
                                     "n_agents": n_agents,
                                     "array_size": array_size,
+                                    "value_min": value_min,
+                                    "value_max": value_max,
                                     "seed": seed,
                                     "merge_mode": merge_mode,
                                     "init_mode": init_mode,
                                     "llm_provider": llm_provider,
                                     "model_name": model_name,
+                                    "role_llm_profiles": role_profiles_payload,
+                                    "role_llm_config_path": role_llm_config_path,
                                     "skill_bank_version": skill_version,
                                     "graph_search_mode": graph_search_mode,
                                     "num_graph_candidates": num_graph_candidates,
@@ -206,6 +235,10 @@ def run_matrix(
     max_parallel_runs: int,
     max_parallel_agents: int,
     max_parallel_ministers: int,
+    value_min: int = 0,
+    value_max: int = 9,
+    role_llm_profiles: RoleLLMProfiles | None = None,
+    role_llm_config_path: str | None = None,
     verbose_events: bool = False,
     graph_search_mode: str = "single",
     num_graph_candidates: int = 1,
@@ -232,11 +265,15 @@ def run_matrix(
         topologies=topologies,
         n_agents_values=n_agents_values,
         array_sizes=array_sizes,
+        value_min=value_min,
+        value_max=value_max,
         seeds=seeds,
         merge_mode=merge_mode,
         init_mode=init_mode,
         llm_provider=llm_provider,
         model_name=model_name,
+        role_llm_profiles=role_llm_profiles,
+        role_llm_config_path=role_llm_config_path,
         skill_bank=bank,
         graph_search_mode=graph_search_mode,
         num_graph_candidates=num_graph_candidates,
@@ -260,9 +297,17 @@ def run_matrix(
             "topologies": topologies,
             "n_agents": n_agents_values,
             "array_sizes": array_sizes,
+            "value_min": value_min,
+            "value_max": value_max,
             "seeds": seeds,
             "llm_provider": llm_provider,
             "model_name": model_name,
+            "role_llm_config_path": role_llm_config_path,
+            "role_llm_profiles": (
+                role_llm_profiles.model_dump(mode="json")
+                if role_llm_profiles is not None
+                else None
+            ),
             "merge_mode": merge_mode,
             "init_mode": init_mode,
             "trace_enabled": trace_enabled,
@@ -434,6 +479,8 @@ def analyze_matrix_insights(
     llm_provider: str,
     model_name: str,
     max_parallel_insight_shards: int = 1,
+    role_llm_profiles: RoleLLMProfiles | None = None,
+    role_llm_config_path: str | None = None,
 ) -> InsightReport:
     """Extract batch-level MAS design insights from collected matrix evidence."""
     out = Path(output_dir)
@@ -448,8 +495,14 @@ def analyze_matrix_insights(
         trace_summary=trace_summary,
         skill_bank=bank,
     )
-    runtime = MASRuntimeConfig(llm_provider=llm_provider, model_name=model_name)
-    if llm_provider == "fake":
+    runtime = MASRuntimeConfig(
+        llm_provider=llm_provider,
+        model_name=model_name,
+        role_llm_profiles=role_llm_profiles,
+        role_llm_config_path=role_llm_config_path,
+    )
+    minister_llm = resolve_role_llm_config(runtime, "minister")
+    if minister_llm.platform == "fake":
         reports = [_deterministic_shard_report(shard) for shard in shards]
     else:
         reports = _run_llm_insight_shards(
@@ -465,8 +518,13 @@ def analyze_matrix_insights(
         encoding="utf-8",
     )
     patch_dir = out / "patches"
-    write_patch_file(verified.skill_update_recommendations, patch_dir / "insight_patches.json")
-    default_collected_patch = Path(evidence_file).parent / "batch_patches" / "insight_patches.json"
+    write_patch_file(
+        verified.skill_update_recommendations,
+        patch_dir / "insight_patches.json",
+    )
+    default_collected_patch = (
+        Path(evidence_file).parent / "batch_patches" / "insight_patches.json"
+    )
     if default_collected_patch.parent.exists():
         write_patch_file(verified.skill_update_recommendations, default_collected_patch)
     return verified
@@ -518,6 +576,10 @@ def _run_matrix_job(
         runtime = MASRuntimeConfig(
             llm_provider=job.llm_provider,
             model_name=job.model_name,
+            role_llm_profiles=job.role_llm_profiles,
+            role_llm_config_path=job.role_llm_config_path,
+            value_min=job.value_min,
+            value_max=job.value_max,
             max_parallel_agents=max_parallel_agents,
             max_parallel_ministers=max_parallel_ministers,
             trace_enabled=trace_enabled,
@@ -762,8 +824,11 @@ def _build_insight_shards(
     skill_bank: SkillBank,
 ) -> list[dict[str, Any]]:
     records_by_condition: dict[str, list[str]] = defaultdict(list)
+    record_objects_by_condition: dict[str, list[EvidenceRecord]] = defaultdict(list)
     for record in records:
-        records_by_condition[_record_condition_key(record)].append(record.evidence_id)
+        key = _record_condition_key(record)
+        records_by_condition[key].append(record.evidence_id)
+        record_objects_by_condition[key].append(record)
     trace_by_key = {
         json.dumps(
             {
@@ -815,6 +880,9 @@ def _build_insight_shards(
                 "condition": condition,
                 "trace_summary": trace_by_key.get(key, {}),
                 "evidence_refs": records_by_condition.get(key, []),
+                "topology_structures": topology_structures_from_records(
+                    record_objects_by_condition.get(key, [])
+                ),
                 "affected_skill": (
                     candidate_skill_id
                     if skill_bank.get(candidate_skill_id)
@@ -922,12 +990,13 @@ def _run_llm_insight_shards(
     max_workers: int,
 ) -> list[InsightReport]:
     def analyze(shard: dict[str, Any]) -> InsightReport:
-        client = create_llm_client(runtime.llm_provider)
+        role_llm = resolve_role_llm_config(runtime, "minister")
+        client = create_role_llm_client(runtime, "minister")
         prompt = _build_batch_insight_prompt(shard)
         response = client.complete(
             prompt,
-            model_name=runtime.model_name,
-            temperature=runtime.temperature,
+            model_name=role_llm.model_name,
+            temperature=role_llm.temperature,
         )
         return InsightReport.model_validate(_loads_json_object(response.text))
 

@@ -11,6 +11,7 @@ from exp_graph.protocols import ProtocolGraphSpec
 ObjectiveName = Literal["accuracy_first", "budget_first", "balanced"]
 BudgetLevel = Literal["loose", "normal", "tight"]
 PlannerMode = Literal["topology_select", "operator_compose", "graph_generate"]
+LLMRoleName = Literal["emperor", "soldier", "minister"]
 PatchAction = Literal["add", "merge", "discard", "deprecate"]
 EvidenceSourceType = Literal["aggregate", "run", "trace", "insight", "manual"]
 EvidenceStatus = Literal["observed", "placeholder", "deprecated"]
@@ -62,6 +63,40 @@ class BudgetSpec(BaseModel):
     max_token_cost: int | None = None
 
 
+class RoleLLMConfig(BaseModel):
+    """OpenAI-compatible model endpoint settings for one MAS role."""
+
+    platform: str = "openai"
+    model_name: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
+    temperature: float | None = None
+    thinking_enabled: bool | None = None
+
+
+class RoleLLMProfiles(BaseModel):
+    """Optional role-specific LLM profiles for the outer MAS pipeline."""
+
+    emperor: RoleLLMConfig | None = None
+    soldier: RoleLLMConfig | None = None
+    minister: RoleLLMConfig | None = None
+
+    def get_role(self, role: LLMRoleName) -> RoleLLMConfig | None:
+        return getattr(self, role)
+
+
+class TopologyStructure(BaseModel):
+    """Compact description of the actual protocol structure executed by soldiers."""
+
+    structure_hash: str
+    topology_name: str
+    n_agents: int
+    selected_primary: int | str | None = None
+    total_steps: int
+    total_messages: int
+    steps: list[dict[str, object]] = Field(default_factory=list)
+
+
 class MASRuntimeConfig(BaseModel):
     """Runtime options for a transparent real/fake LLM MAS pipeline."""
 
@@ -77,6 +112,8 @@ class MASRuntimeConfig(BaseModel):
     trace_dir: str | None = None
     verbose_events: bool = False
     output_dir: str | None = None
+    value_min: int = 0
+    value_max: int = 9
     graph_search_mode: str = "single"
     num_graph_candidates: int = 1
     graph_top_k: int = 1
@@ -86,6 +123,14 @@ class MASRuntimeConfig(BaseModel):
     graph_max_receiver_fan_in: int = 4
     graph_repair_attempts: int = 1
     graph_validation_seeds: list[int] = Field(default_factory=list)
+    role_llm_profiles: RoleLLMProfiles | None = None
+    role_llm_config_path: str | None = None
+
+    @model_validator(mode="after")
+    def validate_value_range(self) -> "MASRuntimeConfig":
+        if self.value_max < self.value_min:
+            raise ValueError("value_max must be greater than or equal to value_min")
+        return self
 
 
 class PlannerRequest(BaseModel):

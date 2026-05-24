@@ -14,9 +14,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from exp_graph.llm.base import LLMClient, LLMResponse
-from exp_graph.llm.factory import create_llm_client
 from exp_graph.mas.operators import compose_protocol_from_operators
 from exp_graph.mas.planner import EmperorPlanner
+from exp_graph.mas.role_llm import (
+    create_role_llm_client,
+    resolve_role_llm_config,
+    role_llm_summary,
+)
 from exp_graph.mas.schemas import MASPlan, MASRuntimeConfig, PlannerRequest, SkillCard
 from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.protocols import ProtocolGraphSpec, ProtocolStepSpec
@@ -501,11 +505,12 @@ def _generate_graph_candidates(
         skills=positive_skills,
     )
     remaining_count = max(0, count - len(seeded))
-    if runtime.llm_provider == "fake":
+    emperor_llm = resolve_role_llm_config(runtime, "emperor")
+    if emperor_llm.platform == "fake":
         return [*seeded, *_fake_graph_candidates(request, remaining_count)], []
     if remaining_count == 0:
         return seeded, []
-    client = llm_client or create_llm_client(runtime.llm_provider)
+    client = llm_client or create_role_llm_client(runtime, "emperor")
     prompt = build_free_graph_prompt(
         request=request,
         skills=positive_skills,
@@ -515,8 +520,8 @@ def _generate_graph_candidates(
     )
     response = client.complete(
         prompt,
-        model_name=runtime.model_name,
-        temperature=runtime.temperature,
+        model_name=emperor_llm.model_name,
+        temperature=emperor_llm.temperature,
     )
     candidates = parse_graph_candidates_response(
         response.text,
@@ -704,17 +709,20 @@ def _evaluate_candidates(
         for probe_seed in validation_seeds:
             global_task = task_adapter.build_global_task(
                 array_size=request.array_size or 64,
+                value_min=runtime.value_min,
+                value_max=runtime.value_max,
                 seed=int(probe_seed),
             )
+            soldier_llm = resolve_role_llm_config(runtime, "soldier")
             config = ProtocolRunnerConfig(
                 topology_name=f"generated:{state.graph.name}",
                 n_agents=request.n_agents,
                 seed=int(probe_seed),
-                model_name=runtime.model_name,
+                model_name=soldier_llm.model_name,
                 merge_mode=request.merge_mode,  # type: ignore[arg-type]
                 init_mode=request.init_mode,  # type: ignore[arg-type]
-                llm_provider=runtime.llm_provider,
-                temperature=runtime.temperature,
+                llm_provider=soldier_llm.platform,
+                temperature=soldier_llm.temperature,
                 json_retry_attempts=runtime.json_retry_attempts,
                 allow_deterministic_repair=runtime.allow_deterministic_repair,
                 max_parallel_agents=runtime.max_parallel_agents,
@@ -722,11 +730,17 @@ def _evaluate_candidates(
                 retain_traces=False,
                 verbose_events=False,
                 protocol_spec=state.spec,
+                llm_role_summary=role_llm_summary(runtime),
             )
             result = ProtocolRunner(
                 config=config,
                 task_adapter=task_adapter,
                 global_task=global_task,
+                llm_client=(
+                    create_role_llm_client(runtime, "soldier")
+                    if _request_needs_soldier_llm(request)
+                    else None
+                ),
             ).run()
             row = _probe_row(result, request.objective.name)
             probe_rows.append(row)
@@ -748,6 +762,10 @@ def _evaluate_candidates(
         state.record.score_mode = runtime.graph_candidate_score_mode
         if state.record.status in {"valid", "repaired"}:
             state.record.status = "evaluated"
+
+
+def _request_needs_soldier_llm(request: PlannerRequest) -> bool:
+    return request.init_mode == "llm_local_solve" or request.merge_mode != "deterministic"
 
 
 def _probe_row(result: ProtocolExperimentResult, objective: str) -> dict[str, object]:

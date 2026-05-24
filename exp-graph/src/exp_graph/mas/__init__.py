@@ -18,8 +18,11 @@ from exp_graph.mas.schemas import (
     MinisterSummary,
     ObjectiveSpec,
     PlannerRequest,
+    RoleLLMConfig,
+    RoleLLMProfiles,
     SkillCard,
     SkillPatch,
+    TopologyStructure,
 )
 from exp_graph.mas.skill_bank import SkillBank
 
@@ -38,8 +41,11 @@ __all__ = [
     "ObjectiveSpec",
     "OperatorComposePlanner",
     "PlannerRequest",
+    "RoleLLMConfig",
+    "RoleLLMProfiles",
     "SkillBank",
     "SkillCard",
     "SkillPatch",
+    "TopologyStructure",
     "TopologySelectPlanner",
 ]
