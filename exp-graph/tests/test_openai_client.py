@@ -3,6 +3,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from exp_graph.llm import factory
 from exp_graph.llm.openai_client import OpenAIChatClient
 
 
@@ -98,6 +99,35 @@ def test_json_completion_disables_thinking_mode_for_mimo_model(monkeypatch) -> N
     request = _request_for_model(monkeypatch, "mimo-v2-flash")
 
     assert request["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_role_completion_uses_xiaomi_defaults_for_mimo_model(monkeypatch) -> None:
+    monkeypatch.setenv("XIAOMI_API_KEY", "test-key")
+    request = _request_for_model(
+        monkeypatch,
+        "mimo-v2-flash",
+        platform="xiaomi",
+        thinking_enabled=False,
+    )
+
+    assert request["__init__"]["base_url"] == "https://api.xiaomimimo.com/v1"
+    assert request["__init__"]["api_key"] == "test-key"
+    assert request["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_factory_accepts_xiaomi_provider(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            seen.update(kwargs)
+
+    monkeypatch.setattr(factory, "OpenAIChatClient", FakeClient)
+
+    factory.create_llm_client("xiaomi", thinking_enabled=False)
+
+    assert seen["platform"] == "xiaomi"
+    assert seen["thinking_enabled"] is False
 
 
 def test_json_completion_disables_thinking_mode_for_kimi_k25_model(monkeypatch) -> None:

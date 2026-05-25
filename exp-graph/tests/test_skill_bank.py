@@ -13,6 +13,27 @@ from exp_graph.mas.skill_bank import (
 SKILL_DIR = Path(__file__).parents[1] / "configs" / "mas_skills"
 
 
+def _protocol_spec(
+    name: str,
+    steps: list[list[tuple[int, int]]],
+    selected_primary: int,
+    n_agents: int = 4,
+) -> dict[str, object]:
+    return {
+        "name": name,
+        "n_agents": n_agents,
+        "steps": [
+            {"transmissions": [list(edge) for edge in step], "description": name}
+            for step in steps
+        ],
+        "operators": ["llm_generate_dag"],
+        "metadata": {
+            "generated_graph": True,
+            "selected_primary": selected_primary,
+        },
+    }
+
+
 def test_skill_bank_loads_yaml_subset_and_retrieves_selectable_skills() -> None:
     bank = SkillBank.load_dir(SKILL_DIR)
     request = PlannerRequest.from_names(n_agents=8, objective="balanced")
@@ -198,6 +219,177 @@ def test_compact_skill_bank_keeps_top_rmse_per_condition_bucket() -> None:
     assert summary["active_count"] == 5
     assert summary["active_avoid_count"] == 1
     assert archived.get("bucket_skill_4").tags == ["archived"]
+
+
+def test_compact_skill_bank_dedupes_equivalent_topologies_per_bucket() -> None:
+    tree_sink_3 = _protocol_spec(
+        "tree_sink_3",
+        [[(0, 1), (2, 3)], [(1, 3)]],
+        selected_primary=3,
+    )
+    tree_root_0 = _protocol_spec(
+        "tree_root_0",
+        [[(1, 0), (3, 2)], [(2, 0)]],
+        selected_primary=0,
+    )
+    audit_tree = _protocol_spec(
+        "tree_audit",
+        [[(0, 1), (2, 3)], [(1, 3), (1, 0)]],
+        selected_primary=3,
+    )
+    common_trigger = {
+        "agent_bucket": "agents_4",
+        "array_size_bucket": "arrays_128",
+        "min_agents": 4,
+        "max_agents": 4,
+        "min_array_size": 128,
+        "max_array_size": 128,
+    }
+    bank = SkillBank(
+        [
+            SkillCard(
+                skill_id="tree_sink_3_skill",
+                objective="balanced",
+                trigger=common_trigger,
+                organization_policy={
+                    "topology_name": "generated:tree_sink_3",
+                    "protocol_spec": tree_sink_3,
+                },
+                expected_tradeoff={"mean_rmse": 2.0},
+                evidence_refs=["run:sink3"],
+            ),
+            SkillCard(
+                skill_id="tree_root_0_skill",
+                objective="balanced",
+                trigger=common_trigger,
+                organization_policy={
+                    "topology_name": "generated:tree_root_0",
+                    "protocol_spec": tree_root_0,
+                },
+                expected_tradeoff={"mean_rmse": 1.0},
+                evidence_refs=["run:root0"],
+            ),
+            SkillCard(
+                skill_id="audit_skill",
+                objective="balanced",
+                trigger=common_trigger,
+                organization_policy={
+                    "topology_name": "generated:tree_audit",
+                    "protocol_spec": audit_tree,
+                },
+                expected_tradeoff={"mean_rmse": 3.0},
+                evidence_refs=["run:audit"],
+            ),
+        ]
+    )
+
+    active, archived, summary = compact_skill_bank(bank, max_per_condition=3)
+
+    assert set(active.skills) == {"tree_root_0_skill", "audit_skill"}
+    assert set(archived.skills) == {"tree_sink_3_skill"}
+    representative = active.get("tree_root_0_skill")
+    assert representative is not None
+    assert set(representative.evidence_refs) == {"run:sink3", "run:root0"}
+    assert representative.organization_policy["duplicate_topology_count"] == 1
+    assert set(representative.organization_policy["topology_aliases"]) == {
+        "generated:tree_sink_3",
+        "generated:tree_root_0",
+    }
+    assert "duplicate_equivalent_topology_of:tree_root_0_skill" == archived.get(
+        "tree_sink_3_skill"
+    ).expected_dynamics["archive_reason"]
+    bucket = next(iter(summary["condition_buckets"].values()))
+    assert bucket["duplicate_equivalent_topology_groups"]
+
+
+def test_skill_bank_retrieval_dedupes_equivalent_topologies() -> None:
+    protocol = _protocol_spec(
+        "tree_sink_3",
+        [[(0, 1), (2, 3)], [(1, 3)]],
+        selected_primary=3,
+    )
+    equivalent = _protocol_spec(
+        "tree_root_0",
+        [[(1, 0), (3, 2)], [(2, 0)]],
+        selected_primary=0,
+    )
+    bank = SkillBank(
+        [
+            SkillCard(
+                skill_id="generic_tree",
+                objective="balanced",
+                organization_policy={
+                    "topology_name": "generated:generic_tree",
+                    "protocol_spec": protocol,
+                },
+                expected_tradeoff={"mean_rmse": 0.1},
+            ),
+            SkillCard(
+                skill_id="specific_tree",
+                objective="balanced",
+                trigger={
+                    "min_agents": 4,
+                    "max_agents": 4,
+                    "min_array_size": 128,
+                    "max_array_size": 128,
+                    "condition_key": "agents_4__arrays_128",
+                },
+                organization_policy={
+                    "topology_name": "generated:specific_tree",
+                    "protocol_spec": equivalent,
+                },
+                expected_tradeoff={"mean_rmse": 10.0},
+            ),
+        ]
+    )
+
+    matches = bank.retrieve(
+        PlannerRequest.from_names(n_agents=4, array_size=128, objective="balanced")
+    )
+
+    assert [skill.skill_id for skill in matches] == ["specific_tree"]
+
+
+def test_compact_skill_bank_dedupes_avoid_skills_separately() -> None:
+    protocol = _protocol_spec(
+        "bad_tree_a",
+        [[(0, 1), (2, 3)], [(1, 3)]],
+        selected_primary=3,
+    )
+    equivalent = _protocol_spec(
+        "bad_tree_b",
+        [[(1, 0), (3, 2)], [(2, 0)]],
+        selected_primary=0,
+    )
+    bank = SkillBank(
+        [
+            SkillCard(
+                skill_id="cf_avoid_bad_a",
+                objective="balanced",
+                organization_policy={
+                    "topology_name": "generated:bad_a",
+                    "protocol_spec": protocol,
+                },
+                expected_tradeoff={"mean_rmse": 5.0},
+            ),
+            SkillCard(
+                skill_id="cf_avoid_bad_b",
+                objective="balanced",
+                organization_policy={
+                    "topology_name": "generated:bad_b",
+                    "protocol_spec": equivalent,
+                },
+                expected_tradeoff={"mean_rmse": 6.0},
+            ),
+        ]
+    )
+
+    active, archived, summary = compact_skill_bank(bank, max_per_condition=3)
+
+    assert set(active.skills) == {"cf_avoid_bad_a"}
+    assert set(archived.skills) == {"cf_avoid_bad_b"}
+    assert summary["active_avoid_count"] == 1
+    assert summary["avoid_duplicate_equivalent_topology_groups"]
 
 
 def test_skill_bank_retrieves_avoid_skills_as_negative_constraints() -> None:

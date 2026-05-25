@@ -1,7 +1,9 @@
 from pathlib import Path
+import json
 
 import pytest
 
+from exp_graph.llm.base import LLMResponse, LLMUsage
 from exp_graph.mas.graph_generation import (
     GeneratedGraphPlan,
     GeneratedGraphStep,
@@ -98,7 +100,41 @@ def test_generated_graph_compiles_to_protocol_spec() -> None:
 
     assert spec.metadata["generated_graph"] is True
     assert spec.metadata["candidate_id"] == "g1"
+    assert spec.metadata["topology_equivalence_hash"]
+    assert spec.metadata["canonical_temporal_edges"]
     assert schedule[0].transmissions == [(0, 1), (2, 3)]
+
+
+def test_graph_validator_allows_source_fanout_and_temporal_feedback() -> None:
+    fanout = GeneratedGraphPlan(
+        n_agents=4,
+        selected_primary=3,
+        steps=[
+            GeneratedGraphStep(edges=[(0, 1), (0, 2), (0, 3), (1, 0)]),
+            GeneratedGraphStep(edges=[(1, 0), (2, 0)]),
+        ],
+    )
+    result = validate_graph_plan(
+        fanout,
+        GraphValidationOptions(n_agents=4, max_receiver_fan_in=2, max_messages=6),
+    )
+
+    assert result.valid is True
+
+
+def test_graph_validator_still_limits_receiver_fan_in() -> None:
+    graph = GeneratedGraphPlan(
+        n_agents=4,
+        selected_primary=3,
+        steps=[GeneratedGraphStep(edges=[(0, 3), (1, 3), (2, 3)])],
+    )
+    result = validate_graph_plan(
+        graph,
+        GraphValidationOptions(n_agents=4, max_receiver_fan_in=2),
+    )
+
+    assert result.valid is False
+    assert any("max_receiver_fan_in" in error for error in result.errors)
 
 
 def test_parse_graph_candidates_response_rejects_schema_echo() -> None:
@@ -240,3 +276,94 @@ def test_plan_free_graph_replays_skill_protocol_as_candidate(tmp_path: Path) -> 
     assert result.selected_candidate_id.startswith("skill_")
     assert result.plan.protocol_spec.name == "stored_tree"
     assert result.plan.protocol_spec.steps[0].transmissions == [(0, 1), (2, 3)]
+
+
+class _StaticGraphClient:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def complete(
+        self,
+        prompt: str,
+        model_name: str,
+        temperature: float | None = None,
+    ) -> LLMResponse:
+        return LLMResponse(
+            text=json.dumps(self.payload),
+            usage=LLMUsage(prompt_tokens=1, completion_tokens=1),
+        )
+
+
+def test_plan_free_graph_dedupes_equivalent_candidates_before_probe(
+    tmp_path: Path,
+) -> None:
+    client = _StaticGraphClient(
+        {
+            "candidates": [
+                {
+                    "candidate_id": "tree_a",
+                    "name": "tree_a",
+                    "n_agents": 4,
+                    "selected_primary": 3,
+                    "steps": [
+                        {"edges": [[0, 1], [2, 3]]},
+                        {"edges": [[1, 3]]},
+                    ],
+                },
+                {
+                    "candidate_id": "tree_b",
+                    "name": "tree_b",
+                    "n_agents": 4,
+                    "selected_primary": 0,
+                    "steps": [
+                        {"edges": [[1, 0], [3, 2]]},
+                        {"edges": [[2, 0]]},
+                    ],
+                },
+                {
+                    "candidate_id": "tree_audit",
+                    "name": "tree_audit",
+                    "n_agents": 4,
+                    "selected_primary": 3,
+                    "steps": [
+                        {"edges": [[0, 1], [2, 3]]},
+                        {"edges": [[1, 3], [1, 0]]},
+                    ],
+                },
+            ]
+        }
+    )
+
+    result = plan_free_graph(
+        request=PlannerRequest.from_names(
+            n_agents=4,
+            array_size=8,
+            planner_mode="graph_generate",
+            merge_mode="deterministic",
+            init_mode="deterministic",
+        ),
+        runtime=MASRuntimeConfig(
+            llm_provider="openai",
+            model_name="fake",
+            graph_search_mode="topk",
+            num_graph_candidates=3,
+            graph_validation_seeds=[1],
+        ),
+        skill_bank=SkillBank([]),
+        seed=1,
+        task_adapter=CountFrequencyTaskAdapter(),
+        output_dir=tmp_path,
+        llm_client=client,
+    )
+
+    records = json.loads((tmp_path / "generated_graph_candidates.json").read_text())
+    statuses = {record["candidate_id"]: record["status"] for record in records}
+
+    assert result.selected_candidate_id in {"tree_a", "tree_audit"}
+    assert statuses["tree_b"] == "duplicate_equivalent_topology"
+    assert statuses["tree_a"] != "duplicate_equivalent_topology"
+    assert statuses["tree_audit"] != "duplicate_equivalent_topology"
+    assert (tmp_path / "graph_candidate_eval" / "tree_a" / "seed_1.json").exists()
+    assert not (tmp_path / "graph_candidate_eval" / "tree_b").exists()
+    summary = json.loads((tmp_path / "graph_validation_summary.json").read_text())
+    assert summary["duplicate_equivalent_candidate_count"] == 1

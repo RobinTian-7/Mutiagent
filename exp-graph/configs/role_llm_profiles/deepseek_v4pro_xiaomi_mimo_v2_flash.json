@@ -1,0 +1,23 @@
+{
+  "emperor": {
+    "platform": "deepseek",
+    "model_name": "deepseek-v4-pro",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "base_url": "https://api.deepseek.com",
+    "thinking_enabled": true
+  },
+  "soldier": {
+    "platform": "xiaomi",
+    "model_name": "mimo-v2-flash",
+    "api_key_env": "XIAOMI_API_KEY",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "thinking_enabled": false
+  },
+  "minister": {
+    "platform": "deepseek",
+    "model_name": "deepseek-v4-pro",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "base_url": "https://api.deepseek.com",
+    "thinking_enabled": true
+  }
+}

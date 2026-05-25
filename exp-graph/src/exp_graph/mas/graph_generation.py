@@ -23,6 +23,10 @@ from exp_graph.mas.role_llm import (
 )
 from exp_graph.mas.schemas import MASPlan, MASRuntimeConfig, PlannerRequest, SkillCard
 from exp_graph.mas.skill_bank import SkillBank
+from exp_graph.mas.topology_equivalence import (
+    fingerprint_protocol_spec,
+    protocol_metadata_with_fingerprint,
+)
 from exp_graph.protocols import ProtocolGraphSpec, ProtocolStepSpec
 from exp_graph.runner import ProtocolExperimentResult, ProtocolRunner, ProtocolRunnerConfig
 from exp_graph.tasks import CountFrequencyTaskAdapter
@@ -102,6 +106,10 @@ class GraphCandidateRecord(BaseModel):
     probe_scores: list[dict[str, object]] = Field(default_factory=list)
     objective_score: float | None = None
     score_mode: str = "objective"
+    topology_equivalence_hash: str | None = None
+    exact_execution_hash: str | None = None
+    canonical_temporal_edges: list[tuple[int, int, int]] = Field(default_factory=list)
+    duplicate_of_candidate_id: str | None = None
 
 
 class FreeGraphPlanningResult(BaseModel):
@@ -119,6 +127,7 @@ class _CandidateState:
     graph: GeneratedGraphPlan
     record: GraphCandidateRecord
     spec: ProtocolGraphSpec | None = None
+    generation_index: int = 0
 
 
 def plan_free_graph(
@@ -149,9 +158,10 @@ def plan_free_graph(
             llm_client=llm_client,
         )
         candidates = _validate_and_compile_candidates(graphs, options)
+        representative_candidates = _dedupe_equivalent_candidates(candidates)
         valid_states = [
             state
-            for state in candidates
+            for state in representative_candidates
             if state.record.status in {"valid", "repaired"} and state.spec is not None
         ]
         if not valid_states:
@@ -332,7 +342,7 @@ def compile_generated_graph(
     validation = validate_graph_plan(graph, options)
     if not validation.valid:
         raise ValueError("; ".join(validation.errors))
-    return ProtocolGraphSpec(
+    spec = ProtocolGraphSpec(
         name=graph.name,
         n_agents=options.n_agents,
         steps=[
@@ -355,6 +365,14 @@ def compile_generated_graph(
             "fallback_topology": graph.fallback_topology,
         },
     )
+    return spec.model_copy(
+        update={
+            "metadata": {
+                **spec.metadata,
+                **protocol_metadata_with_fingerprint(spec),
+            }
+        }
+    )
 
 
 def build_free_graph_prompt(
@@ -374,15 +392,16 @@ def build_free_graph_prompt(
             "to answer the task and not to choose a named template."
         ),
         "mission": (
-            "Design temporal DAG topologies from scratch for this exact n_agents "
-            "and objective. Output concrete per-round directed edges that define "
-            "who sends their current belief artifact to whom."
+            "Design temporal communication topologies from scratch for this exact "
+            "n_agents and objective. Output concrete per-round directed edges that "
+            "define who sends their current belief artifact to whom."
         ),
         "task": (
             "Return a json object with a candidates array. Each candidate must be "
             "a complete temporal_dag communication protocol with explicit steps "
-            "and edges. Do not solve the task and do not merely name an existing "
-            "topology such as tree, mesh, or star."
+            "and edges. Here DAG means the time-expanded execution graph, so "
+            "agent-level feedback across steps is valid. Do not solve the task "
+            "and do not merely name an existing topology such as tree, mesh, or star."
         ),
         "request": request.model_dump(mode="json"),
         "graph_constraints": options.model_dump(mode="json"),
@@ -390,6 +409,8 @@ def build_free_graph_prompt(
         "edge_semantics": {
             "edge": "[src, dst] means dst receives src's current answer artifact after the previous step.",
             "step": "All edges inside one step are simultaneous; a receiver cannot use another receiver's same-step update until the next step.",
+            "fan_out": "One src may send the same current outbox to multiple dst receivers in the same step; each edge counts as one message but does not create an extra source update.",
+            "feedback": "Static agent-level cycles are allowed when they occur over time, such as step0 0->1 followed by step1 1->0.",
             "merge": (
                 "Receivers merge non-overlapping source coverage from incoming "
                 "artifacts. A good topology makes provenance easy to preserve and "
@@ -483,6 +504,7 @@ def build_free_graph_prompt(
             "Never create self-loops.",
             "Keep total messages and steps within graph_constraints.",
             "A step is simultaneous; temporal order is the order of steps.",
+            "Same-step bidirectional edges and multi-recipient fan-out are allowed when they help coverage.",
             "Prefer novel but executable DAGs with clear information flow, not just known topology names.",
             "Reject your own candidate mentally if any source agent lacks a temporal path to the selected_primary.",
         ],
@@ -549,7 +571,7 @@ def _skill_seeded_graph_candidates(
         if spec.n_agents != request.n_agents:
             continue
         graph = _graph_from_skill_protocol(skill, spec)
-        digest = _graph_digest(graph)
+        digest = fingerprint_protocol_spec(spec).topology_equivalence_hash
         if digest in seen:
             continue
         seen.add(digest)
@@ -648,7 +670,7 @@ def _validate_and_compile_candidates(
     options: GraphValidationOptions,
 ) -> list[_CandidateState]:
     states: list[_CandidateState] = []
-    for graph in graphs:
+    for generation_index, graph in enumerate(graphs):
         validation = validate_graph_plan(graph, options)
         repaired = graph
         repair_notes: list[str] = []
@@ -670,10 +692,19 @@ def _validate_and_compile_candidates(
             if spec
             else sum(len(step.edges) for step in repaired.steps)
         )
+        topology_equivalence_hash = None
+        exact_execution_hash = None
+        canonical_temporal_edges: list[tuple[int, int, int]] = []
+        if spec is not None:
+            fingerprint = fingerprint_protocol_spec(spec)
+            topology_equivalence_hash = fingerprint.topology_equivalence_hash
+            exact_execution_hash = fingerprint.exact_execution_hash
+            canonical_temporal_edges = fingerprint.canonical_temporal_edges
         states.append(
             _CandidateState(
                 graph=repaired,
                 spec=spec,
+                generation_index=generation_index,
                 record=GraphCandidateRecord(
                     candidate_id=repaired.candidate_id,
                     status=status,
@@ -685,10 +716,63 @@ def _validate_and_compile_candidates(
                     protocol_steps=protocol_steps,
                     protocol_messages=protocol_messages,
                     selected_primary=repaired.selected_primary,
+                    topology_equivalence_hash=topology_equivalence_hash,
+                    exact_execution_hash=exact_execution_hash,
+                    canonical_temporal_edges=canonical_temporal_edges,
                 ),
             )
         )
     return states
+
+
+def _dedupe_equivalent_candidates(
+    states: list[_CandidateState],
+) -> list[_CandidateState]:
+    """Skip duplicate equivalent candidates before expensive probe evaluation."""
+    grouped: dict[str, list[_CandidateState]] = {}
+    representatives: list[_CandidateState] = []
+    for state in states:
+        key = state.record.topology_equivalence_hash
+        if (
+            key is None
+            or state.spec is None
+            or state.record.status not in {"valid", "repaired"}
+        ):
+            representatives.append(state)
+            continue
+        grouped.setdefault(key, []).append(state)
+
+    for group in grouped.values():
+        if len(group) == 1:
+            representatives.append(group[0])
+            continue
+        representative = min(group, key=_candidate_dedup_sort_key)
+        representatives.append(representative)
+        for duplicate in group:
+            if duplicate is representative:
+                continue
+            duplicate.record.status = "duplicate_equivalent_topology"
+            duplicate.record.duplicate_of_candidate_id = representative.record.candidate_id
+            duplicate.record.validation_warnings = [
+                *duplicate.record.validation_warnings,
+                (
+                    "duplicate equivalent topology of "
+                    f"{representative.record.candidate_id}; skipped probe evaluation"
+                ),
+            ]
+
+    representatives.sort(key=lambda state: state.generation_index)
+    return representatives
+
+
+def _candidate_dedup_sort_key(state: _CandidateState) -> tuple[int, int, int, str, int]:
+    return (
+        0 if state.record.status == "valid" else 1,
+        state.record.protocol_messages,
+        state.record.protocol_steps,
+        state.record.candidate_id,
+        state.generation_index,
+    )
 
 
 def _evaluate_candidates(
@@ -982,6 +1066,12 @@ def _write_graph_artifacts(
             "rejected_candidate_count": sum(
                 1 for record in records if record.status == "rejected"
             ),
+            "duplicate_equivalent_candidate_count": sum(
+                1
+                for record in records
+                if record.status == "duplicate_equivalent_topology"
+            ),
+            "duplicate_equivalent_groups": _duplicate_equivalent_groups(records),
             "selected_candidate_id": selected.candidate_id if selected else None,
             "selected_candidate_score": selected.objective_score if selected else None,
             "candidate_score_mode": selected.score_mode if selected else None,
@@ -1020,6 +1110,8 @@ def _format_graph_candidates(
                 f"selected_primary: {record.selected_primary}",
                 f"objective_score: {record.objective_score}",
                 f"score_mode: {record.score_mode}",
+                f"topology_equivalence_hash: {record.topology_equivalence_hash}",
+                f"duplicate_of_candidate_id: {record.duplicate_of_candidate_id}",
                 "",
             ]
         )
@@ -1032,6 +1124,36 @@ def _format_graph_candidates(
             lines.extend(f"- {item}" for item in record.repair_notes)
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _duplicate_equivalent_groups(
+    records: list[GraphCandidateRecord],
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[GraphCandidateRecord]] = {}
+    for record in records:
+        if record.topology_equivalence_hash:
+            grouped.setdefault(record.topology_equivalence_hash, []).append(record)
+    groups = []
+    for topology_hash, items in sorted(grouped.items()):
+        duplicates = [
+            item
+            for item in items
+            if item.status == "duplicate_equivalent_topology"
+        ]
+        if not duplicates:
+            continue
+        kept = next(
+            (item.duplicate_of_candidate_id for item in duplicates if item.duplicate_of_candidate_id),
+            None,
+        )
+        groups.append(
+            {
+                "topology_equivalence_hash": topology_hash,
+                "kept_candidate_id": kept,
+                "duplicate_candidate_ids": [item.candidate_id for item in duplicates],
+            }
+        )
+    return groups
 
 
 def _top_k_records(

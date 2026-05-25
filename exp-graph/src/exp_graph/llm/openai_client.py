@@ -13,6 +13,7 @@ _DEFAULT_BASE_URLS = {
     "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "alibaba": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "xiaomi": "https://api.xiaomimimo.com/v1",
 }
 
 _DEFAULT_API_KEY_ENVS = {
@@ -21,6 +22,7 @@ _DEFAULT_API_KEY_ENVS = {
     "dashscope": "DASHSCOPE_API_KEY",
     "qwen": "DASHSCOPE_API_KEY",
     "alibaba": "DASHSCOPE_API_KEY",
+    "xiaomi": "XIAOMI_API_KEY",
 }
 
 
@@ -70,6 +72,9 @@ def _explicit_thinking_request_options(
         "qwen"
     ):
         return {"extra_body": {"enable_thinking": thinking_enabled}}
+    if provider == "xiaomi" or model.startswith("mimo-v2"):
+        thinking_type = "enabled" if thinking_enabled else "disabled"
+        return {"extra_body": {"thinking": {"type": thinking_type}}}
     return {}
 
 

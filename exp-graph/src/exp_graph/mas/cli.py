@@ -50,6 +50,7 @@ LLM_PROVIDER_CHOICES = [
     "dashscope",
     "qwen",
     "alibaba",
+    "xiaomi",
 ]
 
 

@@ -7,6 +7,11 @@ import shutil
 from pathlib import Path
 
 from exp_graph.mas.schemas import PlannerRequest, SkillCard, SkillPatch
+from exp_graph.mas.topology_equivalence import (
+    fingerprint_protocol_spec,
+    topology_hash_from_skill,
+)
+from exp_graph.protocols import ProtocolGraphSpec
 
 
 class SkillBank:
@@ -62,7 +67,7 @@ class SkillBank:
                 continue
             matches.append(skill)
         matches.sort(key=lambda skill: self._retrieval_sort_key(skill, request))
-        return matches
+        return _dedupe_retrieved_skills(matches)
 
     def retrieve_avoid(self, request: PlannerRequest) -> list[SkillCard]:
         """Return matching avoid/counterexample skills as risk constraints."""
@@ -82,7 +87,7 @@ class SkillBank:
                 continue
             matches.append(skill)
         matches.sort(key=lambda skill: self._retrieval_sort_key(skill, request))
-        return matches
+        return _dedupe_retrieved_skills(matches)
 
     def apply_patch(self, patch: SkillPatch) -> str:
         """Apply one AutoSkill-style lifecycle patch."""
@@ -226,16 +231,23 @@ def compact_skill_bank(
         bucket = _skill_condition_bucket(skill)
         grouped.setdefault(bucket, []).append(skill)
 
+    active_avoid, archived_avoid_duplicates, avoid_duplicate_groups = (
+        _dedupe_equivalent_skills(active_avoid)
+    )
+    archived.extend(archived_avoid_duplicates)
+
     active: list[SkillCard] = []
     bucket_summaries: dict[str, dict[str, object]] = {}
+    duplicate_groups_by_bucket: dict[str, list[dict[str, object]]] = {}
     for bucket, skills in sorted(grouped.items()):
+        unique_skills, duplicate_archived, duplicate_groups = _dedupe_equivalent_skills(
+            skills
+        )
+        archived.extend(duplicate_archived)
+        duplicate_groups_by_bucket[bucket] = duplicate_groups
         ranked = sorted(
-            skills,
-            key=lambda skill: (
-                _skill_mean_rmse(skill),
-                -_skill_evidence_count(skill),
-                skill.skill_id,
-            ),
+            unique_skills,
+            key=_skill_compaction_sort_key,
         )
         kept = ranked[:limit]
         dropped = ranked[limit:]
@@ -247,6 +259,7 @@ def compact_skill_bank(
         bucket_summaries[bucket] = {
             "kept": [skill.skill_id for skill in kept],
             "archived": [skill.skill_id for skill in dropped],
+            "duplicate_equivalent_topology_groups": duplicate_groups,
         }
 
     summary = {
@@ -255,6 +268,8 @@ def compact_skill_bank(
         "active_avoid_count": len(active_avoid),
         "archived_count": len(archived),
         "condition_buckets": bucket_summaries,
+        "avoid_duplicate_equivalent_topology_groups": avoid_duplicate_groups,
+        "duplicate_equivalent_topology_groups": duplicate_groups_by_bucket,
     }
     return SkillBank([*active, *active_avoid]), SkillBank(archived), summary
 
@@ -290,6 +305,172 @@ def compact_skill_dir(
         encoding="utf-8",
     )
     return summary
+
+
+def _dedupe_retrieved_skills(skills: list[SkillCard]) -> list[SkillCard]:
+    result: list[SkillCard] = []
+    seen: set[str] = set()
+    for skill in skills:
+        key = _skill_equivalence_key(skill)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(skill)
+    return result
+
+
+def _dedupe_equivalent_skills(
+    skills: list[SkillCard],
+) -> tuple[list[SkillCard], list[SkillCard], list[dict[str, object]]]:
+    grouped: dict[str, list[SkillCard]] = {}
+    for skill in skills:
+        grouped.setdefault(_skill_equivalence_key(skill), []).append(skill)
+
+    kept: list[SkillCard] = []
+    archived: list[SkillCard] = []
+    duplicate_groups: list[dict[str, object]] = []
+    for key, group in sorted(grouped.items()):
+        if len(group) == 1:
+            kept.append(_annotate_skill_topology_hash(group[0]))
+            continue
+        representative = min(group, key=_skill_compaction_sort_key)
+        merged = _merge_equivalent_topology_skills(representative, group)
+        kept.append(merged)
+        duplicates = [skill for skill in group if skill.skill_id != representative.skill_id]
+        archived.extend(
+            _archive_skill(
+                skill,
+                f"duplicate_equivalent_topology_of:{representative.skill_id}",
+            )
+            for skill in duplicates
+        )
+        duplicate_groups.append(
+            {
+                "topology_equivalence_hash": key,
+                "kept": representative.skill_id,
+                "merged": [skill.skill_id for skill in duplicates],
+            }
+        )
+    return kept, archived, duplicate_groups
+
+
+def _merge_equivalent_topology_skills(
+    representative: SkillCard,
+    group: list[SkillCard],
+) -> SkillCard:
+    aliases = _dedupe(
+        [
+            str(alias)
+            for skill in group
+            for alias in _skill_topology_aliases(skill)
+            if alias
+        ]
+    )
+    merged_ids = _dedupe([skill.skill_id for skill in group])
+    policy = dict(representative.organization_policy)
+    topology_hash = topology_hash_from_skill(representative)
+    if topology_hash:
+        policy["topology_equivalence_hash"] = topology_hash
+    canonical = _canonical_edges_from_skill(representative)
+    if canonical:
+        policy["canonical_temporal_edges"] = canonical
+    policy["topology_aliases"] = aliases
+    policy["merged_skill_ids"] = merged_ids
+    policy["duplicate_topology_count"] = max(0, len(group) - 1)
+
+    expected_dynamics = dict(representative.expected_dynamics)
+    expected_dynamics["merged_skill_ids"] = merged_ids
+    expected_dynamics["topology_aliases"] = aliases
+    if topology_hash:
+        expected_dynamics["topology_equivalence_hash"] = topology_hash
+
+    return representative.model_copy(
+        update={
+            "organization_policy": policy,
+            "expected_dynamics": expected_dynamics,
+            "evidence": _dedupe_dicts(
+                [item for skill in group for item in skill.evidence]
+            ),
+            "evidence_refs": _dedupe(
+                [ref for skill in group for ref in skill.evidence_refs]
+            ),
+            "risk_notes": _dedupe_dicts(
+                [item for skill in group for item in skill.risk_notes]
+            ),
+            "failure_modes": _dedupe_dicts(
+                [item for skill in group for item in skill.failure_modes]
+            ),
+            "counterexamples": _dedupe_dicts(
+                [item for skill in group for item in skill.counterexamples]
+            ),
+            "hypotheses": _dedupe_dicts(
+                [item for skill in group for item in skill.hypotheses]
+            ),
+            "revision_history": _dedupe_dicts(
+                [item for skill in group for item in skill.revision_history]
+            ),
+        }
+    )
+
+
+def _annotate_skill_topology_hash(skill: SkillCard) -> SkillCard:
+    topology_hash = topology_hash_from_skill(skill)
+    if not topology_hash:
+        return skill
+    policy = dict(skill.organization_policy)
+    policy.setdefault("topology_equivalence_hash", topology_hash)
+    canonical = _canonical_edges_from_skill(skill)
+    if canonical:
+        policy.setdefault("canonical_temporal_edges", canonical)
+    return skill.model_copy(update={"organization_policy": policy})
+
+
+def _skill_equivalence_key(skill: SkillCard) -> str:
+    topology_hash = topology_hash_from_skill(skill)
+    if topology_hash:
+        return f"topology:{topology_hash}"
+    return f"skill:{skill.skill_id}"
+
+
+def _skill_compaction_sort_key(skill: SkillCard) -> tuple[float, int, str]:
+    return (
+        _skill_mean_rmse(skill),
+        -_skill_evidence_count(skill),
+        skill.skill_id,
+    )
+
+
+def _skill_topology_aliases(skill: SkillCard) -> list[str]:
+    policy = skill.organization_policy
+    aliases = []
+    if skill.topology_name:
+        aliases.append(skill.topology_name)
+    existing = policy.get("topology_aliases")
+    if isinstance(existing, list):
+        aliases.extend(str(item) for item in existing)
+    return aliases
+
+
+def _canonical_edges_from_skill(skill: SkillCard) -> list[list[int]]:
+    policy = skill.organization_policy
+    existing = policy.get("canonical_temporal_edges")
+    if isinstance(existing, list):
+        return [
+            [int(edge[0]), int(edge[1]), int(edge[2])]
+            for edge in existing
+            if isinstance(edge, (list, tuple)) and len(edge) == 3
+        ]
+    spec_data = policy.get("protocol_spec")
+    if not isinstance(spec_data, dict):
+        return []
+    try:
+        spec = ProtocolGraphSpec.model_validate(spec_data)
+    except Exception:
+        return []
+    return [
+        list(edge)
+        for edge in fingerprint_protocol_spec(spec).canonical_temporal_edges
+    ]
 
 
 def _condition_specificity(skill: SkillCard, request: PlannerRequest) -> int:

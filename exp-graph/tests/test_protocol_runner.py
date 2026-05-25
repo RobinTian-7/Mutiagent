@@ -114,6 +114,76 @@ def test_protocol_runner_generated_graph_uses_selected_primary_answer_holder() -
     assert result.final_result.vote.top_ratio == 1.0
 
 
+def test_protocol_runner_source_fanout_delivers_same_outbox_without_model_calls() -> None:
+    adapter, global_task = _global_task()
+    graph = GeneratedGraphPlan(
+        candidate_id="fanout",
+        name="fanout",
+        n_agents=4,
+        selected_primary=2,
+        steps=[GeneratedGraphStep(edges=[(0, 1), (0, 2)])],
+    )
+    spec = compile_generated_graph(graph, GraphValidationOptions(n_agents=4))
+
+    result = ProtocolRunner(
+        config=ProtocolRunnerConfig(
+            topology_name="generated:fanout",
+            n_agents=4,
+            protocol_spec=spec,
+            merge_mode="deterministic",
+            init_mode="deterministic",
+        ),
+        task_adapter=adapter,
+        global_task=global_task,
+    ).run()
+
+    assert result.total_messages == 2
+    assert result.total_model_calls == 0
+    assert result.step_logs[0].active_senders == [0]
+    assert result.step_logs[0].sent_messages == 2
+    assert result.final_agent_states[1].belief_state.structured_state["known_sources"] == [
+        0,
+        1,
+    ]
+    assert result.final_agent_states[2].belief_state.structured_state["known_sources"] == [
+        0,
+        2,
+    ]
+
+
+def test_protocol_runner_same_step_edges_use_previous_outboxes() -> None:
+    adapter, global_task = _global_task()
+    graph = GeneratedGraphPlan(
+        candidate_id="same_step_chain",
+        name="same_step_chain",
+        n_agents=4,
+        selected_primary=2,
+        steps=[GeneratedGraphStep(edges=[(0, 1), (1, 2)])],
+    )
+    spec = compile_generated_graph(graph, GraphValidationOptions(n_agents=4))
+
+    result = ProtocolRunner(
+        config=ProtocolRunnerConfig(
+            topology_name="generated:same_step_chain",
+            n_agents=4,
+            protocol_spec=spec,
+            merge_mode="deterministic",
+            init_mode="deterministic",
+        ),
+        task_adapter=adapter,
+        global_task=global_task,
+    ).run()
+
+    assert result.final_agent_states[1].belief_state.structured_state["known_sources"] == [
+        0,
+        1,
+    ]
+    assert result.final_agent_states[2].belief_state.structured_state["known_sources"] == [
+        1,
+        2,
+    ]
+
+
 def test_protocol_runner_one_peer_dag_vote_uses_all_agents_as_answer_holders() -> None:
     adapter, global_task = _global_task()
     result = ProtocolRunner(

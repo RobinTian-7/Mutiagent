@@ -30,7 +30,7 @@ def create_llm_client(
             platform=provider,
             thinking_enabled=thinking_enabled,
         )
-    if provider in {"deepseek", "bailian", "dashscope", "qwen", "alibaba"}:
+    if provider in {"deepseek", "bailian", "dashscope", "qwen", "alibaba", "xiaomi"}:
         return OpenAIChatClient(
             base_url=base_url,
             api_key_env=api_key_env,
@@ -42,5 +42,5 @@ def create_llm_client(
             return OpenAIChatClient(thinking_enabled=thinking_enabled)
         return FakeLLMClient()
     raise ValueError(
-        "provider must be one of: auto, fake, openai, deepseek, bailian, dashscope, qwen, alibaba"
+        "provider must be one of: auto, fake, openai, deepseek, bailian, dashscope, qwen, alibaba, xiaomi"
     )
