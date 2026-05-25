@@ -400,8 +400,8 @@ def build_free_graph_prompt(
             "Return a json object with a candidates array. Each candidate must be "
             "a complete temporal_dag communication protocol with explicit steps "
             "and edges. Here DAG means the time-expanded execution graph, so "
-            "agent-level feedback across steps is valid. Do not solve the task "
-            "and do not merely name an existing topology such as tree, mesh, or star."
+            "agent-level feedback across steps is valid. Do not solve the task, "
+            "and do not merely name or copy an existing topology template."
         ),
         "request": request.model_dump(mode="json"),
         "graph_constraints": options.model_dump(mode="json"),
@@ -440,9 +440,11 @@ def build_free_graph_prompt(
                 "clarity."
             ),
             "free_design_requirement": (
-                "Invent the edge schedule directly for this n_agents. You may use "
-                "tree-like, peer-exchange, star, or hybrid motifs as components, "
-                "but the output must be the actual DAG edges, not a template label."
+                "Invent the edge schedule directly for this n_agents. Use "
+                "structural attributes such as staged aggregation, bounded "
+                "receiver fan-in, explicit sink placement, audit/repair edges, "
+                "provenance flow, and temporal reachability. The output must be "
+                "the actual DAG edges, not a template label."
             ),
         },
         "candidate_diversity_requirements": [
@@ -457,11 +459,11 @@ def build_free_graph_prompt(
             "Avoid final states where most agents still hold only local or pairwise partial counts.",
         ],
         "operator_hints": [
-            "sparse peer exchange",
-            "pairwise local reduce",
-            "tree reduce",
-            "star sink",
-            "audit sink with extra edge",
+            "bounded fan-in aggregation",
+            "staged local merge",
+            "explicit sink placement",
+            "audit edge for provenance check",
+            "coverage repair relay",
             "budget-aware partial aggregation",
         ],
         "skill_evidence": [_skill_context(skill) for skill in skills[:6]],
@@ -469,11 +471,13 @@ def build_free_graph_prompt(
             _skill_context(skill) for skill in (avoid_skills or [])[:6]
         ],
         "skill_usage_rules": [
-            "Use structure_features and operation_recommendations from skills as concrete design operations, not as topology names to copy blindly.",
+            "Use design_insights, structure_features, and operation_recommendations from skills as concrete design operations, not as topology names to copy blindly.",
+            "Prioritize design_insights.operation_recommendations when deciding which edges, fan-in limits, sink choices, audit/provenance paths, or condition buckets to preserve, mutate, avoid, or validate.",
             "If a skill includes organization_policy.protocol_spec, treat it as an executable reference edge schedule; preserve or deliberately improve its coverage, sink, and fan-in properties.",
             "Respect condition buckets in skill triggers; do not generalize a skill outside its n_agents or array_size bucket without evidence.",
             "When a skill says preserve a selected_primary sink, emit that sink explicitly in selected_primary and maintain temporal reachability to it.",
             "Treat avoid_or_counterexample_skills as negative constraints; do not reproduce their edge schedules or failure patterns for the same condition bucket.",
+            "In each candidate rationale, name the design insight or operation recommendation being preserved, mutated, avoided, or validated.",
         ],
         "required_json_shape": {
             "candidates": [
@@ -486,13 +490,13 @@ def build_free_graph_prompt(
                     "steps": [
                         {
                             "description": "what this round does",
-                            "operator_hint": "tree_reduce",
+                            "operator_hint": "bounded_fan_in_aggregation",
                             "edges": [[0, 1], [2, 3]],
                         }
                     ],
                     "rationale": "short evidence-grounded explanation",
                     "expected_tradeoff": {"accuracy": "medium", "cost": "low"},
-                    "fallback_topology": "tree",
+                    "fallback_topology": "explicit_temporal_dag",
                 }
             ]
         },
@@ -505,7 +509,7 @@ def build_free_graph_prompt(
             "Keep total messages and steps within graph_constraints.",
             "A step is simultaneous; temporal order is the order of steps.",
             "Same-step bidirectional edges and multi-recipient fan-out are allowed when they help coverage.",
-            "Prefer novel but executable DAGs with clear information flow, not just known topology names.",
+            "Prefer novel but executable DAGs with clear information flow, not just topology names.",
             "Reject your own candidate mentally if any source agent lacks a temporal path to the selected_primary.",
         ],
     }
@@ -1203,6 +1207,7 @@ def _skill_context(skill: SkillCard) -> dict[str, object]:
         "organization_policy": skill.organization_policy,
         "expected_tradeoff": skill.expected_tradeoff,
         "expected_dynamics": skill.expected_dynamics,
+        "design_insights": skill.design_insights[-6:],
         "risk_notes": skill.risk_notes[-4:],
         "fallback": skill.fallback,
     }

@@ -185,6 +185,7 @@ class SkillCard(BaseModel):
     organization_policy: dict[str, object] = Field(default_factory=dict)
     expected_tradeoff: dict[str, object] = Field(default_factory=dict)
     expected_dynamics: dict[str, object] = Field(default_factory=dict)
+    design_insights: list[dict[str, object]] = Field(default_factory=list)
     risk_notes: list[dict[str, object]] = Field(default_factory=list)
     failure_modes: list[dict[str, object]] = Field(default_factory=list)
     evidence: list[dict[str, object]] = Field(default_factory=list)

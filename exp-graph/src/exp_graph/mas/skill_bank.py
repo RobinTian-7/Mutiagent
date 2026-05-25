@@ -574,6 +574,7 @@ def merge_skill(skill: SkillCard, patch: SkillPatch) -> SkillCard:
     candidate = patch.candidate_skill
     evidence = [*skill.evidence, *patch.evidence]
     evidence_refs = _dedupe([*skill.evidence_refs, *patch.evidence_refs])
+    design_insights = list(skill.design_insights)
     counterexamples = list(skill.counterexamples)
     risk_notes = list(skill.risk_notes)
     failure_modes = list(skill.failure_modes)
@@ -587,6 +588,7 @@ def merge_skill(skill: SkillCard, patch: SkillPatch) -> SkillCard:
         failure_modes.extend(candidate.failure_modes)
         hypotheses.extend(candidate.hypotheses)
         validation_plan.extend(candidate.validation_plan)
+        design_insights.extend(candidate.design_insights)
     if patch.action == "merge" and patch.lesson:
         evidence.append(
             {
@@ -607,10 +609,12 @@ def merge_skill(skill: SkillCard, patch: SkillPatch) -> SkillCard:
     _extend_dict_items(failure_modes, update_data.get("failure_modes"))
     _extend_dict_items(hypotheses, update_data.get("hypotheses"))
     _extend_dict_items(validation_plan, update_data.get("validation_plan"))
+    _extend_dict_items(design_insights, update_data.get("design_insights"))
     update = {
         "version": bump_patch_version(skill.version),
         "evidence": evidence,
         "evidence_refs": evidence_refs,
+        "design_insights": _dedupe_design_insights(design_insights),
         "counterexamples": counterexamples,
         "risk_notes": risk_notes,
         "failure_modes": failure_modes,
@@ -769,6 +773,28 @@ def _dedupe_dicts(values: list[dict[str, object]]) -> list[dict[str, object]]:
     return result
 
 
+def _dedupe_design_insights(
+    values: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    seen_ids: set[str] = set()
+    seen_payloads: set[str] = set()
+    result: list[dict[str, object]] = []
+    for value in values:
+        insight_id = value.get("insight_id")
+        if insight_id:
+            key = str(insight_id)
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+        else:
+            key = json.dumps(value, sort_keys=True, default=str)
+            if key in seen_payloads:
+                continue
+            seen_payloads.add(key)
+        result.append(value)
+    return result
+
+
 def render_skill_markdown(skill: SkillCard) -> str:
     """Render one skill to an Obsidian-friendly Markdown note."""
     lines = [
@@ -796,6 +822,12 @@ def render_skill_markdown(skill: SkillCard) -> str:
         "",
         "```json",
         json.dumps(skill.expected_dynamics, indent=2, sort_keys=True),
+        "```",
+        "",
+        "## Design Insights",
+        "",
+        "```json",
+        json.dumps(skill.design_insights, indent=2, sort_keys=True),
         "```",
         "",
         "## Evidence Refs",

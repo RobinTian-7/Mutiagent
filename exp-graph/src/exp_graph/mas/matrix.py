@@ -1129,6 +1129,7 @@ def _build_batch_insight_prompt(shard: dict[str, Any]) -> str:
                 "Identify coverage, sink, fan-in, provenance, and cost/accuracy mechanisms.",
                 "State whether each claim is observed, inferred, or a hypothesis.",
                 "Recommend planner changes that can alter future generated DAG edges.",
+                "Write each accepted structure-design lesson so it can be stored as a planner skill design_insight.",
                 "Emit operation_recommendations with action_type, target, instruction, conditions, and expected_effect.",
                 "Use condition_buckets when the lesson is specific to n_agents, array_size, objective, or merge/init mode.",
                 "Flag repeatedly bad structures as avoid-skill candidates.",

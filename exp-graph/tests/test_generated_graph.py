@@ -216,6 +216,68 @@ def test_free_graph_prompt_includes_avoid_skills_as_constraints() -> None:
     assert "negative constraints" in prompt
 
 
+def test_free_graph_prompt_uses_structural_hints_not_named_templates() -> None:
+    prompt = build_free_graph_prompt(
+        request=PlannerRequest.from_names(
+            n_agents=4,
+            array_size=128,
+            planner_mode="graph_generate",
+        ),
+        skills=[],
+        avoid_skills=[],
+        options=GraphValidationOptions(n_agents=4),
+        num_candidates=1,
+    )
+
+    assert "tree-like" not in prompt
+    assert "tree reduce" not in prompt
+    assert "star sink" not in prompt
+    assert '"operator_hint": "tree_reduce"' not in prompt
+    assert '"fallback_topology": "tree"' not in prompt
+    assert "bounded fan-in aggregation" in prompt
+    assert "explicit sink placement" in prompt
+    assert "audit edge for provenance check" in prompt
+    assert "temporal reachability" in prompt
+
+
+def test_free_graph_prompt_includes_skill_design_insights() -> None:
+    prompt = build_free_graph_prompt(
+        request=PlannerRequest.from_names(
+            n_agents=4,
+            array_size=128,
+            planner_mode="graph_generate",
+        ),
+        skills=[
+            SkillCard(
+                skill_id="cf_generated_design",
+                objective="balanced",
+                organization_policy={"topology_name": "generated:design"},
+                design_insights=[
+                    {
+                        "insight_id": "insight_keep_sink",
+                        "summary": "Preserve the validated sink when fan-in stays bounded.",
+                        "operation_recommendations": [
+                            {
+                                "action_type": "preserve",
+                                "target": "sink_selection",
+                                "instruction": "Keep selected_primary=3.",
+                            }
+                        ],
+                    }
+                ],
+            )
+        ],
+        avoid_skills=[],
+        options=GraphValidationOptions(n_agents=4),
+        num_candidates=1,
+    )
+
+    assert "design_insights" in prompt
+    assert "insight_keep_sink" in prompt
+    assert "Prioritize design_insights.operation_recommendations" in prompt
+    assert "Keep selected_primary=3" in prompt
+
+
 def test_plan_free_graph_replays_skill_protocol_as_candidate(tmp_path: Path) -> None:
     protocol_spec = {
         "name": "stored_tree",

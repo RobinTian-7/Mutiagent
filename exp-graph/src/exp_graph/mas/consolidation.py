@@ -316,8 +316,11 @@ def _prepare_new_skill(
     refs = _dedupe([*skill.evidence_refs, *patch.evidence_refs])
     recomputed_tradeoff = _recompute_tradeoff(refs, records_by_id)
     recomputed_dynamics = _recompute_dynamics(refs, records_by_id)
+    design_insights = list(skill.design_insights)
+    _extend_unique_dicts(design_insights, patch.update.get("design_insights"))
     update = {
         "evidence_refs": refs,
+        "design_insights": _dedupe_design_insights(design_insights),
         "expected_tradeoff": {
             **skill.expected_tradeoff,
             **recomputed_tradeoff,
@@ -356,6 +359,7 @@ def _merge_patch_group(
     risk_notes = list(skill.risk_notes)
     failure_modes = list(skill.failure_modes)
     hypotheses = list(skill.hypotheses)
+    design_insights = list(skill.design_insights)
     fallback = dict(skill.fallback)
     organization_policy = dict(skill.organization_policy)
     validation_plan = list(skill.validation_plan)
@@ -378,6 +382,7 @@ def _merge_patch_group(
         _extend_unique_dicts(failure_modes, update.get("failure_modes"))
         _extend_unique_dicts(hypotheses, update.get("hypotheses"))
         _extend_unique_dicts(validation_plan, update.get("validation_plan"))
+        _extend_unique_dicts(design_insights, update.get("design_insights"))
         if "fallback" in update and isinstance(update["fallback"], dict):
             fallback.update(update["fallback"])
         if "trigger" in update and isinstance(update["trigger"], dict):
@@ -407,6 +412,7 @@ def _merge_patch_group(
             _extend_unique_dicts(risk_notes, candidate.risk_notes)
             _extend_unique_dicts(failure_modes, candidate.failure_modes)
             _extend_unique_dicts(hypotheses, candidate.hypotheses)
+            _extend_unique_dicts(design_insights, candidate.design_insights)
             fallback.update(candidate.fallback)
             organization_policy = _merge_organization_policy(
                 organization_policy,
@@ -451,6 +457,7 @@ def _merge_patch_group(
             "trigger",
             "expected_tradeoff",
             "expected_dynamics",
+            "design_insights",
             "risk_notes",
             "fallback",
             "confidence",
@@ -467,6 +474,7 @@ def _merge_patch_group(
             "trigger": trigger,
             "expected_tradeoff": tradeoff or skill.expected_tradeoff,
             "expected_dynamics": dynamics or skill.expected_dynamics,
+            "design_insights": _dedupe_design_insights(design_insights),
             "counterexamples": _dedupe_dicts(counterexamples),
             "risk_notes": _dedupe_dicts(risk_notes),
             "failure_modes": _dedupe_dicts(failure_modes),
@@ -637,7 +645,15 @@ def _deprecate_legacy_evidence(evidence: list[dict[str, object]]) -> list[dict[s
 def _requires_minor_bump(patches: list[SkillPatch]) -> bool:
     for patch in patches:
         update = patch.update or {}
-        if any(key in update for key in ["trigger", "fallback", "expected_dynamics"]):
+        if any(
+            key in update
+            for key in [
+                "trigger",
+                "fallback",
+                "expected_dynamics",
+                "design_insights",
+            ]
+        ):
             return True
     return False
 
@@ -747,5 +763,27 @@ def _dedupe_dicts(values: list[dict[str, object]]) -> list[dict[str, object]]:
         if key in seen:
             continue
         seen.add(key)
+        result.append(value)
+    return result
+
+
+def _dedupe_design_insights(
+    values: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    seen_ids: set[str] = set()
+    seen_payloads: set[str] = set()
+    result: list[dict[str, object]] = []
+    for value in values:
+        insight_id = value.get("insight_id")
+        if insight_id:
+            key = str(insight_id)
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+        else:
+            key = json.dumps(value, sort_keys=True, default=str)
+            if key in seen_payloads:
+                continue
+            seen_payloads.add(key)
         result.append(value)
     return result

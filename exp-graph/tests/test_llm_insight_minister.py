@@ -67,6 +67,11 @@ def test_fake_llm_insight_minister_outputs_verified_patch_candidates():
     assert all(insight.condition_buckets for insight in report.key_insights)
     assert report.skill_update_recommendations
     assert report.skill_update_recommendations[0].action == "merge"
-    assert "operation_recommendations" in report.skill_update_recommendations[0].update[
-        "organization_policy"
-    ]
+    update = report.skill_update_recommendations[0].update
+    assert "operation_recommendations" in update["organization_policy"]
+    assert update["design_insights"]
+    insight = update["design_insights"][0]
+    assert insight["insight_id"] == report.key_insights[0].insight_id
+    assert insight["summary"] == report.key_insights[0].summary
+    assert insight["evidence_refs"] == report.key_insights[0].evidence_refs
+    assert insight["operation_recommendations"]

@@ -98,6 +98,67 @@ def test_consolidator_recomputes_exact_match_rate_from_run_evidence():
     assert updated.get("cf_budget_tree").expected_tradeoff["exact_match_rate"] == 1.0
 
 
+def test_consolidator_appends_design_insights_by_insight_id():
+    existing = SkillCard(
+        skill_id="cf_seed",
+        objective="balanced",
+        organization_policy={"topology_name": "generated:seed"},
+        design_insights=[
+            {
+                "insight_id": "keep_existing",
+                "summary": "Original lesson should remain.",
+            }
+        ],
+    )
+    bank = SkillBank([existing])
+    duplicate = {
+        "insight_id": "keep_existing",
+        "summary": "Later duplicate should not overwrite the original.",
+    }
+    new_insight = {
+        "insight_id": "bounded_sink",
+        "summary": "Bounded fan-in into the selected sink improved reliability.",
+        "operation_recommendations": [
+            {
+                "action_type": "preserve",
+                "target": "fan_in_limit",
+                "instruction": "Keep receiver fan-in at or below two.",
+            }
+        ],
+    }
+
+    updated, result = consolidate_skill_updates(
+        bank=bank,
+        patches=[
+            SkillPatch(
+                patch_id="merge_duplicate_design_insight",
+                action="merge",
+                target_skill_id="cf_seed",
+                update={"design_insights": [duplicate]},
+                lesson="duplicate design insight",
+            ),
+            SkillPatch(
+                patch_id="merge_new_design_insight",
+                action="merge",
+                target_skill_id="cf_seed",
+                update={"design_insights": [new_insight]},
+                lesson="new design insight",
+            ),
+        ],
+        evidence_records=[],
+        batch_id="design_insight_batch",
+    )
+
+    skill = updated.get("cf_seed")
+    assert result.counts["merged"] == 1
+    assert [item["insight_id"] for item in skill.design_insights] == [
+        "keep_existing",
+        "bounded_sink",
+    ]
+    assert skill.design_insights[0]["summary"] == "Original lesson should remain."
+    assert skill.design_insights[1]["operation_recommendations"]
+
+
 def test_consolidator_discards_patch_with_mismatched_evidence_topology():
     bank = SkillBank.load_dir(SKILL_DIR)
     before = bank.get("cf_budget_tree").model_dump()

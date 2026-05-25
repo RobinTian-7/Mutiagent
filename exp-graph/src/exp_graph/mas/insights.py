@@ -140,6 +140,7 @@ def build_insight_prompt(*, evidence_pack: dict[str, Any]) -> str:
             "Separate observed evidence from hypotheses and label confidence accordingly.",
             "Identify whether failures come from missing coverage, excessive fan-in, weak sink choice, duplicate-count risk, poor provenance flow, or cost/accuracy mismatch.",
             "Translate each useful observation into an action the topology planner can use when generating future DAG edges.",
+            "Write each accepted structure-design lesson so it can be stored as a planner skill design_insight, not only as a metric summary.",
             "For every useful insight, emit operation_recommendations as concrete operations: preserve/mutate/avoid/validate, a target such as edge_schedule, sink_selection, fan_in_limit, reducer_scope, skill_trigger, and a directly executable instruction.",
             "Emit condition_buckets when the lesson only appears for specific n_agents or array_size ranges; avoid overgeneralizing a skill outside its bucket.",
             "Recommend avoid-skills for repeatedly bad structures and positive skills only for structures with evidence-backed benefit.",
@@ -437,7 +438,32 @@ def _insight_update(insight: MASInsight) -> dict[str, object]:
         }
     else:
         update = {}
-    return _attach_operation_update(update, insight)
+    update = _attach_operation_update(update, insight)
+    return _attach_design_insight_update(update, insight)
+
+
+def _attach_design_insight_update(
+    update: dict[str, object],
+    insight: MASInsight,
+) -> dict[str, object]:
+    merged = dict(update)
+    merged["design_insights"] = [
+        {
+            "insight_id": insight.insight_id,
+            "insight_type": insight.insight_type,
+            "claim_status": insight.claim_status,
+            "title": insight.title,
+            "summary": insight.summary,
+            "evidence_refs": insight.evidence_refs,
+            "metric_snapshot": insight.metric_snapshot,
+            "recommended_actions": insight.recommended_actions,
+            "operation_recommendations": insight.operation_recommendations,
+            "condition_buckets": insight.condition_buckets,
+            "confidence": insight.confidence,
+            "falsification_test": insight.falsification_test,
+        }
+    ]
+    return merged
 
 
 def _attach_operation_update(

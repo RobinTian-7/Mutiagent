@@ -146,7 +146,7 @@ def build_emperor_prompt(
         "planning_responsibilities": [
             "Select topology or operators based on evidence, objective, n_agents, and budget.",
             "Treat avoid skills as concrete failure modes to route around.",
-            "Use skill structure_features and operation_recommendations as direct topology operations, not just as topology_name labels.",
+            "Use skill design_insights, structure_features, and operation_recommendations as direct topology operations, not just as topology_name labels.",
             "Respect trigger condition buckets such as agent_bucket and array_size_bucket when selecting a skill.",
             "Explain the expected information flow: who aggregates, who broadcasts, and where the final answer should reside.",
             "Prefer structures that preserve source coverage and provenance for sharded count-frequency tasks.",
@@ -207,6 +207,7 @@ def _skill_context(skill: SkillCard) -> dict[str, Any]:
         "organization_policy": skill.organization_policy,
         "expected_tradeoff": skill.expected_tradeoff,
         "expected_dynamics": skill.expected_dynamics,
+        "design_insights": skill.design_insights[-6:],
         "risk_notes": skill.risk_notes[-5:],
         "counterexamples": skill.counterexamples[-5:],
         "fallback": skill.fallback,
