@@ -1,0 +1,12 @@
+{
+  "case_id": "I-01",
+  "case_name": "Global Max",
+  "paradigm": "Paradigm I",
+  "metadata": {"num_agents": 2, "output_type": "distributed", "is_segmented": false,
+               "theoretical_complexity": "O(N) - MapReduce/Aggregation"},
+  "task_description": "Find the GLOBAL MAXIMUM across all agents' data. You are Agent {agent_id} and hold: {input_shard}",
+  "agent_configs": [
+    {"agent_id": 0, "input_shard": [3, 1, 9, 2], "expected_output": 9},
+    {"agent_id": 1, "input_shard": [5, 8, 4], "expected_output": 9}
+  ]
+}
