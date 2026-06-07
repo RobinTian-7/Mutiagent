@@ -18,7 +18,12 @@ from masbench.llm.fake import BenchmarkFakeLLMClient
 def _build_llm_client(cfg: RunConfig) -> LLMClient:
     if cfg.llm_provider == "fake":
         return BenchmarkFakeLLMClient()
-    return create_llm_client(cfg.llm_provider)
+    return create_llm_client(
+        cfg.llm_provider,
+        base_url=cfg.base_url,
+        api_key_env=cfg.api_key_env,
+        thinking_enabled=cfg.thinking_enabled,
+    )
 
 
 def _count_messages(result) -> int:
