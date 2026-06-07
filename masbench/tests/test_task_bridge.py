@@ -62,3 +62,43 @@ def test_initial_local_solve_is_valid_belief_dict():
     raw = adapter.initial_local_solve(obs[0])
     belief = BeliefState(**raw)  # must construct without error
     assert belief.consensus_key == "UNKNOWN"
+
+
+def test_canonical_answer_booleans():
+    assert canonical_answer(True) == "true"
+    assert canonical_answer("True") == "true"
+    assert canonical_answer("false") == "false"
+
+
+def test_split_rejects_wrong_agent_count():
+    import pytest
+
+    adapter = BenchmarkTaskAdapter(_instance())
+    gt = adapter.build_global_task()
+    with pytest.raises(ValueError, match="cannot be re-split"):
+        adapter.split_into_local_observations(gt, 3)
+
+
+def test_prompt_does_not_double_embed_shard():
+    inst = BenchmarkInstance(
+        benchmark="silo_bench", case_id="I-01", case_name="Global Max",
+        n_agents=2, shards=[[1, 5, 3], [9, 2]], ground_truth=9,
+        task_prompt="Max. You are agent {agent_id} holding {input_shard}.",
+    )
+    adapter = BenchmarkTaskAdapter(inst)
+    gt = adapter.build_global_task()
+    obs = adapter.split_into_local_observations(gt, 2)
+    prompt = adapter.format_task_prompt_context(gt, obs[0])
+    assert prompt.count("[1, 5, 3]") == 1
+
+
+def test_evaluate_handles_python_bool_strings():
+    inst = BenchmarkInstance(
+        benchmark="silo_bench", case_id="I-03", case_name="Distributed Vote",
+        n_agents=2, shards=[[1], [0]], ground_truth=True,
+    )
+    adapter = BenchmarkTaskAdapter(inst)
+    gt = adapter.build_global_task()
+    assert adapter.evaluate_final_answer(gt, "True") is True
+    assert adapter.evaluate_final_answer(gt, "true") is True
+    assert adapter.evaluate_final_answer(gt, "False") is False

@@ -22,14 +22,17 @@ def canonical_answer(value: Any) -> str:
 
     Numbers, lists, and dicts are normalized via canonical JSON. Numeric or
     JSON-looking strings are parsed first so that "9" and 9, or "[3, 1]" and
-    [3, 1], compare equal. Empty/unknown sentinels collapse to ``UNKNOWN``.
+    [3, 1], compare equal. Python-style booleans ("True"/"False") are folded to
+    JSON booleans ("true"/"false"). Empty/unknown sentinels collapse to ``UNKNOWN``.
     """
     if value is None:
         return "UNKNOWN"
     if isinstance(value, str):
         text = value.strip()
-        if not text or text.upper() in {"UNKNOWN", "NONE", "NULL", "PARTIAL"}:
+        if not text or text.upper() in {"UNKNOWN", "NONE", "NULL"}:
             return "UNKNOWN"
+        if text.lower() in {"true", "false"}:
+            return _dumps(text.lower() == "true")
         try:
             parsed = json.loads(text)
         except (json.JSONDecodeError, ValueError):
@@ -46,6 +49,7 @@ class BenchmarkTaskAdapter(TaskAdapter):
         self.task_name = f"benchmark::{instance.benchmark}::{instance.case_id}"
 
     def build_global_task(self, **kwargs: Any) -> dict[str, Any]:
+        # kwargs are accepted to satisfy the base signature; unused in Plan 1.
         inst = self.instance
         return {
             "task_name": self.task_name,
@@ -112,14 +116,16 @@ class BenchmarkTaskAdapter(TaskAdapter):
         agent_id = local_observation["agent_id"]
         shard_json = json.dumps(local_observation["input_shard"], ensure_ascii=True)
         template = global_task["task_prompt"] or f"Task: {global_task['case_name']}"
+        had_shard_token = "{input_shard}" in template
         rendered = template.replace("{agent_id}", str(agent_id)).replace(
             "{input_shard}", shard_json
         )
-        return (
-            f"{rendered}\n"
-            f"Total agents: {local_observation['n_agents']}\n"
-            f"You are agent {agent_id}. Your private shard: {shard_json}\n"
-        )
+        lines = [rendered, f"Total agents: {local_observation['n_agents']}"]
+        if had_shard_token:
+            lines.append(f"You are agent {agent_id}.")
+        else:
+            lines.append(f"You are agent {agent_id}. Your private shard: {shard_json}")
+        return "\n".join(lines) + "\n"
 
     def format_consensus_key_instructions(self) -> str:
         return (
@@ -129,5 +135,6 @@ class BenchmarkTaskAdapter(TaskAdapter):
         )
 
     def format_adjudication_context(self, global_task: dict[str, Any]) -> dict[str, Any]:
-        blocked = {GROUND_TRUTH_KEY, "shards"}
-        return {key: value for key, value in global_task.items() if key not in blocked}
+        # Base blocks answer/answer_key/ground_truth/label/...; also drop raw shards.
+        base = super().format_adjudication_context(global_task)
+        return {key: value for key, value in base.items() if key != "shards"}
