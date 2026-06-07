@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "masbench"
+version = "0.1.0"
+description = "Clean MAS benchmark pipeline reusing the exp_graph engine"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "exp-graph",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# exp-graph lives in the sibling directory; install it editable (with its deps,
+# e.g. json-repair) into the masbench venv via uv.
+[tool.uv.sources]
+exp-graph = { path = "../exp-graph", editable = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
