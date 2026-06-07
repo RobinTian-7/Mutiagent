@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-__version__ = "0.1.0"
+try:
+    __version__ = version("masbench")
+except PackageNotFoundError:  # running from source without an install
+    __version__ = "0.1.0"
 
 
 def _ensure_exp_graph_importable() -> None:
-    """Add the sibling exp-graph/src to sys.path (repo idiom; see run_cf_*.py)."""
+    """Fallback sys.path bridge to the sibling exp_graph engine.
+
+    Normally unnecessary: under ``uv`` exp-graph is installed editable and resolved
+    via its ``.pth`` file. This fallback only matters for bare-Python invocation
+    (no venv / editable install), e.g. running a script directly.
+
+    parents: __init__.py -> masbench/ (pkg) -> src/ -> masbench/ (top) -> repo root
+    """
     repo_root = Path(__file__).resolve().parents[3]
     exp_graph_src = repo_root / "exp-graph" / "src"
     candidate = str(exp_graph_src)
