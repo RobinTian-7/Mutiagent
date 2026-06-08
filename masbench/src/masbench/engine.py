@@ -27,6 +27,13 @@ def _build_llm_client(cfg: RunConfig) -> LLMClient:
 
 
 def _count_messages(result) -> int:
+    """Structural upper bound on inter-agent messages.
+
+    Sums each round's topology fan-in (``round_logs[*].neighbors``). This counts
+    the edges the topology exposes, which is an upper bound: the runner skips
+    delivering a neighbor's ``None`` outbox. Exact per-delivery counts arrive with
+    the generic protocol runner in Plan 2.
+    """
     total = 0
     for log in result.round_logs:
         total += sum(len(neighbors) for neighbors in log.neighbors.values())
