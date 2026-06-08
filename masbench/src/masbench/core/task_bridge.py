@@ -137,6 +137,22 @@ class BenchmarkTaskAdapter(TaskAdapter):
             "UNKNOWN if you cannot yet determine the global answer."
         )
 
+    def describe_task(self) -> str:
+        """Short task brief for the graph-generating planner.
+
+        Gives the emperor the ACTUAL task semantics (e.g. "Global Max: find the
+        global maximum...") instead of exp_graph's hardcoded count_frequency
+        notes. Placeholders are stripped and the text collapsed/truncated to keep
+        the prompt compact. ``plan_free_graph`` picks this up duck-typed.
+        """
+        inst = self.instance
+        prompt = (inst.task_prompt or "").replace("{agent_id}", "<id>").replace(
+            "{input_shard}", "<shard>"
+        )
+        prompt = " ".join(prompt.split())
+        brief = f"{inst.case_name}: {prompt}" if prompt else inst.case_name
+        return brief[:400]
+
     def format_adjudication_context(self, global_task: dict[str, Any]) -> dict[str, Any]:
         # Base blocks answer/answer_key/ground_truth/label/...; also drop raw shards.
         base = super().format_adjudication_context(global_task)

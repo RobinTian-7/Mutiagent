@@ -149,6 +149,16 @@ def plan_free_graph(
         max_receiver_fan_in=runtime.graph_max_receiver_fan_in,
         repair_attempts=runtime.graph_repair_attempts,
     )
+    # Pull a short task description from the adapter (duck-typed; CF adapters
+    # don't define it -> None, and the CF prompt branch ignores it anyway) so the
+    # emperor sees the ACTUAL task instead of hardcoded count_frequency notes.
+    _describe = getattr(task_adapter, "describe_task", None)
+    task_brief: str | None = None
+    if callable(_describe):
+        try:
+            task_brief = _describe()
+        except Exception:
+            task_brief = None
     raw_responses: list[str] = []
     try:
         graphs, raw_responses = _generate_graph_candidates(
@@ -157,6 +167,7 @@ def plan_free_graph(
             skill_bank=skill_bank,
             options=options,
             llm_client=llm_client,
+            task_brief=task_brief,
         )
         candidates = _validate_and_compile_candidates(graphs, options)
         representative_candidates = _dedupe_equivalent_candidates(candidates)
@@ -383,9 +394,24 @@ def build_free_graph_prompt(
     avoid_skills: list[SkillCard] | None = None,
     options: GraphValidationOptions,
     num_candidates: int,
+    task_brief: str | None = None,
 ) -> str:
     """Build the JSON-only prompt for free DAG generation."""
     last_agent_id = request.n_agents - 1
+    is_cf = request.task_family == "count_frequency"
+    if is_cf:
+        final_information_flow = (
+            "For count_frequency, every source agent should have a temporal "
+            "path to selected_primary so one final holder can contain all "
+            "partial counts."
+        )
+    else:
+        _brief_suffix = f" ({task_brief})" if task_brief else ""
+        final_information_flow = (
+            "Every source agent must have a temporal path to selected_primary so "
+            "the final holder receives all information needed to compute the global "
+            f"answer for this task{_brief_suffix}."
+        )
     payload = {
         "role": (
             "You are a multi-agent system topology architect. Your job is to "
@@ -417,11 +443,7 @@ def build_free_graph_prompt(
                 "artifacts. A good topology makes provenance easy to preserve and "
                 "avoids duplicate counting."
             ),
-            "final_information_flow": (
-                "For count_frequency, every source agent should have a temporal "
-                "path to selected_primary so one final holder can contain all "
-                "partial counts."
-            ),
+            "final_information_flow": final_information_flow,
         },
         "topology_design_contract": {
             "agent_id_range": f"0..{last_agent_id}",
@@ -452,12 +474,6 @@ def build_free_graph_prompt(
             "If num_candidates > 1, produce structurally different edge schedules rather than renaming the same graph.",
             "Vary the sink choice, fan-in pattern, or audit/repair edge placement when it helps the objective.",
             "Each candidate must independently satisfy graph_constraints.",
-        ],
-        "count_frequency_design_notes": [
-            "The task is sharded frequency counting. Correctness needs lossless propagation of each agent's local count map.",
-            "A reducer that receives partials in one step should be the sender in a later step when forwarding aggregated evidence.",
-            "Sparse graphs are acceptable only when their temporal paths still cover all source agents.",
-            "Avoid final states where most agents still hold only local or pairwise partial counts.",
         ],
         "operator_hints": [
             "bounded fan-in aggregation",
@@ -515,6 +531,20 @@ def build_free_graph_prompt(
             "Reject your own candidate mentally if any source agent lacks a temporal path to the selected_primary.",
         ],
     }
+    if is_cf:
+        payload["count_frequency_design_notes"] = [
+            "The task is sharded frequency counting. Correctness needs lossless propagation of each agent's local count map.",
+            "A reducer that receives partials in one step should be the sender in a later step when forwarding aggregated evidence.",
+            "Sparse graphs are acceptable only when their temporal paths still cover all source agents.",
+            "Avoid final states where most agents still hold only local or pairwise partial counts.",
+        ]
+    else:
+        payload["task_design_notes"] = [
+            (f"Task: {task_brief}" if task_brief else f"Task family: {request.task_family}."),
+            "Each agent holds only a private shard; design the structure so the selected final holder receives enough information to compute the correct GLOBAL answer for THIS task.",
+            "Correctness needs lossless propagation: every source agent needs a temporal path to selected_primary; avoid final states where the holder still lacks full coverage.",
+            "Sparse graphs are acceptable only when their temporal paths still cover all source agents.",
+        ]
     return json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
 
 
@@ -525,6 +555,7 @@ def _generate_graph_candidates(
     skill_bank: SkillBank,
     options: GraphValidationOptions,
     llm_client: LLMClient | None,
+    task_brief: str | None = None,
 ) -> tuple[list[GeneratedGraphPlan], list[str]]:
     count = max(1, runtime.num_graph_candidates)
     positive_skills = skill_bank.retrieve(request)
@@ -545,6 +576,7 @@ def _generate_graph_candidates(
         avoid_skills=skill_bank.retrieve_avoid(request),
         options=options,
         num_candidates=remaining_count,
+        task_brief=task_brief,
     )
     response = client.complete(
         prompt,
