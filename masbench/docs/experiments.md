@@ -179,6 +179,37 @@ respect them.
    penalty therefore uses the within-condition std the gate can compute, not a
    per-seed std.
 
+## Robust large runs (timeout / checkpoint / parallel)
+
+A real-LLM paper grid (`--levels I II --agent-counts 2 5 10 --seeds 1..5 --arms
+fixed select graphgen evolved`) is thousands of provider calls. Three flags make
+it fast, crash-safe, and immune to a single hung call (the failure mode that once
+froze a run for 90 min on one stalled socket):
+
+| flag | default | what it does |
+| --- | --- | --- |
+| `--workers N` | `1` | Run independent grid units `(arm, case, n, seed[, topology])` concurrently via a `ThreadPoolExecutor`. LLM calls are I/O-bound (they release the GIL), so wall-clock drops ~linearly. `N=1` is the unchanged sequential path. |
+| `--request-timeout S` | `90.0` | Hard per-request wall-clock guard (`masbench.llm.timeout.TimeoutLLMClient`, a daemon-thread `join(timeout)` that abandons a hung call). A stalled call raises `LLMTimeoutError`, recorded as a failed run, and the grid continues. Also applies to `run`/`run-suite`/`evolve`. |
+| `--resume` | off | `bench` appends every finished run to `runs/<out>/runs.jsonl` immediately. Re-running the SAME command with `--resume` loads that log, skips completed run-keys, and finishes the rest — so a crash/Ctrl-C loses nothing. |
+
+Semantics under concurrency (correctness preserved):
+- **Per-run isolation:** every unit is wrapped; any exception (incl. a timeout)
+  becomes a `success=False` record with `extra["error"]` and the grid never aborts.
+  `KeyboardInterrupt`/`SystemExit` still propagate (finished units are on disk).
+- **Checkpoint append is lock-guarded** → exactly one `runs.jsonl` line per unique
+  run-key, no double-counting under `--workers > 1`.
+- **`graphgen` motif prior:** under `--workers > 1` the cross-run motif evidence is
+  snapshotted once before dispatch (the sequential incremental feed needs ordering);
+  per-run correctness is unaffected — only the best-effort prior differs.
+- **`evolved` arm:** the heavy `run_evolution` runs sequentially, once per
+  `n_agents`, *before* the per-instance eval units are dispatched to the pool
+  (never two evolutions at once).
+- **Determinism:** aggregates are order-independent, so `--workers 1` and
+  `--workers 8` produce identical per-condition/overall means.
+
+Recommended real-LLM invocation: add `--workers 8 --request-timeout 90` to the
+paper command; if it dies, re-run the identical command with `--resume`.
+
 ## What is wired vs. activation-pending
 
 - **Wired and exercised offline** (by `tests/test_bench.py`): the four arms, the

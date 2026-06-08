@@ -189,11 +189,27 @@ uv run --extra openai python -m masbench.cli bench --benchmark silo_bench \
   --graphgen-candidates 4 \
   --llm openai --model-name gpt-4o-mini \
   --merge-mode llm_full_merge --init-mode llm_local_solve \
+  --workers 8 --request-timeout 90 \
   --objective accuracy_first --out runs/paper
 ```
 `--llm openai` reads `OPENAI_API_KEY` from the environment (no `--api-key-env` /
 `--base-url` needed). See `docs/experiments.md` for the full experiment design,
 the recommended paper-grade config, and the honest caveats.
+
+**Robust large runs (timeout / checkpoint / parallel).** A real-LLM grid is big,
+I/O-bound, and a single stalled provider call must not freeze or lose it. Three
+flags make it safe + fast:
+- `--workers N` — run the (independent) grid units concurrently (LLM calls are
+  I/O-bound, so threads give near-linear speedup). `N=1` (default) is the original
+  sequential path. Start with `--workers 8`.
+- `--request-timeout S` — hard per-call wall-clock guard (default 90s); a hung
+  request fails fast as a recorded failure instead of blocking everything (also
+  applies to `run` / `run-suite` / `evolve`).
+- `--resume` — `bench` writes every run to `runs/<out>/runs.jsonl` as it finishes,
+  so a crash/Ctrl-C loses nothing; re-run the SAME command with `--resume` to skip
+  completed `(arm,case,n,seed,topology)` units and finish the rest.
+
+So if a run dies mid-way: just re-run with `--resume` added.
 
 ## Status
 - Plan 1 (done): planner-OFF, exact-match success rate on Silo-Bench via `SynchronousRunner`.
