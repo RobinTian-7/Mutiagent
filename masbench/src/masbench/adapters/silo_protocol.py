@@ -30,6 +30,7 @@ from exp_graph.agents.schemas import BeliefState, BeliefStatus
 from exp_graph.messaging import OutboxMessage
 from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 
+from masbench.adapters.silo_scoring import silo_partial_score
 from masbench.core.task_bridge import (
     GROUND_TRUTH_KEY,
     BenchmarkTaskAdapter,
@@ -37,6 +38,29 @@ from masbench.core.task_bridge import (
 )
 
 SILO_PROTOCOL_TASK_NAME = "silo"
+
+
+def score_protocol_answer(answer: Any, global_task: dict[str, Any]) -> dict[str, Any]:
+    """Score one Silo global answer: strict exact-match plus a graded ``partial``.
+
+    ``primary_metric``/``exact_match`` stay the strict 1.0/0.0 success signal used
+    by topology selection and evolution; ``partial`` adds the graded
+    PARTIAL-CORRECTNESS value in [0, 1] (see ``silo_scoring.silo_partial_score``).
+    Module-level so masbench can recompute ``partial`` from a final answer without
+    holding a task-adapter instance; the adapter method delegates here.
+    """
+    if answer is None:
+        return {"primary_metric": 0.0, "exact_match": False, "partial": 0.0}
+    ground_truth = global_task[GROUND_TRUTH_KEY]
+    success = canonical_answer(answer) == ground_truth
+    partial = silo_partial_score(
+        answer, ground_truth, global_task.get("output_type", "scalar")
+    )
+    return {
+        "primary_metric": 1.0 if success else 0.0,
+        "exact_match": success,
+        "partial": float(partial),
+    }
 
 # case_id -> reducer over a flat list of numbers. Mirrors masbench.llm.fake._REDUCERS:
 # only associative reductions that an offline deterministic merge can fold over a
@@ -460,13 +484,9 @@ VERIFIED_ANSWER_JSON:
     def score_protocol_answer(
         self, answer: Any, global_task: dict[str, Any]
     ) -> dict[str, Any]:
-        if answer is None:
-            return {"primary_metric": 0.0, "exact_match": False}
-        success = canonical_answer(answer) == global_task[GROUND_TRUTH_KEY]
-        return {
-            "primary_metric": 1.0 if success else 0.0,
-            "exact_match": success,
-        }
+        # Strict exact-match drives primary_metric/exact_match (unchanged); the
+        # graded PARTIAL-CORRECTNESS value rides alongside in ``partial``.
+        return score_protocol_answer(answer, global_task)
 
     def compute_protocol_agent_metrics(
         self,

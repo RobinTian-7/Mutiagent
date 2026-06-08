@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.configs import ExperimentConfig
@@ -20,7 +21,10 @@ from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.runner import SynchronousRunner
 from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
 
-from masbench.adapters.silo_protocol import SiloProtocolAdapter
+from masbench.adapters.silo_protocol import (
+    SiloProtocolAdapter,
+    score_protocol_answer,
+)
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
@@ -51,6 +55,18 @@ def _count_messages(result) -> int:
     for log in result.round_logs:
         total += sum(len(neighbors) for neighbors in log.neighbors.values())
     return total
+
+
+def _partial_score(final_answer: Any, global_task: dict) -> float:
+    """Graded PARTIAL-CORRECTNESS for a final answer, computed in masbench.
+
+    exp_graph stays untouched: we recompute the [0, 1] partial signal here from
+    the run's final answer + the instance ground truth carried in ``global_task``.
+    ``success``/exact-match keep coming from exp_graph's strict scoring; this only
+    fills ``ScoreResult.partial`` with the graded value. ``final_answer`` may be a
+    live value or a canonical-key string; ``silo_partial_score`` coerces either.
+    """
+    return float(score_protocol_answer(final_answer, global_task)["partial"])
 
 
 def _run_planner(
@@ -120,9 +136,13 @@ def _run_planner(
         "aggregation_method": final.aggregation_method,
     }
     extra.update(planner_extra)
+    # masbench owns the graded partial: success/exact-match stay strict (from
+    # exp_graph's final), while ``partial`` is recomputed here from the final
+    # answer + ground truth. Prefer the live final_answer, fall back to the key.
+    final_value = final.final_answer if final.final_answer is not None else final.final_key
     return ScoreResult(
         success=bool(final.exact_match),
-        partial=getattr(final, "primary_metric", None),
+        partial=_partial_score(final_value, global_task),
         n_messages=int(result.total_messages),
         n_model_calls=int(result.total_model_calls),
         tokens=int(result.total_prompt_tokens) + int(result.total_completion_tokens),
@@ -234,9 +254,11 @@ def run_instance(
         llm_client=client,
     ).run()
 
+    # masbench owns the graded partial (exp_graph untouched). The planner-OFF
+    # final answer is the canonical key; recompute partial from it + ground truth.
     return ScoreResult(
         success=bool(result.metrics.final_accuracy),
-        partial=None,
+        partial=_partial_score(result.final_result.final_key, global_task),
         n_messages=_count_messages(result),
         n_model_calls=int(result.metrics.total_model_calls),
         tokens=int(result.metrics.total_token_cost),
