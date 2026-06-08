@@ -599,14 +599,36 @@ def render_report(results: dict[str, Any]) -> str:
                 f"| {_fmt(agg['tokens'])} |"
             )
             lines.append(row)
-        # Oracle-fixed annotation when the fixed arm ran.
+        # Oracle-fixed annotation + per-topology breakdown when the fixed arm ran.
         if "oracle_fixed" in block:
             oracle = block["oracle_fixed"]
+            n_topo = len(block.get("fixed_by_topology", {}))
             lines.append("")
             lines.append(
-                f"_oracle fixed: `{oracle['topology']}` "
-                f"success {_fmt(oracle['success'], pct=True)}%_"
+                f"_oracle fixed (best topology): `{oracle['topology']}` "
+                f"success {_fmt(oracle['success'], pct=True)}% — note the `fixed` row "
+                f"above is the MEAN over {n_topo} topologies (pessimistic); compare "
+                f"methods against this oracle, not the mean._"
             )
+        if "fixed_by_topology" in block:
+            oracle_topo = block.get("oracle_fixed", {}).get("topology")
+            lines.append("")
+            lines.append("Fixed baselines per topology (oracle in **bold**):")
+            lines.append("")
+            lines.append(header.replace("| arm ", "| fixed topology "))
+            for topo, agg in sorted(
+                block["fixed_by_topology"].items(),
+                key=lambda kv: (-kv[1]["success"]["mean"], kv[1]["tokens"]["mean"]),
+            ):
+                label = f"**{topo}**" if topo == oracle_topo else topo
+                lines.append(
+                    f"| {label} "
+                    f"| {_fmt(agg['success'], pct=True)}% "
+                    f"| {_fmt(agg['partial'], pct=True)}% "
+                    f"| {_fmt(agg['n_messages'])} "
+                    f"| {_fmt(agg['n_model_calls'])} "
+                    f"| {_fmt(agg['tokens'])} |"
+                )
         # Gate annotation when the evolved arm ran.
         if "evolved" in arm_aggs and "gate" in arm_aggs["evolved"]:
             gate = arm_aggs["evolved"]["gate"]

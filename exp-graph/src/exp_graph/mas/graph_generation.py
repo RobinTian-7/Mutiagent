@@ -484,7 +484,7 @@ def build_free_graph_prompt(
             "candidates": [
                 {
                     "candidate_id": "candidate_0",
-                    "name": "short_snake_case_name",
+                    "name": "tree_reduce_to_sink",
                     "graph_type": "temporal_dag",
                     "n_agents": request.n_agents,
                     "selected_primary": last_agent_id,
@@ -511,6 +511,7 @@ def build_free_graph_prompt(
             "A step is simultaneous; temporal order is the order of steps.",
             "Same-step bidirectional edges and multi-recipient fan-out are allowed when they help coverage.",
             "Prefer novel but executable DAGs with clear information flow, not just topology names.",
+            "Set 'name' to a short snake_case label describing THIS DAG's actual structure (e.g. tree_reduce_to_sink, staged_pair_gather, audited_star_sink); never output the literal placeholder 'short_snake_case_name'.",
             "Reject your own candidate mentally if any source agent lacks a temporal path to the selected_primary.",
         ],
     }
