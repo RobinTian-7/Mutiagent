@@ -1,0 +1,12 @@
+{
+  "case_id": "SEG-99",
+  "case_name": "Segmented Prefix Sum (synthetic)",
+  "paradigm": "Paradigm II",
+  "metadata": {"num_agents": 2, "output_type": "distributed", "is_segmented": true,
+               "theoretical_complexity": "O(N) - Structured Mesh with Locality"},
+  "task_description": "Compute the running prefix sums of all agents' values in order. You are Agent {agent_id} and hold: {input_shard}. Report ONLY the prefix sums covering your own shard's positions.",
+  "agent_configs": [
+    {"agent_id": 0, "input_shard": [1, 2, 3], "expected_output": [1, 3, 6]},
+    {"agent_id": 1, "input_shard": [4, 5], "expected_output": [10, 15]}
+  ]
+}

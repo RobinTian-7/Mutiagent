@@ -8,7 +8,9 @@ DATA = Path(__file__).parent / "data"
 def test_loads_instance_from_json():
     adapter = SiloBenchAdapter(DATA)
     instances = {inst.case_id: inst for inst in adapter.iter_instances()}
-    assert set(instances) == {"I-01", "III-21"}
+    # SEG-99 is the segmented test fixture (silo_SEG_n2.json); its filename does
+    # not match the canonical pattern, so it exercises the loader's body fallback.
+    assert set(instances) == {"I-01", "III-21", "SEG-99"}
     gmax = instances["I-01"]
     assert gmax.n_agents == 2
     assert gmax.shards == [[3, 1, 9, 2], [5, 8, 4]]

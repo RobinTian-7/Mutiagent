@@ -25,10 +25,11 @@ from masbench.adapters.silo_protocol import (
     SiloProtocolAdapter,
     score_protocol_answer,
 )
+from masbench.adapters.silo_scoring import silo_partial_score
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
-from masbench.core.task_bridge import BenchmarkTaskAdapter
+from masbench.core.task_bridge import BenchmarkTaskAdapter, canonical_answer
 from masbench.llm.fake import BenchmarkFakeLLMClient
 
 
@@ -67,6 +68,58 @@ def _partial_score(final_answer: Any, global_task: dict) -> float:
     live value or a canonical-key string; ``silo_partial_score`` coerces either.
     """
     return float(score_protocol_answer(final_answer, global_task)["partial"])
+
+
+def _score_segmented(
+    result: Any,
+    instance: BenchmarkInstance,
+    adapter: SiloProtocolAdapter,
+    global_task: dict,
+) -> tuple[bool, float, list[bool]]:
+    """Grade a SEGMENTED Silo run from the FINAL PER-AGENT states.
+
+    Segmented tasks give every agent its OWN ``expected_output`` (carried in
+    ``meta['expected_outputs'][agent_id]``), so the single voted global answer is
+    meaningless. For each agent we read its final belief
+    (``result.final_agent_states[agent_id].belief_state``), extract that agent's
+    answer via :meth:`SiloProtocolAdapter.extract_protocol_answer`, and compare it
+    (canonicalized) to that agent's expected segment.
+
+    Returns ``(success, partial, per_agent_correct)`` where:
+
+    * ``success`` is True iff EVERY agent is exact-correct on its own segment;
+    * ``partial`` is the mean of :func:`silo_partial_score` over agents (graded
+      per-agent quality in [0, 1]);
+    * ``per_agent_correct[i]`` is the strict exact-match for agent ``i``.
+
+    Robust to a missing/short ``final_agent_states``: any agent without a state is
+    treated as wrong (answer ``None`` -> partial 0.0). With zero expected agents
+    (degenerate) it reports ``(False, 0.0, [])`` rather than a vacuous success.
+    """
+    expected_outputs = instance.meta.get("expected_outputs") or []
+    n_agents = len(expected_outputs)
+    final_states = list(getattr(result, "final_agent_states", []) or [])
+    output_type = global_task.get("output_type", "scalar")
+
+    per_agent_correct: list[bool] = []
+    partials: list[float] = []
+    for agent_id in range(n_agents):
+        expected = expected_outputs[agent_id]
+        if agent_id < len(final_states):
+            belief = final_states[agent_id].belief_state
+            answer = adapter.extract_protocol_answer(belief)
+        else:
+            answer = None  # missing state -> treat as wrong
+        correct = (
+            answer is not None
+            and canonical_answer(answer) == canonical_answer(expected)
+        )
+        per_agent_correct.append(bool(correct))
+        partials.append(float(silo_partial_score(answer, expected, output_type)))
+
+    success = n_agents > 0 and all(per_agent_correct)
+    partial = (sum(partials) / len(partials)) if partials else 0.0
+    return success, partial, per_agent_correct
 
 
 def _run_planner(
@@ -140,9 +193,19 @@ def _run_planner(
     # exp_graph's final), while ``partial`` is recomputed here from the final
     # answer + ground truth. Prefer the live final_answer, fall back to the key.
     final_value = final.final_answer if final.final_answer is not None else final.final_key
+    if instance.segmented:
+        # Per-agent grading: the single voted answer is meaningless here.
+        success, partial, per_agent_correct = _score_segmented(
+            result, instance, task_adapter, global_task
+        )
+        extra["segmented"] = True
+        extra["per_agent_correct"] = per_agent_correct
+    else:
+        success = bool(final.exact_match)
+        partial = _partial_score(final_value, global_task)
     return ScoreResult(
-        success=bool(final.exact_match),
-        partial=_partial_score(final_value, global_task),
+        success=success,
+        partial=partial,
         n_messages=int(result.total_messages),
         n_model_calls=int(result.total_model_calls),
         tokens=int(result.total_prompt_tokens) + int(result.total_completion_tokens),
@@ -256,18 +319,31 @@ def run_instance(
 
     # masbench owns the graded partial (exp_graph untouched). The planner-OFF
     # final answer is the canonical key; recompute partial from it + ground truth.
+    extra = {
+        "case_id": instance.case_id,
+        "topology": cfg.topology,
+        "stop_reason": result.stop_reason,
+        "consensus_reached": result.final_result.consensus_reached,
+        "aggregation_method": result.final_result.aggregation_method,
+    }
+    if instance.segmented:
+        # Per-agent grading from the final belief states. The synchronous runner
+        # belief model matches the protocol one, so the Silo protocol adapter's
+        # extract_protocol_answer reads each agent's answer the same way.
+        success, partial, per_agent_correct = _score_segmented(
+            result, instance, SiloProtocolAdapter(instance), global_task
+        )
+        extra["segmented"] = True
+        extra["per_agent_correct"] = per_agent_correct
+    else:
+        success = bool(result.metrics.final_accuracy)
+        partial = _partial_score(result.final_result.final_key, global_task)
     return ScoreResult(
-        success=bool(result.metrics.final_accuracy),
-        partial=_partial_score(result.final_result.final_key, global_task),
+        success=success,
+        partial=partial,
         n_messages=_count_messages(result),
         n_model_calls=int(result.metrics.total_model_calls),
         tokens=int(result.metrics.total_token_cost),
         final_answer=result.final_result.final_key,
-        extra={
-            "case_id": instance.case_id,
-            "topology": cfg.topology,
-            "stop_reason": result.stop_reason,
-            "consensus_reached": result.final_result.consensus_reached,
-            "aggregation_method": result.final_result.aggregation_method,
-        },
+        extra=extra,
     )

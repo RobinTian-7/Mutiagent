@@ -61,6 +61,9 @@ class BenchmarkTaskAdapter(TaskAdapter):
             "task_prompt": inst.task_prompt,
             "meta": dict(inst.meta),
             "output_type": inst.meta.get("output_type", "scalar"),
+            # Per-agent (segmented) vs single-shared-answer task. The engine reads
+            # this to decide whether to grade per agent or by the voted answer.
+            "segmented": inst.segmented,
             GROUND_TRUTH_KEY: canonical_answer(inst.ground_truth),
         }
 

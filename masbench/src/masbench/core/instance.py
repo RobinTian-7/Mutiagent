@@ -30,3 +30,12 @@ class BenchmarkInstance:
             raise ValueError(
                 f"expected {self.n_agents} shards, got {len(self.shards)}"
             )
+
+    @property
+    def segmented(self) -> bool:
+        """True iff each agent has its OWN expected answer (not one shared one).
+
+        Segmented instances cannot be scored by the single voted global answer;
+        the engine grades each agent against ``meta['expected_outputs'][i]``.
+        """
+        return bool(self.meta.get("is_segmented", False))
