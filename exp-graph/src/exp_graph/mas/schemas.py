@@ -35,6 +35,13 @@ class ObjectiveSpec(BaseModel):
     accuracy_weight: float = 0.5
     cost_weight: float = 0.35
     stability_weight: float = 0.15
+    # Uncertainty-aware selection knobs (Plan 3 Part E). Defaults are no-ops:
+    # ``uncertainty_weight`` (kappa) == 0 keeps ``score_skill`` on the plain
+    # mean loss, and ``min_seeds`` == 1 admits every skill in retrieval. They
+    # are intentionally left unset by ``from_name`` so its output for every
+    # named objective is unchanged.
+    uncertainty_weight: float = 0.0
+    min_seeds: int = 1
 
     @classmethod
     def from_name(cls, name: ObjectiveName) -> "ObjectiveSpec":

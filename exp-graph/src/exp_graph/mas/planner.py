@@ -34,9 +34,16 @@ class TopologySelectPlanner:
         self.skill_bank = skill_bank
 
     def plan(self, request: PlannerRequest) -> MASPlan:
+        # ``retrieve`` reads request.objective.min_seeds (default 1 = no gate)
+        # and request.objective.uncertainty_weight flows into score_skill below.
+        min_seeds = int(getattr(request.objective, "min_seeds", 1))
         skills = self.skill_bank.retrieve(request)
         if not skills:
-            skills = [skill for skill in self.skill_bank if is_selectable_skill(skill)]
+            skills = [
+                skill
+                for skill in self.skill_bank
+                if is_selectable_skill(skill, min_seeds=min_seeds)
+            ]
         if not skills:
             return fallback_plan(request)
 

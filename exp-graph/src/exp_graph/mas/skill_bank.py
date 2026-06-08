@@ -48,11 +48,25 @@ class SkillBank:
         for skill in sorted(self.skills.values(), key=lambda item: item.skill_id):
             dump_skill_file(skill, path / f"{skill.skill_id}.yaml")
 
-    def retrieve(self, request: PlannerRequest) -> list[SkillCard]:
-        """Return skills matching task, objective, n_agents, and topology allowlist."""
+    def retrieve(
+        self,
+        request: PlannerRequest,
+        *,
+        min_seeds: int | None = None,
+    ) -> list[SkillCard]:
+        """Return skills matching task, objective, n_agents, and topology allowlist.
+
+        ``min_seeds`` excludes skills whose evidence/seed sample count is below
+        the threshold (an uncertainty-aware min-sample gate). When ``None`` the
+        gate is read from ``request.objective.min_seeds`` if present, else ``1``.
+        With ``min_seeds <= 1`` no skill is excluded, so the default path is
+        byte-identical to today's retrieval.
+        """
+        if min_seeds is None:
+            min_seeds = int(getattr(request.objective, "min_seeds", 1))
         matches: list[SkillCard] = []
         for skill in self.skills.values():
-            if not is_selectable_skill(skill):
+            if not is_selectable_skill(skill, min_seeds=min_seeds):
                 continue
             if skill.task_family != request.task_family:
                 continue
@@ -194,9 +208,19 @@ class SkillBank:
         )
 
 
-def is_selectable_skill(skill: SkillCard) -> bool:
-    """Return whether a skill is safe for the emperor to choose directly."""
-    return _is_active_skill(skill) and not is_avoid_skill(skill)
+def is_selectable_skill(skill: SkillCard, *, min_seeds: int = 1) -> bool:
+    """Return whether a skill is safe for the emperor to choose directly.
+
+    ``min_seeds`` adds an optional uncertainty-aware min-sample gate: skills
+    backed by fewer than ``min_seeds`` independent observations are excluded.
+    The default ``min_seeds=1`` admits every skill (current behavior), so all
+    existing call sites are unaffected.
+    """
+    if not (_is_active_skill(skill) and not is_avoid_skill(skill)):
+        return False
+    if min_seeds > 1 and _skill_sample_count(skill) < min_seeds:
+        return False
+    return True
 
 
 def is_avoid_skill(skill: SkillCard) -> bool:
@@ -530,6 +554,18 @@ def _skill_evidence_count(skill: SkillCard) -> int:
         except (TypeError, ValueError):
             pass
     return len(skill.evidence_refs) + len(skill.evidence)
+
+
+def _skill_sample_count(skill: SkillCard) -> int:
+    """Independent-observation count used for the min-sample retrieval gate.
+
+    Delegates to :func:`exp_graph.mas.scoring.evidence_sample_count` so the
+    ``n`` here matches the one the LCB accuracy penalty uses (seed_count, then
+    active_evidence_count, then raw evidence length).
+    """
+    from exp_graph.mas.scoring import evidence_sample_count
+
+    return evidence_sample_count(skill, default=1)
 
 
 def _skill_condition_bucket(skill: SkillCard) -> str:
