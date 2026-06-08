@@ -58,8 +58,9 @@ def _record(instance: BenchmarkInstance, cfg: RunConfig, score: ScoreResult) -> 
 
 def _cmd_run(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
-    cfg = _cfg_from_args(args)
+    base_cfg = _cfg_from_args(args)
     instance = next(adapter.iter_instances(cases=[args.case], agent_counts=[args.n_agents]))
+    cfg = RunConfig(**{**asdict(base_cfg), "n_agents": instance.n_agents})
     score = run_instance(instance, cfg)
     print(json.dumps(_record(instance, cfg, score), indent=2, sort_keys=True))
     return 0
