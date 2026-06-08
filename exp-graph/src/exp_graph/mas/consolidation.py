@@ -62,9 +62,91 @@ def consolidate_skill_updates(
     patches: list[SkillPatch],
     evidence_records: list[EvidenceRecord],
     batch_id: str | None = None,
+    validation_rows: list[dict[str, object]] | None = None,
+    epsilon: float = 0.0,
+    gate: bool = False,
 ) -> tuple[SkillBank, EvolutionResult]:
-    """Apply one validated patch batch to a skill bank in memory."""
+    """Apply one validated patch batch to a skill bank in memory.
+
+    With ``gate=False`` (the default) every patch is applied unconditionally,
+    preserving all existing count-frequency evolution behavior byte-for-byte.
+
+    With ``gate=True`` and non-empty ``validation_rows`` the paper's held-out
+    acceptance rule is enforced: the batch is applied to a *clone* of ``bank``,
+    the held-out objective ``J_val`` is measured before and after, and the
+    patches are committed to the real ``bank`` only if
+    ``j_after <= j_before - epsilon``. On rejection the real ``bank`` is left
+    untouched and the rejection is recorded on the returned
+    :class:`EvolutionResult` (``counts['gated_out']``, a warning, and the
+    ``gate_*`` fields). ``j_before``/``j_after``/``gate_accepted`` are always
+    recorded when the gate runs.
+    """
     batch = batch_id or f"revision_batch_{utc_stamp()}"
+
+    if not (gate and validation_rows):
+        return bank, _apply_patch_batch(
+            bank=bank,
+            patches=patches,
+            evidence_records=evidence_records,
+            batch=batch,
+        )
+
+    from exp_graph.mas.validation import validation_objective
+
+    j_before = validation_objective(bank, validation_rows)
+    candidate = _clone_skill_bank(bank)
+    candidate_result = _apply_patch_batch(
+        bank=candidate,
+        patches=patches,
+        evidence_records=evidence_records,
+        batch=batch,
+    )
+    j_after = validation_objective(candidate, validation_rows)
+
+    if j_after <= j_before - epsilon:
+        # Accept: commit the cloned skills back onto the real bank in place so
+        # callers keep their existing ``bank`` reference.
+        bank.skills = candidate.skills
+        candidate_result.gate_accepted = True
+        candidate_result.gate_j_before = j_before
+        candidate_result.gate_j_after = j_after
+        return bank, candidate_result
+
+    # Reject: leave the real bank untouched and report why.
+    gated_out = sum(
+        count
+        for key, count in candidate_result.counts.items()
+        if key in {"added", "merged", "deprecated"}
+    )
+    rejection = EvolutionResult(
+        batch_id=batch,
+        counts={"gated_out": gated_out} if gated_out else {"gated_out": 0},
+        revisions=[],
+        warnings=[
+            "validation gate rejected patch batch "
+            f"(J_val before={j_before:.6f}, after={j_after:.6f}, "
+            f"epsilon={epsilon:.6f}); skill bank unchanged"
+        ],
+        gate_accepted=False,
+        gate_j_before=j_before,
+        gate_j_after=j_after,
+    )
+    return bank, rejection
+
+
+def _clone_skill_bank(bank: SkillBank) -> SkillBank:
+    """Deep-copy a skill bank so candidate patches never touch the original."""
+    return SkillBank([skill.model_copy(deep=True) for skill in bank])
+
+
+def _apply_patch_batch(
+    *,
+    bank: SkillBank,
+    patches: list[SkillPatch],
+    evidence_records: list[EvidenceRecord],
+    batch: str,
+) -> EvolutionResult:
+    """Apply a patch batch to ``bank`` in place (the unconditional path)."""
     records_by_id = {record.evidence_id: record for record in evidence_records}
     grouped = _group_patches(bank, patches)
     counts: Counter[str] = Counter()
@@ -151,7 +233,7 @@ def consolidate_skill_updates(
         if patch.action == "deprecate":
             counts["deprecated"] += 1
 
-    return bank, EvolutionResult(
+    return EvolutionResult(
         batch_id=batch,
         counts=dict(counts),
         revisions=revisions,

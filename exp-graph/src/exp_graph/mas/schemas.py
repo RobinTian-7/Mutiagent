@@ -329,6 +329,11 @@ class EvolutionResult(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
     revisions: list[SkillRevision] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Held-out validation gate metadata. ``None`` when the gate is disabled (the
+    # default), so existing unconditional consolidation results are unchanged.
+    gate_accepted: bool | None = None
+    gate_j_before: float | None = None
+    gate_j_after: float | None = None
 
 
 class MASPlan(BaseModel):
