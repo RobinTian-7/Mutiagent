@@ -9,7 +9,8 @@ a normalized benchmark interface, a Silo-Bench adapter, and a CLI.
 - `src/masbench/adapters/silo_protocol.py` — Silo-Bench behind the QueenBee protocol engine
 - `src/masbench/engine.py` — runs an instance through `SynchronousRunner` (planner-OFF) or the QueenBee planner (`--planner`)
 - `src/masbench/evolve.py` — the gated QueenBee self-evolution loop (`run_evolution`)
-- `src/masbench/cli.py` — `run`, `run-suite`, `report`, `evolve`
+- `src/masbench/bench.py` — the paper-grade arm-comparison harness (`run_benchmark`)
+- `src/masbench/cli.py` — `run`, `run-suite`, `report`, `evolve`, `bench`
 
 ## Setup
 ```bash
@@ -131,6 +132,69 @@ uv run python -m masbench.cli evolve --benchmark silo_bench \
 With a real LLM the held-out Silo runs differ by topology, so the gate can decide
 on real evidence alone (`--no-synthetic-held-out`).
 
+## Paper-grade experiments (masbench bench)
+`masbench bench` is the paper-grade harness: it compares **communication-structure
+policies ("arms")** over a grid of Silo-Bench conditions `(case_id, n_agents)` ×
+seeds and emits a Table-1-style comparison. Every arm routes through the SAME
+`ProtocolRunner` + the same masbench scorer, so the metrics are directly
+comparable; the harness only decides *which structure each arm uses* and then
+aggregates. The arms:
+
+- **fixed** — planner-OFF baselines: each topology in `--fixed-topologies` is
+  forced through the protocol runner. The per-condition *best* fixed topology is
+  reported as the **oracle fixed** baseline (the rest are kept as a breakdown).
+- **select** — QueenBee `topology_select` (`--planner`, picks a named topology).
+- **graphgen** — QueenBee `graph_generate` (the emperor LLM invents a temporal
+  DAG). `--graphgen-candidates` is >1 by default so the structural-motif prior
+  can matter; motif evidence accumulated from earlier conditions is fed back in.
+- **evolved** — the gated self-evolution loop (`masbench evolve`) run ONCE per
+  agent-count on the train seeds, then its post-evolution topology selection is
+  evaluated on the held-out/test seeds (the gate decision is attached).
+
+**Outputs** (under `--out`): `results.json` (raw per-run records + per-condition
+and overall aggregates), `results.csv` (one row per condition × arm with mean/std
+columns), and `report.md` (a markdown table per condition — `arm | success |
+partial | msgs | calls | tokens` — with the best arm bolded, an oracle-fixed
+line, and a top overall-success summary). Metrics are success (exact-match rate),
+partial ([0,1] graded), n_messages, n_model_calls, tokens, each as **mean±std**
+per condition.
+
+### Offline smoke (no API keys, no cost)
+```bash
+cd masbench
+uv run python -m masbench.cli bench --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --cases I-01 --agent-counts 2 --seeds 0 \
+  --arms fixed select graphgen --fixed-topologies tree chain \
+  --llm fake --objective accuracy_first --out runs/bench_smoke
+```
+The fake LLM is deterministic and only supports `--merge-mode deterministic` /
+`--init-mode deterministic` (it cannot run `llm_full_merge` / `llm_local_solve`
+and the harness **fails fast** with an actionable message if you try). Silo's
+offline path is also topology-invariant *on success*, so the offline table is
+well-formed but the arm comparison is **not** discriminative — use a real LLM for
+a scientifically meaningful comparison.
+
+### Real-LLM reproduce (gpt-4o-mini)
+Install the `openai` extra and export your key, then run all four arms with the
+LLM merge/init modes (this is what makes the arms differ):
+```bash
+cd masbench
+export OPENAI_API_KEY=...
+uv run --extra openai python -m masbench.cli bench --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --levels I II --agent-counts 2 5 10 --seeds 1 2 3 4 5 \
+  --arms fixed select graphgen evolved \
+  --fixed-topologies tree mesh_star one_peer_exponential_dag_star chain \
+  --graphgen-candidates 4 \
+  --llm openai --model-name gpt-4o-mini \
+  --merge-mode llm_full_merge --init-mode llm_local_solve \
+  --objective accuracy_first --out runs/paper
+```
+`--llm openai` reads `OPENAI_API_KEY` from the environment (no `--api-key-env` /
+`--base-url` needed). See `docs/experiments.md` for the full experiment design,
+the recommended paper-grade config, and the honest caveats.
+
 ## Status
 - Plan 1 (done): planner-OFF, exact-match success rate on Silo-Bench via `SynchronousRunner`.
 - Plan 2 (done): exp_graph's protocol engine is now task-agnostic — `ProtocolTaskAdapter` +
@@ -141,7 +205,19 @@ on real evidence alone (`--no-synthetic-held-out`).
   validation gate, uncertainty-aware/veto/floor selection, motif-level credit, and insight
   falsification — and `masbench evolve` runs the whole gated loop end-to-end (offline-verifiable
   with `--llm fake`). See `docs/self_evolution_changes.md`.
-- Plan 4 Task 1 (done): `--planner-mode graph_generate` wires the LLM temporal-DAG-GENERATING
-  planner (`plan_free_graph`) into the `--planner` path, so the FULL QueenBee (the emperor
-  invents a bespoke communication DAG) runs on Silo-Bench. Offline-verifiable with `--llm fake`.
-- Suites: exp_graph 237 passed, 1 skipped; masbench 40 passed.
+- Plan 4 (done): the FULL temporal-DAG QueenBee + the paper-grade experiment harness.
+  - **T1** `--planner-mode graph_generate` wires the LLM temporal-DAG-GENERATING planner
+    (`plan_free_graph`) into `--planner`, so the emperor invents a bespoke communication DAG
+    on Silo-Bench (offline-verifiable with `--llm fake`, which validates/repairs/falls back).
+  - **T2** graded partial-correctness scoring (`ScoreResult.partial` in [0,1] per output type:
+    numeric / list / set / dict), with `success` kept strictly exact-match.
+  - **T3** segmented Silo tasks scored per-agent (each agent vs. its own `expected_output`;
+    success = all agents correct, partial = mean per-agent quality).
+  - **T4** `task_family` threading so Silo skills are tagged `silo` natively in evolution
+    (default `count_frequency` → CF byte-identical).
+  - **T5** the structural-motif credit prior is activated in graph-candidate scoring
+    (opt-in, default-off; only changes the pick when >1 candidate survives).
+  - **T6** the `masbench bench` harness (arms fixed/select/graphgen/evolved →
+    `results.json`/`results.csv` + `report.md`). See "Paper-grade experiments" above
+    and `docs/experiments.md`.
+- Suites: exp_graph 248 passed, 1 skipped; masbench 77 passed.
