@@ -30,6 +30,27 @@ def skill_metric(skill: SkillCard, key: str, default: float = 0.0) -> float:
     return default
 
 
+def primary_loss_metric(skill: SkillCard, default: float = 1e9) -> float:
+    """Read the lower-is-better accuracy signal for a skill.
+
+    Generic benchmarks store a converted ``mean_primary_loss`` (e.g. Silo-Bench
+    success-rate -> ``1 - success``); count-frequency skills only carry
+    ``mean_rmse``. Both are lower-is-better, so downstream normalization is
+    identical regardless of which one supplied the value.
+    """
+    if _has_metric(skill, "mean_primary_loss"):
+        return skill_metric(skill, "mean_primary_loss", default=default)
+    return skill_metric(skill, "mean_rmse", default=default)
+
+
+def _has_metric(skill: SkillCard, key: str) -> bool:
+    if key in skill.expected_tradeoff and skill.expected_tradeoff[key] is not None:
+        return True
+    return any(
+        key in evidence and evidence[key] is not None for evidence in skill.evidence
+    )
+
+
 def score_skill(
     skill: SkillCard,
     *,
@@ -37,11 +58,11 @@ def score_skill(
     peers: list[SkillCard],
 ) -> tuple[float, dict[str, float]]:
     """Score one skill against peer skills for the requested objective."""
-    rmse = skill_metric(skill, "mean_rmse", default=1e9)
+    rmse = primary_loss_metric(skill, default=1e9)
     token_cost = skill_metric(skill, "mean_token_cost", default=1e9)
     messages = skill_metric(skill, "mean_messages", default=1e9)
     std_rmse = skill_metric(skill, "std_rmse", default=0.0)
-    rmse_values = [skill_metric(item, "mean_rmse", default=1e9) for item in peers]
+    rmse_values = [primary_loss_metric(item, default=1e9) for item in peers]
     token_values = [skill_metric(item, "mean_token_cost", default=1e9) for item in peers]
     message_values = [skill_metric(item, "mean_messages", default=1e9) for item in peers]
     std_values = [skill_metric(item, "std_rmse", default=0.0) for item in peers]

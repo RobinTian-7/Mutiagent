@@ -419,18 +419,36 @@ def build_skill_patch_for_topology(
     avg_tokens = statistics.fmean(float(row["mean_token_cost"]) for row in rows)
     avg_messages = statistics.fmean(float(row["mean_messages"]) for row in rows)
     objective, operators, skill_id, lesson = classify_topology(topology)
+    expected_tradeoff: dict[str, object] = {
+        "mean_rmse": avg_rmse,
+        "mean_token_cost": avg_tokens,
+        "mean_messages": avg_messages,
+        "lesson": lesson,
+    }
+    # Generic (non-CF) evidence carries a converted primary loss + its name;
+    # propagate them so scoring reads the loss directly from the skill card.
+    # CF rows never carry these keys, so this branch is a no-op for CF skills.
+    primary_losses = [
+        float(row["mean_primary_loss"])
+        for row in rows
+        if row.get("mean_primary_loss") is not None
+    ]
+    if primary_losses:
+        expected_tradeoff["mean_primary_loss"] = statistics.fmean(primary_losses)
+        metric_names = {
+            str(row["primary_metric_name"])
+            for row in rows
+            if row.get("primary_metric_name") is not None
+        }
+        if len(metric_names) == 1:
+            expected_tradeoff["primary_metric_name"] = next(iter(metric_names))
     candidate = make_skill_card(
         skill_id=skill_id,
         topology_name=topology,
         objective=objective,
         operators=operators,
         evidence=rows,
-        expected_tradeoff={
-            "mean_rmse": avg_rmse,
-            "mean_token_cost": avg_tokens,
-            "mean_messages": avg_messages,
-            "lesson": lesson,
-        },
+        expected_tradeoff=expected_tradeoff,
     )
     return SkillPatch(
         patch_id=f"result_{candidate.skill_id}",
