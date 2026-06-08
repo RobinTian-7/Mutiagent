@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from masbench.adapters.silo_bench import SiloBenchAdapter
+from masbench.bench import DEFAULT_ARMS, DEFAULT_FIXED_TOPOLOGIES, run_benchmark
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
@@ -166,6 +167,43 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bench(args: argparse.Namespace) -> int:
+    adapter = _adapter(args.benchmark, args.benchmarks_dir)
+    # The benchmark harness sets per-arm planner flags itself, so the base config
+    # only carries the shared run knobs (provider/model/objective/merge/init).
+    cfg_base = RunConfig(
+        benchmark=args.benchmark,
+        objective=args.objective,
+        merge_mode=args.merge_mode,
+        init_mode=args.init_mode,
+        llm_provider=args.llm,
+        model_name=args.model_name,
+        base_url=getattr(args, "base_url", None),
+        api_key_env=getattr(args, "api_key_env", None),
+    )
+    results = run_benchmark(
+        adapter,
+        cases=getattr(args, "cases", None),
+        levels=getattr(args, "levels", None),
+        agent_counts=[int(a) for a in args.agent_counts] if args.agent_counts else None,
+        seeds=[int(s) for s in args.seeds],
+        arms=args.arms,
+        cfg_base=cfg_base,
+        fixed_topologies=args.fixed_topologies,
+        graphgen_candidates=args.graphgen_candidates,
+        out=args.out,
+    )
+    overall = results["overall"]
+    bits = " ".join(
+        f"{arm}={overall[arm]['success']['mean'] * 100:.1f}%"
+        for arm in results["arms"]
+        if arm in overall
+    )
+    print(f"overall success: {bits}")
+    print(f"wrote results.json + results.csv + report.md to {args.out}")
+    return 0
+
+
 def _summarize(records: list[dict]) -> dict:
     n = len(records)
     successes = sum(1 for r in records if r["score"]["success"])
@@ -254,6 +292,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_evolve.add_argument("--out", required=True)
     p_evolve.set_defaults(func=_cmd_evolve)
+
+    p_bench = sub.add_parser(
+        "bench",
+        help="paper-grade arm comparison (fixed/select/graphgen/evolved) -> Table 1",
+    )
+    add_common(p_bench)
+    p_bench.add_argument("--levels", nargs="+", default=None)
+    p_bench.add_argument("--agent-counts", nargs="+", default=None)
+    p_bench.add_argument("--cases", nargs="+", default=None)
+    p_bench.add_argument("--seeds", nargs="+", default=["0"])
+    p_bench.add_argument(
+        "--arms",
+        nargs="+",
+        default=list(DEFAULT_ARMS),
+        choices=["fixed", "select", "graphgen", "evolved"],
+        help="which arms to compare (default: fixed select graphgen)",
+    )
+    p_bench.add_argument(
+        "--fixed-topologies",
+        dest="fixed_topologies",
+        nargs="+",
+        default=list(DEFAULT_FIXED_TOPOLOGIES),
+        help="protocol topologies for the planner-OFF fixed baselines",
+    )
+    p_bench.add_argument(
+        "--graphgen-candidates",
+        dest="graphgen_candidates",
+        type=int,
+        default=4,
+        help="num_graph_candidates for the graphgen arm (>1 activates motif prior)",
+    )
+    p_bench.add_argument("--out", required=True)
+    p_bench.set_defaults(func=_cmd_bench)
 
     return parser
 

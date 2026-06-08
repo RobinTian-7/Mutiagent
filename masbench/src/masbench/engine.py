@@ -122,11 +122,117 @@ def _score_segmented(
     return success, partial, per_agent_correct
 
 
+def _score_protocol_result(
+    result: Any,
+    instance: BenchmarkInstance,
+    task_adapter: SiloProtocolAdapter,
+    global_task: dict,
+    *,
+    extra: dict,
+) -> ScoreResult:
+    """Turn a ``ProtocolRunner`` result into a graded :class:`ScoreResult`.
+
+    Shared by the planner (select/graph_generate) and forced-fixed-topology paths
+    so every arm in the benchmark harness is scored and metered identically: the
+    same segmented/plain grading, the same message/model-call/token accounting
+    from the protocol result's ``total_*`` counters. ``extra`` is the
+    caller-specific diagnostic dict (topology, planner flag, ...); the segmented
+    branch annotates it in place.
+    """
+    final = result.final_result
+    extra = {**extra, "aggregation_method": final.aggregation_method}
+    # masbench owns the graded partial: success/exact-match stay strict (from
+    # exp_graph's final), while ``partial`` is recomputed here from the final
+    # answer + ground truth. Prefer the live final_answer, fall back to the key.
+    final_value = final.final_answer if final.final_answer is not None else final.final_key
+    if instance.segmented:
+        # Per-agent grading: the single voted answer is meaningless here.
+        success, partial, per_agent_correct = _score_segmented(
+            result, instance, task_adapter, global_task
+        )
+        extra["segmented"] = True
+        extra["per_agent_correct"] = per_agent_correct
+    else:
+        success = bool(final.exact_match)
+        partial = _partial_score(final_value, global_task)
+    return ScoreResult(
+        success=success,
+        partial=partial,
+        n_messages=int(result.total_messages),
+        n_model_calls=int(result.total_model_calls),
+        tokens=int(result.total_prompt_tokens) + int(result.total_completion_tokens),
+        final_answer=final.final_key,
+        extra=extra,
+    )
+
+
+def run_fixed_protocol(
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    *,
+    topology: str,
+    llm_client: LLMClient | None = None,
+) -> ScoreResult:
+    """Run one instance on a FORCED protocol topology (planner-OFF baseline arm).
+
+    The "fixed" baseline arm of the paper-grade harness runs each named topology
+    directly through the generalized :class:`ProtocolRunner` with NO planner and
+    NO generated ``protocol_spec`` — the topology name is compiled to a finite
+    communication schedule by ``build_protocol_schedule``. This is deliberately
+    the *protocol* path rather than the legacy ``SynchronousRunner`` path:
+
+    * ``SynchronousRunner`` (the ``use_planner=False`` path in ``run_instance``)
+      only accepts the physical topology set
+      ``chain/ring/star/mesh/static_exponential/one_peer_exponential`` and meters
+      messages by a structural upper bound.
+    * The paper's fixed baselines are the *protocol-schedule* topologies
+      (``tree``, ``mesh_star``, ``one_peer_exponential_dag_star``, ``chain``),
+      which only ``build_protocol_schedule`` understands, and they share the exact
+      message/model-call/token accounting the ``select``/``graphgen`` arms use.
+
+    Forcing the topology here therefore keeps the whole arm comparison
+    apples-to-apples (one runner, one scorer) while letting the fixed arm sweep
+    the same named topologies the planner can pick.
+    """
+    task_adapter = SiloProtocolAdapter(instance)
+    global_task = task_adapter.build_global_task()
+    n_agents = cfg.n_agents or instance.n_agents
+    client = llm_client or _build_llm_client(cfg)
+
+    config = ProtocolRunnerConfig(
+        topology_name=topology,
+        n_agents=n_agents,
+        seed=cfg.seed,
+        merge_mode=cfg.merge_mode,
+        init_mode=cfg.init_mode,
+        llm_provider=cfg.llm_provider,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+    )
+    result = ProtocolRunner(
+        config=config,
+        task_adapter=task_adapter,
+        global_task=global_task,
+        llm_client=client,
+    ).run()
+    extra = {
+        "case_id": instance.case_id,
+        "planner": False,
+        "topology": topology,
+        "objective": cfg.objective,
+        "fixed": True,
+    }
+    return _score_protocol_result(
+        result, instance, task_adapter, global_task, extra=extra
+    )
+
+
 def _run_planner(
     instance: BenchmarkInstance,
     cfg: RunConfig,
     *,
     llm_client: LLMClient | None,
+    motif_stats: dict[str, dict] | None = None,
 ) -> ScoreResult:
     """Run one instance through the QueenBee planner + ProtocolRunner and score it.
 
@@ -142,7 +248,9 @@ def _run_planner(
 
     Either way the resulting ``plan.topology_name`` + ``plan.protocol_spec`` drive
     the generalized ProtocolRunner. The same ``client`` is reused for any DAG
-    generation and the soldier execution.
+    generation and the soldier execution. ``motif_stats`` (graph_generate only) is
+    accumulated motif evidence that activates the structural-motif credit prior
+    when ranking generated candidates (see ``_plan_graph_generate``).
     """
     task_adapter = SiloProtocolAdapter(instance)
     global_task = task_adapter.build_global_task()
@@ -151,7 +259,11 @@ def _run_planner(
 
     if cfg.planner_mode == "graph_generate":
         plan, planner_extra = _plan_graph_generate(
-            cfg, n_agents=n_agents, task_adapter=task_adapter, client=client
+            cfg,
+            n_agents=n_agents,
+            task_adapter=task_adapter,
+            client=client,
+            motif_stats=motif_stats,
         )
     else:
         plan, planner_extra = _plan_topology_select(cfg, n_agents=n_agents)
@@ -180,37 +292,15 @@ def _run_planner(
         llm_client=client,
     ).run()
 
-    final = result.final_result
     extra = {
         "case_id": instance.case_id,
         "planner": True,
         "topology": plan.topology_name,
         "objective": cfg.objective,
-        "aggregation_method": final.aggregation_method,
     }
     extra.update(planner_extra)
-    # masbench owns the graded partial: success/exact-match stay strict (from
-    # exp_graph's final), while ``partial`` is recomputed here from the final
-    # answer + ground truth. Prefer the live final_answer, fall back to the key.
-    final_value = final.final_answer if final.final_answer is not None else final.final_key
-    if instance.segmented:
-        # Per-agent grading: the single voted answer is meaningless here.
-        success, partial, per_agent_correct = _score_segmented(
-            result, instance, task_adapter, global_task
-        )
-        extra["segmented"] = True
-        extra["per_agent_correct"] = per_agent_correct
-    else:
-        success = bool(final.exact_match)
-        partial = _partial_score(final_value, global_task)
-    return ScoreResult(
-        success=success,
-        partial=partial,
-        n_messages=int(result.total_messages),
-        n_model_calls=int(result.total_model_calls),
-        tokens=int(result.total_prompt_tokens) + int(result.total_completion_tokens),
-        final_answer=final.final_key,
-        extra=extra,
+    return _score_protocol_result(
+        result, instance, task_adapter, global_task, extra=extra
     )
 
 
@@ -297,14 +387,19 @@ def run_instance(
     cfg: RunConfig,
     *,
     llm_client: LLMClient | None = None,
+    motif_stats: dict[str, dict] | None = None,
 ) -> ScoreResult:
     """Run one instance and score it.
 
     ``cfg.use_planner`` selects the QueenBee planner + generalized ProtocolRunner;
-    otherwise the planner-OFF SynchronousRunner path runs unchanged.
+    otherwise the planner-OFF SynchronousRunner path runs unchanged. ``motif_stats``
+    is forwarded to the graph_generate planner so accumulated motif evidence can
+    activate the structural-motif credit prior (inert on the other paths).
     """
     if cfg.use_planner:
-        return _run_planner(instance, cfg, llm_client=llm_client)
+        return _run_planner(
+            instance, cfg, llm_client=llm_client, motif_stats=motif_stats
+        )
 
     task_adapter = BenchmarkTaskAdapter(instance)
     global_task = task_adapter.build_global_task()
