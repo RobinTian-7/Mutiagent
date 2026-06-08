@@ -195,6 +195,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         fixed_topologies=args.fixed_topologies,
         graphgen_candidates=args.graphgen_candidates,
         out=args.out,
+        resume=getattr(args, "resume", False),
     )
     overall = results["overall"]
     bits = " ".join(
@@ -331,6 +332,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="num_graph_candidates for the graphgen arm (>1 activates motif prior)",
     )
     p_bench.add_argument("--out", required=True)
+    p_bench.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume from out/runs.jsonl: skip runs already checkpointed there "
+             "(a fresh run truncates it). Crashed/timed-out grids continue without "
+             "re-executing finished runs.",
+    )
     p_bench.set_defaults(func=_cmd_bench)
 
     return parser

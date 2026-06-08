@@ -51,9 +51,10 @@ from __future__ import annotations
 import csv
 import json
 import math
+import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.llm.base import LLMClient
@@ -152,6 +153,167 @@ def _run_record(
     return record
 
 
+# --------------------------------------------------------------------------- #
+# Crash-safety: per-run isolation + checkpoint + resume (Plan 5 Task 2).      #
+# --------------------------------------------------------------------------- #
+
+
+# A run unit's identity. Used BOTH to decide whether a loaded record means the
+# run is already done (resume) and to dedupe records read back from runs.jsonl.
+# The fixed arm sweeps several topologies per (case,n,seed), so its key carries
+# the per-topology ``fixed_topology``; every other arm leaves that None.
+def _run_key(record: dict[str, Any]) -> tuple:
+    """Stable identity tuple for one run record: (arm, case, n, seed, topology)."""
+    return (
+        record["arm"],
+        record["case_id"],
+        record["n_agents"],
+        record["seed"],
+        record.get("fixed_topology"),
+    )
+
+
+def _failed_record(
+    arm: str,
+    instance: BenchmarkInstance,
+    seed: int,
+    exc: BaseException,
+    *,
+    topology: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A FAILED run record: same shape as a normal one, metrics zeroed + error.
+
+    Produced when an individual run raises (incl. :class:`LLMTimeoutError`) so the
+    grid keeps going instead of aborting. ``success=False``, all counts 0, and the
+    error type+message is stored under ``extra["error"]`` for later triage.
+    """
+    record: dict[str, Any] = {
+        "arm": arm,
+        "case_id": instance.case_id,
+        "n_agents": instance.n_agents,
+        "seed": seed,
+        "topology": topology,
+        "success": False,
+        "partial": 0.0,
+        "n_messages": 0,
+        "n_model_calls": 0,
+        "tokens": 0,
+        "final_answer": None,
+        "error": f"{type(exc).__name__}: {exc}",
+    }
+    if extra:
+        record.update(extra)
+    return record
+
+
+def _run_unit(
+    produce: Callable[[], ScoreResult],
+    *,
+    arm: str,
+    instance: BenchmarkInstance,
+    seed: int,
+    topology: str | None,
+    extra: dict[str, Any] | None = None,
+    extra_from_score: Callable[[ScoreResult], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Run ONE unit in isolation -> a real record, or a failed record on any error.
+
+    ``produce`` is a thunk that performs the single underlying run and returns its
+    :class:`ScoreResult`. Any exception it raises (incl. ``LLMTimeoutError``) is
+    swallowed into a FAILED record (via :func:`_failed_record`) carrying the same
+    ``arm``/``topology``/``extra``, so a single hung or crashing run can never
+    abort the surrounding grid. ``extra_from_score`` (when given) derives extra
+    record fields from the successful score (e.g. graphgen's generated-graph
+    diagnostics); it is only consulted on the success path.
+
+    Only ``Exception`` is isolated (``LLMTimeoutError`` is a ``RuntimeError``); a
+    ``KeyboardInterrupt``/``SystemExit`` still propagates so an operator can abort
+    a long grid with Ctrl-C and finished runs stay safely checkpointed on disk.
+    """
+    try:
+        score = produce()
+    except Exception as exc:  # noqa: BLE001 - isolation: one bad run never aborts the grid
+        return _failed_record(
+            arm, instance, seed, exc, topology=topology, extra=extra
+        )
+    merged = dict(extra or {})
+    if extra_from_score is not None:
+        merged.update(extra_from_score(score))
+    return _run_record(
+        arm, instance, seed, score, topology=topology, extra=merged or None
+    )
+
+
+class _Checkpoint:
+    """Append-as-you-go run log + completed-key set for crash-safe resume.
+
+    Threaded through ``run_benchmark`` into the per-arm runners. Each produced run
+    record is :meth:`append`-ed immediately as one JSON line to ``out/runs.jsonl``
+    (so a crash mid-grid keeps the finished runs on disk); :meth:`done` reports
+    whether a run key was already present on resume so the runner can skip it. A
+    lock guards the file + the key set so this stays correct under the sequential
+    grid today and the ``--workers`` pool added in Plan 5 Task 3.
+    """
+
+    def __init__(
+        self, path: Path | None, *, completed_keys: set[tuple] | None = None
+    ) -> None:
+        # ``path`` is None when no ``out`` dir was given: runs are still isolated
+        # and tracked in-memory, but nothing is persisted to disk.
+        self._path = path
+        self._lock = threading.Lock()
+        self._completed: set[tuple] = set(completed_keys or set())
+
+    def done(self, key: tuple) -> bool:
+        """True if a record with this :func:`_run_key` is already complete."""
+        with self._lock:
+            return key in self._completed
+
+    def append(self, record: dict[str, Any]) -> None:
+        """Persist one record (success or failed) and mark its key complete."""
+        line = json.dumps(record, default=str) + "\n"
+        with self._lock:
+            if self._path is not None:
+                with self._path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+            self._completed.add(_run_key(record))
+
+
+def _load_checkpoint(out: Path, *, resume: bool) -> tuple[_Checkpoint, list[dict[str, Any]]]:
+    """Prepare ``out/runs.jsonl`` and return ``(_Checkpoint, prior_records)``.
+
+    With ``resume`` and an existing log: read it, dedupe by :func:`_run_key`
+    (last-writer-wins), seed the checkpoint's completed set with those keys, and
+    return the deduped prior records so they fold into the final aggregate.
+    Without resume: truncate any existing log so a re-run starts fresh and never
+    double-counts.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "runs.jsonl"
+
+    prior: list[dict[str, Any]] = []
+    if resume and path.is_file():
+        by_key: dict[tuple, dict[str, Any]] = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            by_key[_run_key(record)] = record
+        prior = list(by_key.values())
+        # Rewrite the deduped set so the on-disk log matches what we resume from.
+        with path.open("w", encoding="utf-8") as fh:
+            for record in prior:
+                fh.write(json.dumps(record, default=str) + "\n")
+    else:
+        # Fresh run: drop any stale log so appended records don't double-count.
+        path.write_text("", encoding="utf-8")
+
+    completed = {_run_key(r) for r in prior}
+    return _Checkpoint(path, completed_keys=completed), prior
+
+
 def _cfg_for(cfg_base: RunConfig, n_agents: int, **overrides: Any) -> RunConfig:
     """Clone ``cfg_base`` with ``n_agents`` pinned and any per-arm overrides."""
     return RunConfig(**{**asdict(cfg_base), "n_agents": n_agents, **overrides})
@@ -173,6 +335,7 @@ def run_benchmark(
     fixed_topologies: list[str] | tuple[str, ...] | None = None,
     graphgen_candidates: int = DEFAULT_GRAPHGEN_CANDIDATES,
     out: str | Path | None = None,
+    resume: bool = False,
     llm_client: LLMClient | None = None,
 ) -> dict[str, Any]:
     """Run the requested ARMS over a Silo-Bench grid and aggregate a Table-1.
@@ -181,6 +344,14 @@ def run_benchmark(
     full results dict (``runs`` / ``conditions`` / ``overall`` / ``arms``); also
     writes ``results.json`` + ``results.csv`` + ``report.md`` under ``out`` when
     given.
+
+    Crash-safety (Plan 5 Task 2): when ``out`` is given, every individual run is
+    isolated (any exception -> a FAILED record, never an abort) and each produced
+    record is appended immediately to ``out/runs.jsonl``. With ``resume=True`` an
+    existing ``runs.jsonl`` is read back, already-finished runs are SKIPPED (not
+    re-executed) and folded into the final aggregate; without resume the log is
+    truncated so a re-run starts fresh. ``resume`` requires ``out`` (it is the
+    checkpoint location) -- it is silently inert when ``out`` is None.
     """
     arms = list(arms)
     seeds = list(seeds)
@@ -210,7 +381,16 @@ def run_benchmark(
             "no Silo-Bench instances matched the given cases/agent-counts/levels"
         )
 
-    runs: list[dict[str, Any]] = []
+    # Checkpoint: when ``out`` is given, prepare ``out/runs.jsonl`` (truncate on a
+    # fresh run, read+dedupe on resume) and seed the run list with prior records so
+    # they fold into the final aggregate. With no ``out`` the checkpoint is an
+    # in-memory no-op that still gives every run unit its isolation wrapper.
+    if out is not None:
+        ckpt, prior_records = _load_checkpoint(Path(out), resume=resume)
+    else:
+        ckpt, prior_records = _Checkpoint(None), []
+
+    runs: list[dict[str, Any]] = list(prior_records)
     conditions: dict[str, Any] = {}
     # Accumulated motif evidence from graphgen-generated specs, fed back into
     # later graphgen runs so the structural-motif prior is active, not merely set.
@@ -220,21 +400,29 @@ def run_benchmark(
     # per (case, seed). Cache the evolve summary keyed by n_agents.
     evolved_summaries: dict[int, dict[str, Any]] = {}
 
+    # Prior (resumed) records bucketed by condition so each condition aggregate is
+    # built from EVERYTHING for it -- runs replayed from the checkpoint plus runs
+    # produced this session -- not just what executed now.
+    prior_by_cond: dict[str, list[dict[str, Any]]] = {}
+    for record in prior_records:
+        key = _condition_key(record["case_id"], record["n_agents"])
+        prior_by_cond.setdefault(key, []).append(record)
+
     for instance in instances:
         cond_key = _condition_key(instance.case_id, instance.n_agents)
-        cond_runs: list[dict[str, Any]] = []
+        new_runs: list[dict[str, Any]] = []
         n_agents = instance.n_agents
 
         for arm in arms:
             if arm == "fixed":
-                cond_runs.extend(
+                new_runs.extend(
                     _run_fixed_arm(
-                        instance, cfg_base, seeds, fixed_topologies, client
+                        instance, cfg_base, seeds, fixed_topologies, client, ckpt
                     )
                 )
             elif arm == "select":
-                cond_runs.extend(
-                    _run_select_arm(instance, cfg_base, seeds, client)
+                new_runs.extend(
+                    _run_select_arm(instance, cfg_base, seeds, client, ckpt)
                 )
             elif arm == "graphgen":
                 arm_runs, new_motif_rows = _run_graphgen_arm(
@@ -242,13 +430,14 @@ def run_benchmark(
                     cfg_base,
                     seeds,
                     client,
+                    ckpt,
                     graphgen_candidates=graphgen_candidates,
                     motif_rows=motif_rows,
                 )
-                cond_runs.extend(arm_runs)
+                new_runs.extend(arm_runs)
                 motif_rows.extend(new_motif_rows)
             elif arm == "evolved":
-                cond_runs.extend(
+                new_runs.extend(
                     _run_evolved_arm(
                         instance,
                         adapter,
@@ -258,6 +447,7 @@ def run_benchmark(
                         levels=levels,
                         client=client,
                         cache=evolved_summaries,
+                        ckpt=ckpt,
                     )
                 )
             else:
@@ -266,7 +456,9 @@ def run_benchmark(
                     f"(valid: fixed, select, graphgen, evolved)"
                 )
 
-        runs.extend(cond_runs)
+        runs.extend(new_runs)
+        # Aggregate the condition from resumed + freshly produced records.
+        cond_runs = prior_by_cond.get(cond_key, []) + new_runs
         conditions[cond_key] = _aggregate_condition_block(instance, cond_runs)
 
     overall = _aggregate_overall(runs, arms)
@@ -295,21 +487,33 @@ def _run_fixed_arm(
     seeds: list[int],
     fixed_topologies: list[str],
     client: LLMClient,
+    ckpt: _Checkpoint,
 ) -> list[dict[str, Any]]:
-    """Run every fixed topology over every seed (planner-OFF, forced topology)."""
+    """Run every fixed topology over every seed (planner-OFF, forced topology).
+
+    Each (topology, seed) is its own checkpointed run unit (the fixed arm's key
+    carries ``fixed_topology``): already-done units are skipped on resume, every
+    produced record is isolated against failure and appended immediately.
+    """
     records: list[dict[str, Any]] = []
     for topology in fixed_topologies:
         for seed in seeds:
+            key = ("fixed", instance.case_id, instance.n_agents, seed, topology)
+            if ckpt.done(key):
+                continue
             cfg = _cfg_for(cfg_base, instance.n_agents, use_planner=False, seed=seed)
-            score = run_fixed_protocol(
-                instance, cfg, topology=topology, llm_client=client
+            record = _run_unit(
+                lambda c=cfg, t=topology: run_fixed_protocol(
+                    instance, c, topology=t, llm_client=client
+                ),
+                arm="fixed",
+                instance=instance,
+                seed=seed,
+                topology=topology,
+                extra={"fixed_topology": topology},
             )
-            records.append(
-                _run_record(
-                    "fixed", instance, seed, score,
-                    topology=topology, extra={"fixed_topology": topology},
-                )
-            )
+            ckpt.append(record)
+            records.append(record)
     return records
 
 
@@ -318,10 +522,14 @@ def _run_select_arm(
     cfg_base: RunConfig,
     seeds: list[int],
     client: LLMClient,
+    ckpt: _Checkpoint,
 ) -> list[dict[str, Any]]:
-    """Run the QueenBee ``topology_select`` arm over every seed."""
+    """Run the QueenBee ``topology_select`` arm over every seed (isolated/resumable)."""
     records: list[dict[str, Any]] = []
     for seed in seeds:
+        key = ("select", instance.case_id, instance.n_agents, seed, None)
+        if ckpt.done(key):
+            continue
         cfg = _cfg_for(
             cfg_base,
             instance.n_agents,
@@ -329,8 +537,16 @@ def _run_select_arm(
             planner_mode="topology_select",
             seed=seed,
         )
-        score = run_instance(instance, cfg, llm_client=client)
-        records.append(_run_record("select", instance, seed, score))
+        record = _run_unit(
+            lambda c=cfg: run_instance(instance, c, llm_client=client),
+            arm="select",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra=None,
+        )
+        ckpt.append(record)
+        records.append(record)
     return records
 
 
@@ -339,23 +555,28 @@ def _run_graphgen_arm(
     cfg_base: RunConfig,
     seeds: list[int],
     client: LLMClient,
+    ckpt: _Checkpoint,
     *,
     graphgen_candidates: int,
     motif_rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Run the QueenBee graph_generate arm over every seed.
+    """Run the QueenBee graph_generate arm over every seed (isolated/resumable).
 
     Accumulated motif evidence (``motif_rows``, each a ``{mean_primary_loss,
     motif_keys}`` row from a prior generated spec) is aggregated into a
     ``motif_stats`` prior and handed to the planner so the structural-motif
     credit prior is active. Returns ``(records, new_motif_rows)`` where the new
     rows are this arm's generated specs' motif evidence, to be appended by the
-    caller for subsequent conditions.
+    caller for subsequent conditions. A failed or resumed (skipped) run
+    contributes no motif evidence (it has no fresh selected-topology/loss signal).
     """
     motif_stats = aggregate_motif_losses(motif_rows) if motif_rows else None
     records: list[dict[str, Any]] = []
     new_motif_rows: list[dict[str, Any]] = []
     for seed in seeds:
+        key = ("graphgen", instance.case_id, instance.n_agents, seed, None)
+        if ckpt.done(key):
+            continue
         cfg = _cfg_for(
             cfg_base,
             instance.n_agents,
@@ -364,27 +585,31 @@ def _run_graphgen_arm(
             num_graph_candidates=graphgen_candidates,
             seed=seed,
         )
-        score = run_instance(
-            instance, cfg, llm_client=client, motif_stats=motif_stats
+        record = _run_unit(
+            lambda c=cfg: run_instance(
+                instance, c, llm_client=client, motif_stats=motif_stats
+            ),
+            arm="graphgen",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra_from_score=lambda s: {
+                "generated_steps": s.extra.get("generated_steps"),
+                "graph_fallback_reason": s.extra.get("graph_fallback_reason"),
+            },
         )
-        records.append(
-            _run_record(
-                "graphgen", instance, seed, score,
-                extra={
-                    "generated_steps": score.extra.get("generated_steps"),
-                    "graph_fallback_reason": score.extra.get("graph_fallback_reason"),
-                },
+        # A real run feeds its (selected topology, loss) back as motif evidence so
+        # the prior accumulates across conditions; a failed run (carrying
+        # ``error``) has no fresh topology/loss signal and contributes none.
+        if "error" not in record:
+            new_motif_rows.append(
+                {
+                    "motif_keys": [f"topology={record.get('topology')}"],
+                    "mean_primary_loss": 0.0 if record["success"] else 1.0,
+                }
             )
-        )
-        # Feed this run's (topology, loss) back as motif evidence keyed by its
-        # selected topology, so the prior accumulates across conditions even
-        # though the offline fallback DAG is a named topology.
-        new_motif_rows.append(
-            {
-                "motif_keys": [f"topology={score.extra.get('topology')}"],
-                "mean_primary_loss": 0.0 if score.success else 1.0,
-            }
-        )
+        ckpt.append(record)
+        records.append(record)
     return records, new_motif_rows
 
 
@@ -398,6 +623,7 @@ def _run_evolved_arm(
     levels: list[str] | None,
     client: LLMClient,
     cache: dict[int, dict[str, Any]],
+    ckpt: _Checkpoint,
 ) -> list[dict[str, Any]]:
     """Run (or reuse) the gated evolution loop, eval its selection on test seeds.
 
@@ -413,8 +639,31 @@ def _run_evolved_arm(
     multi-topology held-out set + a baseline incumbent (same as ``masbench
     evolve``); with a real LLM ``run_benchmark`` callers can disable that, but the
     harness defaults to honest-offline behaviour.
+
+    Crash-safety: only the per-instance EVAL run is a checkpointed run unit (keyed
+    like a fixed run with ``fixed_topology`` = the evolved topology is NOT used --
+    the eval's key topology is None, matching its record). On resume an
+    already-done eval is skipped; the heavy ``run_evolution`` is then triggered
+    lazily, only when at least one eval for this ``n_agents`` still needs running
+    (so a fully-resumed evolved arm never re-pays the evolution cost). The eval is
+    isolated against failure like every other run unit.
     """
     n_agents = instance.n_agents
+    test_seeds = [seeds[-1]] if seeds else [0]
+
+    # Which eval seeds still need running for THIS instance?
+    pending_seeds = [
+        seed
+        for seed in test_seeds
+        if not ckpt.done(("evolved", instance.case_id, n_agents, seed, None))
+    ]
+    if not pending_seeds:
+        # Everything for this instance is already checkpointed -> no evolution,
+        # no eval; the resumed records carry the gate/summary fields already.
+        return []
+
+    # Lazily compute (and cache) the heavy evolution summary -- only now that we
+    # know an eval actually needs it.
     if n_agents not in cache:
         train_seeds = list(seeds[:-1]) or list(seeds)
         val_seeds = [seeds[-1]] if seeds else [0]
@@ -443,30 +692,32 @@ def _run_evolved_arm(
     summary = cache[n_agents]
     evolved_topology = summary["final_selection"]["topology_name"]
     gate = summary["gate"]
+    evolved_extra = {
+        "gate": {
+            "accepted": bool(gate["accepted"]),
+            "j_before": float(gate["j_before"]),
+            "j_after": float(gate["j_after"]),
+        },
+        "val_success_rate": summary["val_success_rate"],
+        "skill_bank_mutated": summary["skill_bank_mutated"],
+    }
 
     # Evaluate the evolved selection on the held-out/test seeds for this instance.
-    test_seeds = [seeds[-1]] if seeds else [0]
     records: list[dict[str, Any]] = []
-    for seed in test_seeds:
+    for seed in pending_seeds:
         cfg = _cfg_for(cfg_base, n_agents, use_planner=False, seed=seed)
-        score = run_fixed_protocol(
-            instance, cfg, topology=evolved_topology, llm_client=client
+        record = _run_unit(
+            lambda c=cfg: run_fixed_protocol(
+                instance, c, topology=evolved_topology, llm_client=client
+            ),
+            arm="evolved",
+            instance=instance,
+            seed=seed,
+            topology=evolved_topology,
+            extra=evolved_extra,
         )
-        records.append(
-            _run_record(
-                "evolved", instance, seed, score,
-                topology=evolved_topology,
-                extra={
-                    "gate": {
-                        "accepted": bool(gate["accepted"]),
-                        "j_before": float(gate["j_before"]),
-                        "j_after": float(gate["j_after"]),
-                    },
-                    "val_success_rate": summary["val_success_rate"],
-                    "skill_bank_mutated": summary["skill_bank_mutated"],
-                },
-            )
-        )
+        ckpt.append(record)
+        records.append(record)
     return records
 
 
