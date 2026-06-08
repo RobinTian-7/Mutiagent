@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from exp_graph.llm.base import LLMClient, LLMResponse
+from exp_graph.mas.motifs import score_spec_by_motifs
 from exp_graph.mas.operators import compose_protocol_from_operators
 from exp_graph.mas.planner import EmperorPlanner
 from exp_graph.mas.role_llm import (
@@ -181,7 +182,7 @@ def plan_free_graph(
                 else float("-inf"),
                 reverse=True,
             )
-        selected = valid_states[0]
+        selected = _select_candidate(valid_states, runtime)
         selected.record.status = "selected"
         plan = _mas_plan_from_graph(selected.graph, selected.spec)
         records = [state.record for state in candidates]
@@ -779,6 +780,50 @@ def _candidate_dedup_sort_key(state: _CandidateState) -> tuple[int, int, int, st
     )
 
 
+def _select_candidate(
+    valid_states: list[_CandidateState],
+    runtime: MASRuntimeConfig,
+) -> _CandidateState:
+    """Pick the winning candidate, optionally applying the motif credit prior.
+
+    ``valid_states`` arrives already in selection order: in ``topk`` mode it has
+    been probe-evaluated and sorted by ``objective_score`` (higher = better); in
+    the default single mode it is generation order, so ``valid_states[0]`` is
+    today's first-valid pick.
+
+    Default behavior (``use_motif_prior`` off, or ``motif_stats`` empty/None) is
+    unchanged: the head of ``valid_states`` is returned, so selection stays
+    byte-identical to before this prior existed.
+
+    When ``use_motif_prior`` is on AND ``motif_stats`` is non-empty, this is the
+    activation point for the Plan 3 Part G machinery: each valid compiled
+    candidate is scored by :func:`exp_graph.mas.motifs.score_spec_by_motifs`
+    (a lower-is-better predicted loss, transferred structurally from past
+    evidence via shared motifs). Candidates are then stably re-sorted by that
+    predicted loss ascending. The sort is stable over the incoming order, so the
+    motif prior *blends* with any existing probe ``objective_score`` ordering:
+    among candidates with an equal (or absent) motif signal, the prior
+    probe-sorted / generation order is preserved as a deterministic tiebreak.
+    Candidates that share no known motif key receive the +inf high-uncertainty
+    sentinel and therefore never displace a candidate with real motif evidence;
+    if *no* candidate has a known motif (all +inf), the order is unchanged.
+    """
+    if not runtime.use_motif_prior or not runtime.motif_stats:
+        return valid_states[0]
+    motif_stats = runtime.motif_stats
+    scored: list[tuple[float, int, _CandidateState]] = []
+    for rank, state in enumerate(valid_states):
+        if state.spec is None:
+            predicted = float("inf")
+        else:
+            predicted = score_spec_by_motifs(state.spec, motif_stats)
+        # ``rank`` is the deterministic tiebreak that preserves the incoming
+        # probe-sorted / generation order on equal (or +inf) motif scores.
+        scored.append((predicted, rank, state))
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return scored[0][2]
+
+
 def _evaluate_candidates(
     *,
     states: list[_CandidateState],
@@ -788,16 +833,11 @@ def _evaluate_candidates(
     task_adapter: CountFrequencyTaskAdapter,
     output_dir: Path,
 ) -> None:
-    # Activation point (Plan 3 Part G): this is where generated candidates are
-    # scored. A structural-motif prior could rank or pre-filter `states` here
-    # before expensive probe runs by calling
-    # ``exp_graph.mas.motifs.score_spec_by_motifs(state.spec, motif_stats)``,
-    # where ``motif_stats`` comes from
-    # ``aggregate_motif_losses(<past winner evidence rows>)``. That transfers
-    # credit to structurally-novel DAGs (new agent count / labels) via shared
-    # motifs. Intentionally NOT wired here: it would change default selection
-    # ordering, which must stay byte-identical until the activation step. The
-    # mechanism is built and unit-proven in tests/test_motifs.py.
+    # Probe-evaluation (topk mode only): execute each candidate on the
+    # validation seeds and record an ``objective_score`` used to sort here. The
+    # structural-motif credit prior (Plan 3 Part G) is applied separately and
+    # opt-in in ``_select_candidate`` after this sort, so it blends with these
+    # probe scores without changing the default-off ordering.
     output_dir.mkdir(parents=True, exist_ok=True)
     validation_seeds = runtime.graph_validation_seeds or [seed]
     for state in states:

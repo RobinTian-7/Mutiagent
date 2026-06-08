@@ -141,6 +141,19 @@ class MASRuntimeConfig(BaseModel):
     graph_max_receiver_fan_in: int = 4
     graph_repair_attempts: int = 1
     graph_validation_seeds: list[int] = Field(default_factory=list)
+    # Structural-motif credit prior for graph-candidate selection (Plan 4 Task
+    # 5, activating the Plan 3 Part G machinery). Both default to no-ops so
+    # graph generation + candidate selection stay byte-identical to today:
+    #   - ``use_motif_prior`` False never consults motif evidence;
+    #   - ``motif_stats`` None (or empty) means there is no evidence to apply, so
+    #     even with the flag on the prior is inert (returns the +inf
+    #     high-uncertainty sentinel for every candidate and the default
+    #     first-valid order is kept).
+    # When both are set, valid compiled candidates are ranked by
+    # ``exp_graph.mas.motifs.score_spec_by_motifs`` (lower predicted loss is
+    # better); see ``graph_generation._select_candidate``.
+    use_motif_prior: bool = False
+    motif_stats: dict[str, dict] | None = None
     role_llm_profiles: RoleLLMProfiles | None = None
     role_llm_config_path: str | None = None
 

@@ -231,6 +231,7 @@ def _plan_graph_generate(
     n_agents: int,
     task_adapter: SiloProtocolAdapter,
     client: LLMClient,
+    motif_stats: dict[str, dict] | None = None,
 ):
     """FULL QueenBee plan: the emperor LLM invents a bespoke temporal DAG.
 
@@ -241,6 +242,16 @@ def _plan_graph_generate(
     artifacts; we hand it a throwaway temp dir so the repo is not polluted, and
     in the default single-search mode the ``task_adapter`` is never invoked for
     probe evaluation (so passing the Silo adapter is safe).
+
+    Structural-motif credit prior (Plan 4 Task 5): we turn ``use_motif_prior`` ON
+    so QueenBee ranks newly generated candidates partly by how their motifs
+    performed in past evidence (see ``exp_graph.mas.motifs``). ``motif_stats`` is
+    that evidence, aggregated by ``aggregate_motif_losses``. A single-run plan
+    has no accumulated Silo evidence yet, so ``motif_stats`` defaults to None and
+    the prior is inert (selection unchanged); the bench/evolve harness supplies
+    ``motif_stats`` from prior runs to activate it. The prior only changes the
+    pick when >1 candidate survives, so set ``cfg.num_graph_candidates > 1`` to
+    let it fire.
     """
     runtime = MASRuntimeConfig(
         llm_provider=cfg.llm_provider,
@@ -250,6 +261,8 @@ def _plan_graph_generate(
         graph_max_steps=cfg.graph_max_steps,
         graph_max_messages=cfg.graph_max_messages,
         graph_max_receiver_fan_in=cfg.graph_max_receiver_fan_in,
+        use_motif_prior=True,
+        motif_stats=motif_stats,
     )
     request = PlannerRequest(
         task_family="silo",
