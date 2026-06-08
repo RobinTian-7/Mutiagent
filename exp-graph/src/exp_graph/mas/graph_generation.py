@@ -788,6 +788,16 @@ def _evaluate_candidates(
     task_adapter: CountFrequencyTaskAdapter,
     output_dir: Path,
 ) -> None:
+    # Activation point (Plan 3 Part G): this is where generated candidates are
+    # scored. A structural-motif prior could rank or pre-filter `states` here
+    # before expensive probe runs by calling
+    # ``exp_graph.mas.motifs.score_spec_by_motifs(state.spec, motif_stats)``,
+    # where ``motif_stats`` comes from
+    # ``aggregate_motif_losses(<past winner evidence rows>)``. That transfers
+    # credit to structurally-novel DAGs (new agent count / labels) via shared
+    # motifs. Intentionally NOT wired here: it would change default selection
+    # ordering, which must stay byte-identical until the activation step. The
+    # mechanism is built and unit-proven in tests/test_motifs.py.
     output_dir.mkdir(parents=True, exist_ok=True)
     validation_seeds = runtime.graph_validation_seeds or [seed]
     for state in states:
