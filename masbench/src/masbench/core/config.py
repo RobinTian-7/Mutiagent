@@ -38,3 +38,8 @@ class RunConfig:
     consensus_threshold: float = 0.8
     final_accept_threshold: float = 0.7
     temperature: float = 0.0
+    # Per-request hard wall-clock timeout (seconds) for non-fake LLM calls. A
+    # hung provider request is abandoned after this budget so the run fails fast
+    # instead of freezing (see masbench.llm.timeout.TimeoutLLMClient). <=0/None
+    # disables the guard. The fake client is instant, so it is never wrapped.
+    request_timeout: float = 90.0

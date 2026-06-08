@@ -41,6 +41,7 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
         base_url=getattr(args, "base_url", None),
         api_key_env=getattr(args, "api_key_env", None),
         seed=args.seed,
+        request_timeout=getattr(args, "request_timeout", 90.0),
     )
 
 
@@ -123,6 +124,7 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
         base_url=getattr(args, "base_url", None),
         api_key_env=getattr(args, "api_key_env", None),
         seed=args.seed,
+        request_timeout=getattr(args, "request_timeout", 90.0),
     )
     # Offline (fake LLM) Silo runs are topology-invariant on success, so by
     # default we inject a synthetic multi-topology held-out set plus a baseline
@@ -180,6 +182,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         model_name=args.model_name,
         base_url=getattr(args, "base_url", None),
         api_key_env=getattr(args, "api_key_env", None),
+        request_timeout=getattr(args, "request_timeout", 90.0),
     )
     results = run_benchmark(
         adapter,
@@ -242,6 +245,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--model-name", default="fake")
         p.add_argument("--base-url", default=None)
         p.add_argument("--api-key-env", default=None)
+        p.add_argument("--request-timeout", dest="request_timeout", type=float,
+                       default=90.0,
+                       help="per-request hard wall-clock timeout (s) for non-fake "
+                            "LLM calls; a hung request fails fast (<=0 disables)")
         p.add_argument("--seed", type=int, default=0)
         p.add_argument("--planner", action="store_true",
                        help="enable the QueenBee planner + generalized ProtocolRunner")

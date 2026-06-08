@@ -31,17 +31,22 @@ from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
 from masbench.core.task_bridge import BenchmarkTaskAdapter, canonical_answer
 from masbench.llm.fake import BenchmarkFakeLLMClient
+from masbench.llm.timeout import TimeoutLLMClient
 
 
 def _build_llm_client(cfg: RunConfig) -> LLMClient:
     if cfg.llm_provider == "fake":
+        # The fake client is instant and deterministic; no timeout guard needed.
         return BenchmarkFakeLLMClient()
-    return create_llm_client(
+    # Wrap the real provider client in a per-request hard wall-clock timeout so a
+    # hung remote call fails fast instead of freezing the whole run.
+    inner = create_llm_client(
         cfg.llm_provider,
         base_url=cfg.base_url,
         api_key_env=cfg.api_key_env,
         thinking_enabled=cfg.thinking_enabled,
     )
+    return TimeoutLLMClient(inner, cfg.request_timeout)
 
 
 def _count_messages(result) -> int:
