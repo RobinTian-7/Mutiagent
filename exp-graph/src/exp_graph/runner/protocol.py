@@ -30,7 +30,10 @@ from exp_graph.protocols import (
     build_protocol_schedule,
     build_protocol_schedule_from_spec,
 )
+from exp_graph.aggregator.protocol_final import ProtocolFinalResult
+from exp_graph.metrics.protocol import ProtocolAgentStepMetric, ProtocolGlobalStepMetric
 from exp_graph.tasks.count_frequency import CountFrequencyTaskAdapter
+from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 from exp_graph.tracing import AgentStepTrace, append_traces_jsonl, reset_trace_jsonl
 
 
@@ -119,10 +122,14 @@ class ProtocolExperimentResult(BaseModel):
     global_task: dict
     schedule: list[CommunicationStep] = Field(default_factory=list)
     step_logs: list[ProtocolStepLog] = Field(default_factory=list)
-    agent_step_metrics: list[CFAgentStepMetric] = Field(default_factory=list)
-    global_step_metrics: list[CFGlobalStepMetric] = Field(default_factory=list)
+    agent_step_metrics: list[CFAgentStepMetric | ProtocolAgentStepMetric] = Field(
+        default_factory=list
+    )
+    global_step_metrics: list[CFGlobalStepMetric | ProtocolGlobalStepMetric] = Field(
+        default_factory=list
+    )
     final_agent_states: list[AgentState] = Field(default_factory=list)
-    final_result: CFProtocolFinalResult
+    final_result: CFProtocolFinalResult | ProtocolFinalResult
     total_steps: int
     total_messages: int
     total_model_calls: int = 0
@@ -134,13 +141,61 @@ class ProtocolExperimentResult(BaseModel):
     trace_path: str | None = None
 
     def to_summary_dict(self) -> dict:
+        # Count-frequency path: byte-identical to the original CF summary.
+        if isinstance(self.final_result, CFProtocolFinalResult):
+            return {
+                "Task": "count_frequency_protocol",
+                "Topology": self.config.topology_name,
+                "Agents": self.config.n_agents,
+                "ArraySize": int(self.global_task["array_length"]),
+                "ValueMin": int(self.global_task["value_min"]),
+                "ValueMax": int(self.global_task["value_max"]),
+                "Seed": self.config.seed,
+                "MergeMode": self.config.merge_mode,
+                "InitMode": self.config.init_mode,
+                "TotalSteps": self.total_steps,
+                "TotalMessages": self.total_messages,
+                "TotalModelCalls": self.total_model_calls,
+                "TotalPromptTokens": self.total_prompt_tokens,
+                "TotalCompletionTokens": self.total_completion_tokens,
+                "TotalRetryAttempts": self.total_retry_attempts,
+                "TotalDeterministicFallbacks": self.total_deterministic_fallbacks,
+                "AggregationMethod": self.final_result.aggregation_method,
+                "SelectedPrimary": self.final_result.selected_primary,
+                "FinalRMSE": self.final_result.rmse,
+                "FinalNormalizedL1Error": self.final_result.normalized_l1_error,
+                "FinalExactMatch": self.final_result.exact_match,
+                "VoteRMSE": self.final_result.vote.rmse,
+                "VoteNormalizedL1Error": self.final_result.vote.normalized_l1_error,
+                "VoteTopRatio": self.final_result.vote.top_ratio,
+                "AverageRMSE": (
+                    self.final_result.average.rmse
+                    if self.final_result.average is not None
+                    else None
+                ),
+                "AverageNormalizedL1Error": (
+                    self.final_result.average.normalized_l1_error
+                    if self.final_result.average is not None
+                    else None
+                ),
+                "AverageIncludedAgents": (
+                    len(self.final_result.average.included_agents)
+                    if self.final_result.average is not None
+                    else 0
+                ),
+                "AnswerAgentIds": self.final_result.answer_agent_ids,
+                "VoteAverageDisagreementRMSE": (
+                    self.final_result.vote_average_disagreement_rmse
+                ),
+                "PrimaryMetric": self.final_result.rmse,
+                "PrimaryMetricName": "rmse",
+                "FinalKey": self.final_result.final_key,
+            }
+        # Generic task path (Plan 2 Task 5 formalizes the generic evidence keys).
         return {
-            "Task": "count_frequency_protocol",
+            "Task": str(self.global_task.get("task_name", "protocol")),
             "Topology": self.config.topology_name,
             "Agents": self.config.n_agents,
-            "ArraySize": int(self.global_task["array_length"]),
-            "ValueMin": int(self.global_task["value_min"]),
-            "ValueMax": int(self.global_task["value_max"]),
             "Seed": self.config.seed,
             "MergeMode": self.config.merge_mode,
             "InitMode": self.config.init_mode,
@@ -153,31 +208,13 @@ class ProtocolExperimentResult(BaseModel):
             "TotalDeterministicFallbacks": self.total_deterministic_fallbacks,
             "AggregationMethod": self.final_result.aggregation_method,
             "SelectedPrimary": self.final_result.selected_primary,
-            "FinalRMSE": self.final_result.rmse,
-            "FinalNormalizedL1Error": self.final_result.normalized_l1_error,
-            "FinalExactMatch": self.final_result.exact_match,
-            "VoteRMSE": self.final_result.vote.rmse,
-            "VoteNormalizedL1Error": self.final_result.vote.normalized_l1_error,
-            "VoteTopRatio": self.final_result.vote.top_ratio,
-            "AverageRMSE": (
-                self.final_result.average.rmse
-                if self.final_result.average is not None
-                else None
+            "PrimaryMetric": float(getattr(self.final_result, "primary_metric", 0.0)),
+            "PrimaryMetricName": str(
+                self.global_task.get("primary_metric_name", "primary")
             ),
-            "AverageNormalizedL1Error": (
-                self.final_result.average.normalized_l1_error
-                if self.final_result.average is not None
-                else None
-            ),
-            "AverageIncludedAgents": (
-                len(self.final_result.average.included_agents)
-                if self.final_result.average is not None
-                else 0
-            ),
+            "FinalExactMatch": bool(self.final_result.exact_match),
+            "VoteTopRatio": getattr(self.final_result, "top_ratio", None),
             "AnswerAgentIds": self.final_result.answer_agent_ids,
-            "VoteAverageDisagreementRMSE": (
-                self.final_result.vote_average_disagreement_rmse
-            ),
             "FinalKey": self.final_result.final_key,
         }
 
@@ -189,7 +226,7 @@ class ProtocolRunner:
         self,
         *,
         config: ProtocolRunnerConfig,
-        task_adapter: CountFrequencyTaskAdapter,
+        task_adapter: ProtocolTaskAdapter,
         global_task: dict,
         llm_client: LLMClient | None = None,
     ) -> None:
@@ -383,15 +420,19 @@ class ProtocolRunner:
             agent_step_metrics.extend(step_agent_metrics)
             global_step_metrics.append(step_global_metric)
 
-        final_result = run_cf_final_aggregation(
+        final_result = self.task_adapter.finalize_protocol(
             agent_states=agent_states,
             global_task=self.global_task,
-            task_adapter=self.task_adapter,
             topology_name=self.config.topology_name,
             star_center=self.config.star_center,
             average_include_min_coverage=self.config.average_include_min_coverage,
             selected_primary=self.config.selected_primary,
             answer_agent_ids_override=self._metadata_answer_agent_ids(),
+        )
+        final_metric_log = (
+            f"final_rmse={final_result.rmse:.6f}"
+            if isinstance(final_result, CFProtocolFinalResult)
+            else f"final_primary={final_result.primary_metric:.6f}"
         )
         self._log_event(
             "run-done",
@@ -399,7 +440,7 @@ class ProtocolRunner:
                 f"run={run_id} steps={len(schedule)} messages={total_messages} "
                 f"model_calls={total_model_calls} retries={total_retry_attempts} "
                 f"deterministic_fallbacks={total_deterministic_fallbacks} "
-                f"final_rmse={final_result.rmse:.6f} exact={final_result.exact_match}"
+                f"{final_metric_log} exact={final_result.exact_match}"
             ),
         )
         return ProtocolExperimentResult(
@@ -979,11 +1020,13 @@ class ProtocolRunner:
         phase: str,
         send_counts: Counter[int],
         receive_counts: Counter[int],
-    ) -> tuple[list[CFAgentStepMetric], CFGlobalStepMetric]:
-        return build_cf_step_metrics(
+    ) -> tuple[
+        list[CFAgentStepMetric | ProtocolAgentStepMetric],
+        CFGlobalStepMetric | ProtocolGlobalStepMetric,
+    ]:
+        return self.task_adapter.build_protocol_step_metrics(
             agent_states=agent_states,
             global_task=self.global_task,
-            task_adapter=self.task_adapter,
             topology_name=self.config.topology_name,
             step_idx=step_idx,
             phase=phase,
@@ -998,7 +1041,8 @@ class ProtocolRunner:
             for key, value in self.global_task.items()
             if key not in {"array"}
         }
-        compact["array_length"] = int(self.global_task["array_length"])
+        if "array_length" in self.global_task:
+            compact["array_length"] = int(self.global_task["array_length"])
         return compact
 
     def _metadata_answer_agent_ids(self) -> list[int] | None:

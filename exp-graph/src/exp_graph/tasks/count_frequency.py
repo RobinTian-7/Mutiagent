@@ -11,6 +11,7 @@ from typing import Any
 from exp_graph.agents.schemas import BeliefState, BeliefStatus
 from exp_graph.messaging import OutboxMessage
 from exp_graph.tasks.base import TaskAdapter
+from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 
 
 CF_STATE_MARKER = "CF_STATE_JSON:"
@@ -188,7 +189,7 @@ def build_cf_outbox_projection(message: OutboxMessage) -> dict[str, Any]:
     )
 
 
-class CountFrequencyTaskAdapter(TaskAdapter):
+class CountFrequencyTaskAdapter(ProtocolTaskAdapter):
     """Task adapter for computing frequencies over a sharded integer array."""
 
     task_name = "count_frequency"
@@ -995,6 +996,83 @@ VERIFIED_MERGE_BELIEF_JSON:
             "value_min": global_task["value_min"],
             "value_max": global_task["value_max"],
         }
+
+    # --- ProtocolTaskAdapter answer/score/finalize (delegates to cf_final/cf_protocol) ---
+    def extract_protocol_answer(self, belief_state: BeliefState) -> dict[str, int]:
+        return self.extract_protocol_counts(belief_state)
+
+    def protocol_answer_key(self, answer: Any) -> str:
+        return count_frequency_consensus_key(answer or {})
+
+    def score_protocol_answer(
+        self, answer: Any, global_task: dict[str, Any]
+    ) -> dict[str, Any]:
+        domain = self.count_domain_keys(global_task)
+        truth = canonicalize_counts(global_task["answer_counts"])
+        pred = canonicalize_counts(answer or {})
+        return {
+            "primary_metric": compute_rmse(pred, truth, domain),
+            "exact_match": pred == truth,
+        }
+
+    def answer_holders(
+        self, *, topology_name: str, n_agents: int, star_center: int
+    ) -> list[int]:
+        from exp_graph.aggregator.cf_final import answer_agents_for_topology
+
+        return answer_agents_for_topology(
+            topology_name=topology_name, n_agents=n_agents, star_center=star_center
+        )
+
+    def finalize_protocol(
+        self,
+        *,
+        agent_states,
+        global_task,
+        topology_name,
+        star_center=0,
+        average_include_min_coverage=1.0,
+        selected_primary="topology_default",
+        answer_agent_ids_override=None,
+    ):
+        from exp_graph.aggregator.cf_final import run_cf_final_aggregation
+
+        return run_cf_final_aggregation(
+            agent_states=agent_states,
+            global_task=global_task,
+            task_adapter=self,
+            topology_name=topology_name,
+            star_center=star_center,
+            average_include_min_coverage=average_include_min_coverage,
+            selected_primary=selected_primary,
+            answer_agent_ids_override=answer_agent_ids_override,
+        )
+
+    def build_protocol_step_metrics(
+        self,
+        *,
+        agent_states,
+        global_task,
+        topology_name,
+        step_idx,
+        phase,
+        send_counts,
+        receive_counts,
+        average_include_min_coverage=1.0,
+    ):
+        from exp_graph.metrics.cf_protocol import build_cf_step_metrics
+
+        return build_cf_step_metrics(
+            agent_states=agent_states,
+            global_task=global_task,
+            task_adapter=self,
+            topology_name=topology_name,
+            step_idx=step_idx,
+            phase=phase,
+            send_counts=send_counts,
+            receive_counts=receive_counts,
+            average_include_min_coverage=average_include_min_coverage,
+        )
 
 
 def _sort_count_key(value: str) -> tuple[int, int | str]:

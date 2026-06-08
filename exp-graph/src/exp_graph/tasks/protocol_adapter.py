@@ -4,20 +4,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from exp_graph.agents.schemas import AgentState, BeliefState
-from exp_graph.aggregator.protocol_final import (
-    ProtocolFinalResult,
-    run_protocol_vote_aggregation,
-)
 from exp_graph.messaging import OutboxMessage
-from exp_graph.metrics.protocol import (
-    ProtocolAgentStepMetric,
-    ProtocolGlobalStepMetric,
-    build_protocol_step_metrics,
-)
 from exp_graph.tasks.base import TaskAdapter
+
+# Imported lazily inside the default methods to avoid an import cycle:
+# count_frequency -> protocol_adapter -> aggregator/metrics __init__ -> cf_* -> count_frequency.
+if TYPE_CHECKING:
+    from exp_graph.aggregator.protocol_final import ProtocolFinalResult
+    from exp_graph.metrics.protocol import (
+        ProtocolAgentStepMetric,
+        ProtocolGlobalStepMetric,
+    )
 
 
 class ProtocolTaskAdapter(TaskAdapter, ABC):
@@ -122,6 +122,8 @@ class ProtocolTaskAdapter(TaskAdapter, ABC):
         selected_primary: str = "topology_default",
         answer_agent_ids_override: list[int] | None = None,
     ) -> ProtocolFinalResult:
+        from exp_graph.aggregator.protocol_final import run_protocol_vote_aggregation
+
         ids = answer_agent_ids_override or self.answer_holders(
             topology_name=topology_name,
             n_agents=len(agent_states),
@@ -146,7 +148,11 @@ class ProtocolTaskAdapter(TaskAdapter, ABC):
         receive_counts: Counter[int],
         average_include_min_coverage: float = 1.0,
     ) -> tuple[list[ProtocolAgentStepMetric], ProtocolGlobalStepMetric]:
-        return build_protocol_step_metrics(
+        from exp_graph.metrics.protocol import (
+            build_protocol_step_metrics as _build_protocol_step_metrics,
+        )
+
+        return _build_protocol_step_metrics(
             agent_states=agent_states,
             global_task=global_task,
             task_adapter=self,

@@ -76,21 +76,28 @@ class MASProtocolRunner:
 
 
 def summary_to_aggregate_row(summary: dict) -> dict:
-    """Adapt a single run summary to the aggregate-row shape used by ministers."""
+    """Adapt a single run summary to the aggregate-row shape used by ministers.
+
+    Robust to both count-frequency summaries (which carry ``FinalRMSE``) and
+    generic protocol summaries (which carry ``PrimaryMetric``/``PrimaryMetricName``).
+    """
+    primary = float(summary.get("PrimaryMetric", summary.get("FinalRMSE", 0.0)))
     return {
         "Topology": summary["Topology"],
         "Agents": summary["Agents"],
-        "ArraySize": summary["ArraySize"],
+        "ArraySize": summary.get("ArraySize", 0),
         "MergeMode": summary["MergeMode"],
         "InitMode": summary["InitMode"],
         "Runs": 1,
-        "MeanFinalRMSE": summary["FinalRMSE"],
+        "MeanFinalRMSE": float(summary.get("FinalRMSE", primary)),
         "StdFinalRMSE": 0.0,
-        "MeanFinalNormalizedL1Error": summary["FinalNormalizedL1Error"],
-        "ExactMatchRate": 1.0 if summary["FinalExactMatch"] else 0.0,
+        "MeanFinalNormalizedL1Error": float(summary.get("FinalNormalizedL1Error", 0.0)),
+        "ExactMatchRate": 1.0 if summary.get("FinalExactMatch") else 0.0,
+        "MeanPrimaryMetric": primary,
+        "PrimaryMetricName": summary.get("PrimaryMetricName", "rmse"),
         "MeanTotalSteps": summary["TotalSteps"],
         "MeanTotalMessages": summary["TotalMessages"],
         "MeanTotalModelCalls": summary["TotalModelCalls"],
         "MeanTokenCost": summary["TotalPromptTokens"] + summary["TotalCompletionTokens"],
-        "MeanVoteTopRatio": summary["VoteTopRatio"],
+        "MeanVoteTopRatio": summary.get("VoteTopRatio") or 0.0,
     }
