@@ -14,6 +14,9 @@ class RunConfig:
     use_skill_evolution: bool = False
     topology: str = "mesh"
     objective: str = "balanced"
+    # Planner-path only: how soldiers initialize/merge beliefs in ProtocolRunner.
+    merge_mode: str = "deterministic"
+    init_mode: str = "deterministic"
     n_agents: int | None = None
     max_rounds: int = 4
     llm_provider: str = "fake"

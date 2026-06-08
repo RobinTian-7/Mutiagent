@@ -41,6 +41,11 @@ uv run python -m masbench.cli report --run-dir runs/silo_real
 ```
 
 ## Status
-- Plan 1 (this): planner-OFF, exact-match success rate.
-- Plan 2: generic protocol runner (temporal-DAG execution on any benchmark).
-- Plan 3: full QueenBee planner + skill-evolution on Silo-Bench; official partial-correctness scorers.
+- Plan 1 (done): planner-OFF, exact-match success rate on Silo-Bench via `SynchronousRunner`.
+- Plan 2 (done): exp_graph's protocol engine is now task-agnostic — `ProtocolTaskAdapter` +
+  generic vote aggregation + generic step metrics. CF stays byte-identical (delegates to
+  cf_final/cf_protocol); a non-CF `global_max` task runs end-to-end through `ProtocolRunner`.
+  exp_graph suite: 200 passed, 1 skipped.
+- Plan 3 (next): `SiloProtocolAdapter` + wire `--planner` to the QueenBee temporal-DAG pipeline
+  on Silo-Bench; self-evolution overhaul (validation gate, uncertainty-aware/veto/floor selection,
+  motif-level credit, insight falsification); official partial-correctness scorers.

@@ -25,6 +25,9 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
         benchmark=args.benchmark,
         use_planner=getattr(args, "planner", False),
         topology=args.topology,
+        objective=getattr(args, "objective", "balanced"),
+        merge_mode=getattr(args, "merge_mode", "deterministic"),
+        init_mode=getattr(args, "init_mode", "deterministic"),
         max_rounds=args.max_rounds,
         llm_provider=args.llm,
         model_name=args.model_name,
@@ -125,6 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--benchmark", default="silo_bench")
         p.add_argument("--benchmarks-dir", default="third_party/acl26-silo-bench/benchmarks")
         p.add_argument("--topology", default="mesh")
+        p.add_argument("--objective", default="balanced",
+                       help="planner objective: balanced | accuracy_first | budget_first")
+        p.add_argument("--merge-mode", default="deterministic",
+                       help="(planner) deterministic | llm_belief_merge | llm_full_merge")
+        p.add_argument("--init-mode", default="deterministic",
+                       help="(planner) deterministic | llm_local_solve")
         p.add_argument("--max-rounds", type=int, default=4)
         p.add_argument("--llm", dest="llm", default="fake",
                        help="fake | openai | deepseek | bailian | dashscope | qwen | alibaba | xiaomi")
@@ -133,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--api-key-env", default=None)
         p.add_argument("--seed", type=int, default=0)
         p.add_argument("--planner", action="store_true",
-                       help="(Plan 2/3) enable the QueenBee planner; not yet supported")
+                       help="enable the QueenBee planner + generalized ProtocolRunner")
 
     p_run = sub.add_parser("run", help="run a single instance")
     add_common(p_run)

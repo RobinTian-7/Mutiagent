@@ -33,10 +33,12 @@ def test_offline_unknown_task_runs_without_crashing():
     assert "stop_reason" in score.extra
 
 
-def test_planner_on_is_not_yet_supported():
-    import pytest
-
+def test_planner_on_runs_via_protocol_runner():
+    # Planner path is now wired (Plan 3 Part B): it routes through EmperorPlanner
+    # + ProtocolRunner instead of raising. See test_engine_planner.py for the full
+    # offline-convergence assertions.
     inst = _instance("I-01")
-    cfg = RunConfig(use_planner=True)
-    with pytest.raises(NotImplementedError, match="Plan 2/3"):
-        run_instance(inst, cfg)
+    cfg = RunConfig(use_planner=True, llm_provider="fake", n_agents=2)
+    score = run_instance(inst, cfg)
+    assert isinstance(score, ScoreResult)
+    assert score.extra["planner"] is True
