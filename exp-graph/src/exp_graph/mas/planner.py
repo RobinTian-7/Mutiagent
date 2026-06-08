@@ -47,6 +47,17 @@ class TopologySelectPlanner:
         if not skills:
             return fallback_plan(request)
 
+        # Plan 3 Part F knobs. All default to no-ops so the block below is
+        # byte-identical to the prior relative-only selection: ``risk_weight``
+        # 0.0 leaves ``selection_score`` == ``score``; ``enforce_avoid_veto``
+        # False keeps every candidate; ``max_acceptable_loss`` None skips the
+        # floor.
+        risk_weight = float(getattr(request.objective, "risk_weight", 0.0))
+        enforce_avoid_veto = bool(
+            getattr(request.objective, "enforce_avoid_veto", False)
+        )
+        max_acceptable_loss = getattr(request.objective, "max_acceptable_loss", None)
+
         scored = []
         for skill in skills:
             score, breakdown = score_skill(
@@ -54,9 +65,40 @@ class TopologySelectPlanner:
                 objective=request.objective,
                 peers=skills,
             )
-            scored.append((score, breakdown, skill))
+            selection_score = score - risk_weight * _skill_risk_penalty(skill)
+            scored.append((selection_score, breakdown, skill))
         scored.sort(key=lambda item: item[0], reverse=True)
+
+        veto_note = ""
+        if enforce_avoid_veto:
+            vetoed = _vetoed_topology_names(self.skill_bank, request)
+            if vetoed:
+                kept = [
+                    item
+                    for item in scored
+                    if (item[2].topology_name or "") not in vetoed
+                ]
+                if not kept:
+                    return _veto_fallback_plan(request, vetoed)
+                if len(kept) != len(scored):
+                    veto_note = (
+                        " Excluded vetoed topologies "
+                        f"{sorted(vetoed)} via counterexample skills."
+                    )
+                scored = kept
+
         best_score, best_breakdown, best_skill = scored[0]
+
+        if max_acceptable_loss is not None:
+            best_loss = _breakdown_loss(best_breakdown)
+            if best_loss > float(max_acceptable_loss):
+                return _floor_fallback_plan(
+                    request,
+                    best_skill=best_skill,
+                    best_loss=best_loss,
+                    max_acceptable_loss=float(max_acceptable_loss),
+                )
+
         topology_name = best_skill.topology_name or default_topology_for_objective(request)
         return MASPlan(
             planner_mode="topology_select",
@@ -79,6 +121,7 @@ class TopologySelectPlanner:
             rationale=(
                 f"Selected {topology_name} from skill {best_skill.skill_id} "
                 f"for {request.objective.name}."
+                + veto_note
             ),
         )
 
@@ -159,6 +202,85 @@ def fallback_plan(request: PlannerRequest) -> MASPlan:
         topology_name=topology,
         operators=operators,
         rationale="Fallback plan because no matching skills were available.",
+    )
+
+
+def _skill_risk_penalty(skill: SkillCard) -> float:
+    """Read ``confidence.risk_penalty`` (lower is safer); default 0.0.
+
+    Recorded by ``consolidation._recompute_confidence`` as
+    ``min(0.4, 0.05 * len(distinct risk tags))``. Absent/non-numeric values
+    contribute 0.0 so the risk term is a no-op for skills without it.
+    """
+    value = skill.confidence.get("risk_penalty")
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _breakdown_loss(breakdown: dict[str, float]) -> float:
+    """Lower-is-better loss for the absolute floor.
+
+    ``score_skill`` stores this as ``breakdown['rmse']``, which is the converted
+    ``mean_primary_loss`` when present (generic benchmarks) and otherwise
+    ``mean_rmse`` (count-frequency). See ``scoring.primary_loss_metric``.
+    """
+    value = breakdown.get("rmse")
+    if value is None:
+        return float("inf")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def _vetoed_topology_names(skill_bank: SkillBank, request: PlannerRequest) -> set[str]:
+    """Topology names flagged by matching avoid/counterexample skills."""
+    return {
+        skill.topology_name
+        for skill in skill_bank.retrieve_avoid(request)
+        if skill.topology_name
+    }
+
+
+def _veto_fallback_plan(request: PlannerRequest, vetoed: set[str]) -> MASPlan:
+    """Safe-default plan used when every candidate topology is vetoed."""
+    topology = default_topology_for_objective(request)
+    operators = operators_for_objective(request)
+    return MASPlan(
+        planner_mode="topology_select",
+        topology_name=topology,
+        operators=operators,
+        rationale=(
+            "Counterexample veto excluded every candidate topology "
+            f"{sorted(vetoed)}; fell back to safe default {topology} "
+            f"for {request.objective.name}."
+        ),
+    )
+
+
+def _floor_fallback_plan(
+    request: PlannerRequest,
+    *,
+    best_skill: SkillCard,
+    best_loss: float,
+    max_acceptable_loss: float,
+) -> MASPlan:
+    """Safe-default plan used when the best candidate violates the loss floor."""
+    topology = default_topology_for_objective(request)
+    operators = operators_for_objective(request)
+    return MASPlan(
+        planner_mode="topology_select",
+        topology_name=topology,
+        operators=operators,
+        rationale=(
+            f"Best candidate {best_skill.skill_id} loss {best_loss:g} exceeds the "
+            f"acceptable loss floor {max_acceptable_loss:g}; fell back to safe "
+            f"default {topology} for {request.objective.name}."
+        ),
     )
 
 

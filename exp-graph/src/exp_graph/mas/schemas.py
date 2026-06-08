@@ -42,6 +42,17 @@ class ObjectiveSpec(BaseModel):
     # named objective is unchanged.
     uncertainty_weight: float = 0.0
     min_seeds: int = 1
+    # Counterexample veto + absolute floor + risk-aware scoring knobs (Plan 3
+    # Part F). All three default to no-ops so ``TopologySelectPlanner.plan`` is
+    # byte-identical to today and ``from_name`` leaves them unset:
+    #   - ``enforce_avoid_veto`` False keeps avoid skills as retrieval-only
+    #     constraints (never a selection veto);
+    #   - ``max_acceptable_loss`` None disables the no-worse-than-baseline floor;
+    #   - ``risk_weight`` 0.0 leaves the selection score equal to ``score_skill``
+    #     (no ``confidence.risk_penalty`` subtraction).
+    enforce_avoid_veto: bool = False
+    max_acceptable_loss: float | None = None
+    risk_weight: float = 0.0
 
     @classmethod
     def from_name(cls, name: ObjectiveName) -> "ObjectiveSpec":
