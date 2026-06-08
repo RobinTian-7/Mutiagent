@@ -196,6 +196,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         graphgen_candidates=args.graphgen_candidates,
         out=args.out,
         resume=getattr(args, "resume", False),
+        workers=getattr(args, "workers", 1),
     )
     overall = results["overall"]
     bits = " ".join(
@@ -338,6 +339,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="resume from out/runs.jsonl: skip runs already checkpointed there "
              "(a fresh run truncates it). Crashed/timed-out grids continue without "
              "re-executing finished runs.",
+    )
+    p_bench.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="number of parallel worker threads for the run grid (default 1 = "
+             "sequential). The grid is I/O-bound (LLM calls release the GIL), so "
+             ">1 dispatches independent run-units to a thread pool for near-linear "
+             "speedup; checkpoint/resume semantics are unchanged.",
     )
     p_bench.set_defaults(func=_cmd_bench)
 

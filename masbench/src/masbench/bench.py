@@ -52,7 +52,8 @@ import csv
 import json
 import math
 import threading
-from dataclasses import asdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -336,6 +337,7 @@ def run_benchmark(
     graphgen_candidates: int = DEFAULT_GRAPHGEN_CANDIDATES,
     out: str | Path | None = None,
     resume: bool = False,
+    workers: int = 1,
     llm_client: LLMClient | None = None,
 ) -> dict[str, Any]:
     """Run the requested ARMS over a Silo-Bench grid and aggregate a Table-1.
@@ -352,6 +354,22 @@ def run_benchmark(
     re-executed) and folded into the final aggregate; without resume the log is
     truncated so a re-run starts fresh. ``resume`` requires ``out`` (it is the
     checkpoint location) -- it is silently inert when ``out`` is None.
+
+    Concurrency (Plan 5 Task 3): the grid is embarrassingly parallel and the
+    underlying LLM calls are I/O-bound (they release the GIL), so ``workers > 1``
+    dispatches the independent run-units to a
+    :class:`~concurrent.futures.ThreadPoolExecutor` for near-linear speedup. The
+    full task list (across all instances x arms x seeds, expanding the fixed
+    arm's per-topology units) is built up front, ``ckpt.done`` units filtered
+    out, then everything is submitted at once; each finished unit's record is
+    appended through the lock-guarded ``ckpt.append`` so the checkpoint/resume
+    semantics are unchanged and there are no double-appends. Two arm-specifics
+    are handled before dispatch (see :func:`_build_parallel_tasks`): the graphgen
+    motif prior is SNAPSHOTTED once (cross-run motif accumulation becomes a
+    best-effort prior under concurrency; per-run correctness is unaffected) and
+    the heavy ``run_evolution`` is run sequentially and once per ``n_agents``.
+    ``workers <= 1`` keeps the exact sequential path below (incl. the incremental
+    motif feed), so it is byte-for-byte the pre-concurrency behaviour.
     """
     arms = list(arms)
     seeds = list(seeds)
@@ -408,58 +426,95 @@ def run_benchmark(
         key = _condition_key(record["case_id"], record["n_agents"])
         prior_by_cond.setdefault(key, []).append(record)
 
-    for instance in instances:
-        cond_key = _condition_key(instance.case_id, instance.n_agents)
-        new_runs: list[dict[str, Any]] = []
-        n_agents = instance.n_agents
+    if workers > 1:
+        # Parallel path: build the full not-yet-done task list up front (snapshot
+        # the graphgen motif prior, pre-run the heavy evolution sequentially), then
+        # dispatch every run-unit to a thread pool. Each finished record is folded
+        # back through the lock-guarded ``ckpt.append`` so checkpoint/resume and the
+        # no-double-append guarantee are unchanged. Aggregation is order-independent.
+        new_runs = _run_parallel(
+            instances,
+            arms,
+            cfg_base=cfg_base,
+            seeds=seeds,
+            fixed_topologies=fixed_topologies,
+            graphgen_candidates=graphgen_candidates,
+            motif_rows=motif_rows,
+            evolved_summaries=evolved_summaries,
+            adapter=adapter,
+            cases=cases,
+            levels=levels,
+            client=client,
+            ckpt=ckpt,
+            workers=workers,
+        )
+        runs.extend(new_runs)
+        # Aggregate each condition from EVERYTHING for it (resumed + freshly run).
+        by_cond_runs: dict[str, list[dict[str, Any]]] = {
+            k: list(v) for k, v in prior_by_cond.items()
+        }
+        for record in new_runs:
+            by_cond_runs.setdefault(
+                _condition_key(record["case_id"], record["n_agents"]), []
+            ).append(record)
+        for instance in instances:
+            cond_key = _condition_key(instance.case_id, instance.n_agents)
+            conditions[cond_key] = _aggregate_condition_block(
+                instance, by_cond_runs.get(cond_key, [])
+            )
+    else:
+        for instance in instances:
+            cond_key = _condition_key(instance.case_id, instance.n_agents)
+            new_runs = []
+            n_agents = instance.n_agents
 
-        for arm in arms:
-            if arm == "fixed":
-                new_runs.extend(
-                    _run_fixed_arm(
-                        instance, cfg_base, seeds, fixed_topologies, client, ckpt
+            for arm in arms:
+                if arm == "fixed":
+                    new_runs.extend(
+                        _run_fixed_arm(
+                            instance, cfg_base, seeds, fixed_topologies, client, ckpt
+                        )
                     )
-                )
-            elif arm == "select":
-                new_runs.extend(
-                    _run_select_arm(instance, cfg_base, seeds, client, ckpt)
-                )
-            elif arm == "graphgen":
-                arm_runs, new_motif_rows = _run_graphgen_arm(
-                    instance,
-                    cfg_base,
-                    seeds,
-                    client,
-                    ckpt,
-                    graphgen_candidates=graphgen_candidates,
-                    motif_rows=motif_rows,
-                )
-                new_runs.extend(arm_runs)
-                motif_rows.extend(new_motif_rows)
-            elif arm == "evolved":
-                new_runs.extend(
-                    _run_evolved_arm(
+                elif arm == "select":
+                    new_runs.extend(
+                        _run_select_arm(instance, cfg_base, seeds, client, ckpt)
+                    )
+                elif arm == "graphgen":
+                    arm_runs, new_motif_rows = _run_graphgen_arm(
                         instance,
-                        adapter,
                         cfg_base,
                         seeds,
-                        cases=cases,
-                        levels=levels,
-                        client=client,
-                        cache=evolved_summaries,
-                        ckpt=ckpt,
+                        client,
+                        ckpt,
+                        graphgen_candidates=graphgen_candidates,
+                        motif_rows=motif_rows,
                     )
-                )
-            else:
-                raise SystemExit(
-                    f"unknown arm '{arm}' "
-                    f"(valid: fixed, select, graphgen, evolved)"
-                )
+                    new_runs.extend(arm_runs)
+                    motif_rows.extend(new_motif_rows)
+                elif arm == "evolved":
+                    new_runs.extend(
+                        _run_evolved_arm(
+                            instance,
+                            adapter,
+                            cfg_base,
+                            seeds,
+                            cases=cases,
+                            levels=levels,
+                            client=client,
+                            cache=evolved_summaries,
+                            ckpt=ckpt,
+                        )
+                    )
+                else:
+                    raise SystemExit(
+                        f"unknown arm '{arm}' "
+                        f"(valid: fixed, select, graphgen, evolved)"
+                    )
 
-        runs.extend(new_runs)
-        # Aggregate the condition from resumed + freshly produced records.
-        cond_runs = prior_by_cond.get(cond_key, []) + new_runs
-        conditions[cond_key] = _aggregate_condition_block(instance, cond_runs)
+            runs.extend(new_runs)
+            # Aggregate the condition from resumed + freshly produced records.
+            cond_runs = prior_by_cond.get(cond_key, []) + new_runs
+            conditions[cond_key] = _aggregate_condition_block(instance, cond_runs)
 
     overall = _aggregate_overall(runs, arms)
     results = {
@@ -474,6 +529,428 @@ def run_benchmark(
     if out is not None:
         _write_outputs(results, Path(out))
     return results
+
+
+# --------------------------------------------------------------------------- #
+# Concurrency: parallel run-unit dispatch (Plan 5 Task 3).                    #
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class _RunTask:
+    """One independent, not-yet-done run-unit to dispatch to the thread pool.
+
+    ``produce`` is the record-producing thunk (already wrapped through
+    :func:`_run_unit`, so it returns a real OR a failed record and never raises
+    for an ordinary run error). Each ``_RunTask`` maps 1:1 to one
+    ``(arm, case, n, seed[, topology])`` run-key, which the up-front
+    ``ckpt.done`` filter guarantees is unique across the whole task list.
+    """
+
+    produce: Callable[[], dict[str, Any]]
+
+
+def _run_parallel(
+    instances: list[BenchmarkInstance],
+    arms: list[str],
+    *,
+    cfg_base: RunConfig,
+    seeds: list[int],
+    fixed_topologies: list[str],
+    graphgen_candidates: int,
+    motif_rows: list[dict[str, Any]],
+    evolved_summaries: dict[int, dict[str, Any]],
+    adapter: SiloBenchAdapter,
+    cases: list[str] | None,
+    levels: list[str] | None,
+    client: LLMClient,
+    ckpt: _Checkpoint,
+    workers: int,
+) -> list[dict[str, Any]]:
+    """Dispatch the full not-yet-done run-unit grid to a ``ThreadPoolExecutor``.
+
+    The task list is built FIRST (every instance x arm x seed, the fixed arm
+    expanded per topology), filtering out ``ckpt.done`` units, then all of it is
+    submitted at once -- so scheduling is simple and overlap is maximal. As each
+    future completes its record is appended through the lock-guarded
+    ``ckpt.append`` (safe under concurrency) and collected; completion order does
+    not matter because aggregation is order-independent.
+
+    Two arm-specifics are resolved BEFORE dispatch:
+
+    * **graphgen** -- the sequential "feed each generated run's motif row
+      forward" cannot work under parallel dispatch, so ``motif_stats`` is
+      SNAPSHOTTED once from ``motif_rows`` (possibly empty) and the same snapshot
+      is passed to every graphgen unit. Cross-run motif accumulation is therefore
+      a best-effort prior under ``workers>1``; per-run correctness is unaffected
+      (the sequential ``workers<=1`` path keeps the incremental feed).
+    * **evolved** -- the heavy ``run_evolution`` mutates a shared skill bank and
+      is cached, so it is run SEQUENTIALLY and ONCE per distinct ``n_agents``
+      (that still has a pending eval) BEFORE any parallel dispatch; only the
+      independent per-instance ``run_fixed_protocol`` eval units go to the pool.
+      Two ``run_evolution``s never run concurrently.
+
+    Returns the list of freshly produced records (resumed records are not
+    re-run and not included here).
+    """
+    tasks: list[_RunTask] = _build_parallel_tasks(
+        instances,
+        arms,
+        cfg_base=cfg_base,
+        seeds=seeds,
+        fixed_topologies=fixed_topologies,
+        graphgen_candidates=graphgen_candidates,
+        motif_rows=motif_rows,
+        evolved_summaries=evolved_summaries,
+        adapter=adapter,
+        cases=cases,
+        levels=levels,
+        client=client,
+        ckpt=ckpt,
+    )
+    if not tasks:
+        return []
+
+    new_runs: list[dict[str, Any]] = []
+    # The context manager's __exit__ waits for in-flight futures; that is fine
+    # because each unit is bounded by the per-request timeout. A KeyboardInterrupt
+    # propagates out (stops new scheduling); already-finished units are on disk.
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(task.produce) for task in tasks]
+        for future in as_completed(futures):
+            record = future.result()
+            ckpt.append(record)  # lock-guarded: safe + no double-append
+            new_runs.append(record)
+    return new_runs
+
+
+def _build_parallel_tasks(
+    instances: list[BenchmarkInstance],
+    arms: list[str],
+    *,
+    cfg_base: RunConfig,
+    seeds: list[int],
+    fixed_topologies: list[str],
+    graphgen_candidates: int,
+    motif_rows: list[dict[str, Any]],
+    evolved_summaries: dict[int, dict[str, Any]],
+    adapter: SiloBenchAdapter,
+    cases: list[str] | None,
+    levels: list[str] | None,
+    client: LLMClient,
+    ckpt: _Checkpoint,
+) -> list[_RunTask]:
+    """Build the full list of not-yet-done run-units across the whole grid.
+
+    Each appended task produces exactly one record for one unique run-key (the
+    ``ckpt.done`` filter is applied here, so the pool never sees a duplicate or
+    an already-finished unit). The graphgen motif snapshot and the sequential
+    pre-run of the evolved arm's ``run_evolution`` (see :func:`_run_parallel`)
+    happen here, before any task is dispatched.
+    """
+    tasks: list[_RunTask] = []
+
+    # graphgen: one motif-prior snapshot for the whole parallel batch.
+    motif_stats = aggregate_motif_losses(motif_rows) if motif_rows else None
+
+    for arm in arms:
+        if arm == "fixed":
+            for instance in instances:
+                for topology in fixed_topologies:
+                    for seed in seeds:
+                        key = (
+                            "fixed",
+                            instance.case_id,
+                            instance.n_agents,
+                            seed,
+                            topology,
+                        )
+                        if ckpt.done(key):
+                            continue
+                        tasks.append(
+                            _fixed_task(instance, cfg_base, seed, topology, client)
+                        )
+        elif arm == "select":
+            for instance in instances:
+                for seed in seeds:
+                    key = (
+                        "select",
+                        instance.case_id,
+                        instance.n_agents,
+                        seed,
+                        None,
+                    )
+                    if ckpt.done(key):
+                        continue
+                    tasks.append(_select_task(instance, cfg_base, seed, client))
+        elif arm == "graphgen":
+            for instance in instances:
+                for seed in seeds:
+                    key = (
+                        "graphgen",
+                        instance.case_id,
+                        instance.n_agents,
+                        seed,
+                        None,
+                    )
+                    if ckpt.done(key):
+                        continue
+                    tasks.append(
+                        _graphgen_task(
+                            instance,
+                            cfg_base,
+                            seed,
+                            client,
+                            graphgen_candidates=graphgen_candidates,
+                            motif_stats=motif_stats,
+                        )
+                    )
+        elif arm == "evolved":
+            tasks.extend(
+                _evolved_tasks(
+                    instances,
+                    cfg_base,
+                    seeds,
+                    adapter=adapter,
+                    cases=cases,
+                    levels=levels,
+                    client=client,
+                    cache=evolved_summaries,
+                    ckpt=ckpt,
+                )
+            )
+        else:
+            raise SystemExit(
+                f"unknown arm '{arm}' (valid: fixed, select, graphgen, evolved)"
+            )
+
+    return tasks
+
+
+def _fixed_task(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seed: int,
+    topology: str,
+    client: LLMClient,
+) -> _RunTask:
+    """A single fixed-arm (topology, seed) run-unit (mirrors :func:`_run_fixed_arm`)."""
+    cfg = _cfg_for(cfg_base, instance.n_agents, use_planner=False, seed=seed)
+    return _RunTask(
+        produce=lambda: _run_unit(
+            lambda: run_fixed_protocol(
+                instance, cfg, topology=topology, llm_client=client
+            ),
+            arm="fixed",
+            instance=instance,
+            seed=seed,
+            topology=topology,
+            extra={"fixed_topology": topology},
+        )
+    )
+
+
+def _select_task(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seed: int,
+    client: LLMClient,
+) -> _RunTask:
+    """A single select-arm seed run-unit (mirrors :func:`_run_select_arm`)."""
+    cfg = _cfg_for(
+        cfg_base,
+        instance.n_agents,
+        use_planner=True,
+        planner_mode="topology_select",
+        seed=seed,
+    )
+    return _RunTask(
+        produce=lambda: _run_unit(
+            lambda: run_instance(instance, cfg, llm_client=client),
+            arm="select",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra=None,
+        )
+    )
+
+
+def _graphgen_task(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seed: int,
+    client: LLMClient,
+    *,
+    graphgen_candidates: int,
+    motif_stats: Any,
+) -> _RunTask:
+    """A single graphgen-arm seed run-unit (mirrors :func:`_run_graphgen_arm`).
+
+    Under concurrency the motif prior is a fixed snapshot (``motif_stats``); a
+    generated run does NOT feed its motif row forward, so unlike the sequential
+    path no ``new_motif_rows`` are accumulated mid-flight.
+    """
+    cfg = _cfg_for(
+        cfg_base,
+        instance.n_agents,
+        use_planner=True,
+        planner_mode="graph_generate",
+        num_graph_candidates=graphgen_candidates,
+        seed=seed,
+    )
+    return _RunTask(
+        produce=lambda: _run_unit(
+            lambda: run_instance(
+                instance, cfg, llm_client=client, motif_stats=motif_stats
+            ),
+            arm="graphgen",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra_from_score=lambda s: {
+                "generated_steps": s.extra.get("generated_steps"),
+                "graph_fallback_reason": s.extra.get("graph_fallback_reason"),
+            },
+        )
+    )
+
+
+def _evolved_tasks(
+    instances: list[BenchmarkInstance],
+    cfg_base: RunConfig,
+    seeds: list[int],
+    *,
+    adapter: SiloBenchAdapter,
+    cases: list[str] | None,
+    levels: list[str] | None,
+    client: LLMClient,
+    cache: dict[int, dict[str, Any]],
+    ckpt: _Checkpoint,
+) -> list[_RunTask]:
+    """Build the evolved arm's eval run-units, pre-running evolution sequentially.
+
+    The heavy ``run_evolution`` mutates a shared skill bank + is cached, so it is
+    NOT safe to run concurrently. For every distinct ``n_agents`` that has at
+    least one pending eval seed, this runs (and caches) ``run_evolution`` here,
+    SEQUENTIALLY, before returning any task. Only the resulting per-instance
+    ``run_fixed_protocol`` eval units (independent) become pool tasks. Mirrors the
+    train/test split, gate-extra attachment and synthetic-offline gate of
+    :func:`_run_evolved_arm`.
+    """
+    test_seeds = [seeds[-1]] if seeds else [0]
+
+    # Which instances still have a pending eval? (and which n_agents they need.)
+    pending: list[tuple[BenchmarkInstance, list[int]]] = []
+    for instance in instances:
+        pending_seeds = [
+            seed
+            for seed in test_seeds
+            if not ckpt.done(
+                ("evolved", instance.case_id, instance.n_agents, seed, None)
+            )
+        ]
+        if pending_seeds:
+            pending.append((instance, pending_seeds))
+    if not pending:
+        return []
+
+    # Pre-run + cache the heavy evolution sequentially, once per needed n_agents.
+    needed_n_agents = {instance.n_agents for instance, _ in pending}
+    for n_agents in sorted(needed_n_agents):
+        if n_agents not in cache:
+            cache[n_agents] = _compute_evolution_summary(
+                n_agents,
+                adapter,
+                cfg_base,
+                seeds,
+                cases=cases,
+                levels=levels,
+                client=client,
+            )
+
+    # Now build the independent per-instance eval tasks.
+    tasks: list[_RunTask] = []
+    for instance, pending_seeds in pending:
+        summary = cache[instance.n_agents]
+        evolved_topology = summary["final_selection"]["topology_name"]
+        evolved_extra = _evolved_extra(summary)
+        for seed in pending_seeds:
+            cfg = _cfg_for(
+                cfg_base, instance.n_agents, use_planner=False, seed=seed
+            )
+            tasks.append(
+                _RunTask(
+                    produce=(
+                        lambda inst=instance, c=cfg, s=seed, topo=evolved_topology, ex=evolved_extra: _run_unit(
+                            lambda: run_fixed_protocol(
+                                inst, c, topology=topo, llm_client=client
+                            ),
+                            arm="evolved",
+                            instance=inst,
+                            seed=s,
+                            topology=topo,
+                            extra=ex,
+                        )
+                    )
+                )
+            )
+    return tasks
+
+
+def _compute_evolution_summary(
+    n_agents: int,
+    adapter: SiloBenchAdapter,
+    cfg_base: RunConfig,
+    seeds: list[int],
+    *,
+    cases: list[str] | None,
+    levels: list[str] | None,
+    client: LLMClient,
+) -> dict[str, Any]:
+    """Run the heavy gated ``run_evolution`` for one ``n_agents`` (offline-honest).
+
+    Same train/test split + synthetic-offline gate as :func:`_run_evolved_arm`;
+    factored out so both the sequential and parallel paths produce an identical
+    summary.
+    """
+    train_seeds = list(seeds[:-1]) or list(seeds)
+    val_seeds = [seeds[-1]] if seeds else [0]
+    cfg = _cfg_for(
+        cfg_base,
+        n_agents,
+        use_planner=True,
+        use_skill_evolution=True,
+    )
+    use_synth = cfg_base.llm_provider == "fake"
+    return run_evolution(
+        adapter,
+        cases=cases,
+        agent_counts=[n_agents],
+        levels=levels,
+        train_seeds=train_seeds,
+        val_seeds=val_seeds,
+        cfg=cfg,
+        held_out_rows=accepting_held_out_rows() if use_synth else None,
+        seed_incumbent_topology=(
+            INCUMBENT_BASELINE_TOPOLOGY if use_synth else None
+        ),
+        llm_client=client,
+    )
+
+
+def _evolved_extra(summary: dict[str, Any]) -> dict[str, Any]:
+    """The gate/summary fields attached to every evolved eval record."""
+    gate = summary["gate"]
+    return {
+        "gate": {
+            "accepted": bool(gate["accepted"]),
+            "j_before": float(gate["j_before"]),
+            "j_after": float(gate["j_after"]),
+        },
+        "val_success_rate": summary["val_success_rate"],
+        "skill_bank_mutated": summary["skill_bank_mutated"],
+    }
 
 
 # --------------------------------------------------------------------------- #
