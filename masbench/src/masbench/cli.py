@@ -29,6 +29,7 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         benchmark=args.benchmark,
         use_planner=getattr(args, "planner", False),
+        planner_mode=getattr(args, "planner_mode", "topology_select"),
         topology=args.topology,
         objective=getattr(args, "objective", "balanced"),
         merge_mode=getattr(args, "merge_mode", "deterministic"),
@@ -206,6 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--seed", type=int, default=0)
         p.add_argument("--planner", action="store_true",
                        help="enable the QueenBee planner + generalized ProtocolRunner")
+        p.add_argument("--planner-mode", dest="planner_mode",
+                       choices=["topology_select", "graph_generate"],
+                       default="topology_select",
+                       help="(planner) topology_select picks a named topology; "
+                            "graph_generate has the emperor LLM invent a temporal DAG")
 
     p_run = sub.add_parser("run", help="run a single instance")
     add_common(p_run)

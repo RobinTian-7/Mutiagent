@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.configs import ExperimentConfig
 from exp_graph.llm.base import LLMClient
 from exp_graph.llm.factory import create_llm_client
+from exp_graph.mas.graph_generation import plan_free_graph
 from exp_graph.mas.planner import EmperorPlanner
-from exp_graph.mas.schemas import ObjectiveSpec, PlannerRequest
+from exp_graph.mas.schemas import (
+    MASRuntimeConfig,
+    ObjectiveSpec,
+    PlannerRequest,
+)
 from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.runner import SynchronousRunner
 from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
@@ -53,21 +61,31 @@ def _run_planner(
 ) -> ScoreResult:
     """Run one instance through the QueenBee planner + ProtocolRunner and score it.
 
-    The (empty for now) SkillBank makes ``EmperorPlanner`` fall back to
-    ``default_topology_for_objective``; that topology name + any plan-supplied
-    protocol_spec/config_overrides drive the generalized ProtocolRunner.
+    ``cfg.planner_mode`` selects how the communication structure is chosen:
+
+    * ``"topology_select"`` (default): ``EmperorPlanner`` picks a named topology;
+      with the (empty for now) SkillBank it falls back to
+      ``default_topology_for_objective``.
+    * ``"graph_generate"``: the emperor LLM invents a bespoke temporal DAG via
+      ``plan_free_graph``; the generated ``protocol_spec`` drives the runner. With
+      a fake/junk LLM, ``plan_free_graph`` validates/repairs and ultimately falls
+      back to a fixed operator topology, so the run never crashes offline.
+
+    Either way the resulting ``plan.topology_name`` + ``plan.protocol_spec`` drive
+    the generalized ProtocolRunner. The same ``client`` is reused for any DAG
+    generation and the soldier execution.
     """
     task_adapter = SiloProtocolAdapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
+    client = llm_client or _build_llm_client(cfg)
 
-    skill_bank = SkillBank()
-    request = PlannerRequest(
-        task_family="silo",
-        n_agents=n_agents,
-        objective=ObjectiveSpec.from_name(cfg.objective),
-    )
-    plan = EmperorPlanner(skill_bank).plan(request)
+    if cfg.planner_mode == "graph_generate":
+        plan, planner_extra = _plan_graph_generate(
+            cfg, n_agents=n_agents, task_adapter=task_adapter, client=client
+        )
+    else:
+        plan, planner_extra = _plan_topology_select(cfg, n_agents=n_agents)
 
     # Build the runner config. ``plan.config_overrides`` may carry a protocol_spec
     # (operator/graph planner modes) alongside the one we pass explicitly, so we
@@ -86,7 +104,6 @@ def _run_planner(
     config_kwargs.update(plan.config_overrides)
     config = ProtocolRunnerConfig(**config_kwargs)
 
-    client = llm_client or _build_llm_client(cfg)
     result = ProtocolRunner(
         config=config,
         task_adapter=task_adapter,
@@ -95,6 +112,14 @@ def _run_planner(
     ).run()
 
     final = result.final_result
+    extra = {
+        "case_id": instance.case_id,
+        "planner": True,
+        "topology": plan.topology_name,
+        "objective": cfg.objective,
+        "aggregation_method": final.aggregation_method,
+    }
+    extra.update(planner_extra)
     return ScoreResult(
         success=bool(final.exact_match),
         partial=getattr(final, "primary_metric", None),
@@ -102,14 +127,73 @@ def _run_planner(
         n_model_calls=int(result.total_model_calls),
         tokens=int(result.total_prompt_tokens) + int(result.total_completion_tokens),
         final_answer=final.final_key,
-        extra={
-            "case_id": instance.case_id,
-            "planner": True,
-            "topology": plan.topology_name,
-            "objective": cfg.objective,
-            "aggregation_method": final.aggregation_method,
-        },
+        extra=extra,
     )
+
+
+def _plan_topology_select(cfg: RunConfig, *, n_agents: int):
+    """QueenBee topology-select plan (Plan 3 B): pick a named topology."""
+    request = PlannerRequest(
+        task_family="silo",
+        n_agents=n_agents,
+        objective=ObjectiveSpec.from_name(cfg.objective),
+    )
+    plan = EmperorPlanner(SkillBank()).plan(request)
+    return plan, {"planner_mode": "topology_select"}
+
+
+def _plan_graph_generate(
+    cfg: RunConfig,
+    *,
+    n_agents: int,
+    task_adapter: SiloProtocolAdapter,
+    client: LLMClient,
+):
+    """FULL QueenBee plan: the emperor LLM invents a bespoke temporal DAG.
+
+    Delegates to ``exp_graph.mas.graph_generation.plan_free_graph``, which
+    generates candidate DAGs, validates/repairs them, and (offline / on junk)
+    falls back to a fixed operator topology. We reuse the SAME ``client`` for the
+    generation call. ``plan_free_graph`` requires an ``output_dir`` for its
+    artifacts; we hand it a throwaway temp dir so the repo is not polluted, and
+    in the default single-search mode the ``task_adapter`` is never invoked for
+    probe evaluation (so passing the Silo adapter is safe).
+    """
+    runtime = MASRuntimeConfig(
+        llm_provider=cfg.llm_provider,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+        num_graph_candidates=cfg.num_graph_candidates,
+        graph_max_steps=cfg.graph_max_steps,
+        graph_max_messages=cfg.graph_max_messages,
+        graph_max_receiver_fan_in=cfg.graph_max_receiver_fan_in,
+    )
+    request = PlannerRequest(
+        task_family="silo",
+        n_agents=n_agents,
+        objective=ObjectiveSpec.from_name(cfg.objective),
+        planner_mode="graph_generate",
+        merge_mode=cfg.merge_mode,
+        init_mode=cfg.init_mode,
+    )
+    with tempfile.TemporaryDirectory(prefix="masbench_graphgen_") as tmpdir:
+        result = plan_free_graph(
+            request=request,
+            runtime=runtime,
+            skill_bank=SkillBank(),
+            seed=cfg.seed,
+            task_adapter=task_adapter,
+            output_dir=Path(tmpdir),
+            llm_client=client,
+        )
+    plan = result.plan
+    spec = plan.protocol_spec
+    extra = {
+        "planner_mode": "graph_generate",
+        "generated_steps": len(spec.steps) if spec is not None else 0,
+        "graph_fallback_reason": result.fallback_reason,
+    }
+    return plan, extra
 
 
 def run_instance(

@@ -42,6 +42,43 @@ uv run python -m masbench.cli run-suite --benchmark silo_bench \
 uv run python -m masbench.cli report --run-dir runs/silo_real
 ```
 
+## Planner (QueenBee on Silo)
+`--planner` routes an instance through the QueenBee planner + the generalized
+`ProtocolRunner` instead of the planner-OFF `SynchronousRunner`. `--planner-mode`
+picks how the communication structure is chosen:
+
+- `topology_select` (default): the emperor picks a named topology (skill-bank
+  fallback `default_topology_for_objective`). Unchanged Plan-3 behavior.
+- `graph_generate`: the **FULL QueenBee** — the emperor LLM invents a bespoke
+  *temporal communication DAG* from scratch (`plan_free_graph`), and its
+  generated `protocol_spec` drives the runner. Each `ScoreResult.extra` records
+  `planner_mode` and (for `graph_generate`) `generated_steps`.
+
+Offline (`--llm fake`) the emperor still emits deterministic fake DAG candidates
+that compile to valid specs; on junk it validates/repairs and ultimately falls
+back to a fixed operator topology, so the run never crashes without an API key:
+```bash
+cd masbench
+uv run python -m masbench.cli run --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --case I-01 --n-agents 2 \
+  --planner --planner-mode graph_generate --llm fake --objective accuracy_first
+```
+
+Real DAG generation needs a real LLM (the emperor designs the topology, soldiers
+execute it):
+```bash
+cd masbench
+export OPENAI_API_KEY=...
+uv run python -m masbench.cli run-suite --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --levels I --agent-counts 2 \
+  --planner --planner-mode graph_generate \
+  --llm openai --model-name gpt-4o-mini --api-key-env OPENAI_API_KEY \
+  --objective accuracy_first --out runs/silo_graphgen
+uv run python -m masbench.cli report --run-dir runs/silo_graphgen
+```
+
 ## Evolve (QueenBee self-evolution on Silo)
 `masbench evolve` runs the improved QueenBee self-evolution loop end-to-end on
 Silo-Bench: it splits the selected instances into TRAIN/HELD-OUT, runs each
@@ -103,5 +140,8 @@ on real evidence alone (`--no-synthetic-held-out`).
   onto Silo-Bench; the self-evolution overhaul is implemented and activated — held-out
   validation gate, uncertainty-aware/veto/floor selection, motif-level credit, and insight
   falsification — and `masbench evolve` runs the whole gated loop end-to-end (offline-verifiable
-  with `--llm fake`). See `docs/self_evolution_changes.md`. exp_graph suite: 237 passed, 1
-  skipped; masbench suite: 37 passed.
+  with `--llm fake`). See `docs/self_evolution_changes.md`.
+- Plan 4 Task 1 (done): `--planner-mode graph_generate` wires the LLM temporal-DAG-GENERATING
+  planner (`plan_free_graph`) into the `--planner` path, so the FULL QueenBee (the emperor
+  invents a bespoke communication DAG) runs on Silo-Bench. Offline-verifiable with `--llm fake`.
+- Suites: exp_graph 237 passed, 1 skipped; masbench 40 passed.

@@ -14,6 +14,16 @@ class RunConfig:
     use_skill_evolution: bool = False
     topology: str = "mesh"
     objective: str = "balanced"
+    # Planner-path only. ``topology_select`` (default) picks a named topology;
+    # ``graph_generate`` has the emperor LLM invent a bespoke temporal DAG via
+    # exp_graph.mas.graph_generation.plan_free_graph, then executes its
+    # protocol_spec. The graph_* knobs are the hard constraints handed to the
+    # generator (defaults mirror MASRuntimeConfig / the paper).
+    planner_mode: str = "topology_select"
+    num_graph_candidates: int = 1
+    graph_max_steps: int = 4
+    graph_max_messages: int = 32
+    graph_max_receiver_fan_in: int = 4
     # Planner-path only: how soldiers initialize/merge beliefs in ProtocolRunner.
     merge_mode: str = "deterministic"
     init_mode: str = "deterministic"
