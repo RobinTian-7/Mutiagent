@@ -6,7 +6,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
-from statistics import fmean
+from statistics import fmean, median
 from typing import Any
 
 from exp_graph.llm.base import LLMClient
@@ -17,6 +17,7 @@ from exp_graph.mas.evolution import (
     infer_condition_scope,
     infer_topology_structure_features,
 )
+from exp_graph.mas.objective_metrics import primary_loss
 from exp_graph.mas.role_llm import create_role_llm_client, resolve_role_llm_config
 from exp_graph.mas.schemas import (
     EvidenceRecord,
@@ -240,11 +241,27 @@ def verify_insight_report(report: InsightReport) -> InsightReport:
     )
 
 
-def insight_report_to_patches(report: InsightReport) -> list[SkillPatch]:
-    """Convert verified insights into non-writing patch candidates."""
+def insight_report_to_patches(
+    report: InsightReport,
+    *,
+    require_verified: bool = False,
+) -> list[SkillPatch]:
+    """Convert verified insights into non-writing patch candidates.
+
+    ``require_verified`` is opt-in and defaults to ``False`` so the existing
+    behavior is byte-identical: every non-``rejected`` insight that yields a
+    non-empty update produces a patch. When ``True`` (the QueenBee ``--evolve``
+    path after :func:`falsify_insights`), only insights whose held-out
+    falsification check passed (``claim_status == "observed"``) emit patches;
+    contradicted (``"rejected"``) and unverifiable (``"hypothesis"``/
+    ``"inferred"``) insights are skipped so a plausible-but-wrong insight cannot
+    become an accepted skill patch.
+    """
     patches: list[SkillPatch] = []
     for insight in report.key_insights:
         if insight.claim_status == "rejected":
+            continue
+        if require_verified and insight.claim_status != "observed":
             continue
         target = insight.affected_skills[0] if insight.affected_skills else None
         if target is None:
@@ -265,6 +282,294 @@ def insight_report_to_patches(report: InsightReport) -> list[SkillPatch]:
             )
         )
     return patches
+
+
+# Operation ``action_type`` values that assert a topology is *good* (planner
+# should keep/choose it) versus *bad* (planner should drop it). ``mutate`` and
+# ``validate`` make no loss claim, so an insight carrying only those is treated
+# as having no checkable polarity.
+_PREFER_ACTIONS: frozenset[str] = frozenset({"preserve", "prefer"})
+_AVOID_ACTIONS: frozenset[str] = frozenset({"avoid"})
+
+# Higher-is-better aggregate metric names that must be converted to a uniform
+# lower-is-better loss before comparison. Mirrors objective_metrics so a
+# success-rate benchmark falsifies correctly.
+_HIGHER_IS_BETTER_ROW_KEYS: tuple[str, ...] = (
+    "mean_success",
+    "success_rate",
+    "mean_primary",
+    "exact_match_rate",
+    "mean_partial",
+)
+# Lower-is-better loss columns, tried in order. ``mean_rmse`` is the cross-seed
+# aggregate column; ``final_rmse``/``rmse``/``loss`` cover single-run and
+# already-loss rows.
+_LOWER_IS_BETTER_ROW_KEYS: tuple[str, ...] = (
+    "loss",
+    "primary_loss",
+    "mean_rmse",
+    "final_rmse",
+    "rmse",
+)
+
+
+def falsify_insights(
+    report: InsightReport,
+    held_out_rows: list[dict[str, Any]],
+) -> InsightReport:
+    """Held-out falsification of LLM insights before they can become patches.
+
+    For each :class:`MASInsight` we derive a *checkable* topology claim from its
+    structured fields and test it against held-out aggregate ``held_out_rows``
+    (the cross-seed ``conditions`` rows, each carrying ``topology_name``,
+    optionally ``n_agents``/``array_size``, and a lower-is-better loss column).
+
+    A claimed-good topology ``T`` (``preserve``/``prefer``) holds iff ``T``'s
+    loss in its condition is ``<=`` the median loss of rows in that condition; a
+    claimed-bad topology (``avoid``) holds iff ``T``'s loss is ``>=`` the median.
+    On a verified claim ``claim_status`` becomes ``"observed"``; on a
+    contradicted claim it becomes ``"rejected"`` and the insight is recorded as a
+    counterexample; if the claim is not extractable or the relevant rows are
+    missing it is left as ``"hypothesis"`` (unverifiable). Loosely-structured
+    insights never crash -- they fall through to ``"hypothesis"``.
+
+    This is purely additive: callers that never invoke it (the default pipeline)
+    see no behavior change, and :func:`insight_report_to_patches` keeps emitting
+    every non-rejected insight unless ``require_verified=True`` is passed.
+    """
+    checked: list[MASInsight] = []
+    rejected = list(report.rejected_insights)
+    for insight in report.key_insights:
+        status = _falsify_one(insight, held_out_rows)
+        if status is None:
+            checked.append(insight)
+            continue
+        if status == "rejected":
+            rejected.append(
+                {
+                    "insight_id": insight.insight_id,
+                    "reason": "falsification_contradicted",
+                    "summary": insight.summary,
+                }
+            )
+        checked.append(insight.model_copy(update={"claim_status": status}))
+    return report.model_copy(
+        update={"key_insights": checked, "rejected_insights": rejected}
+    )
+
+
+def _falsify_one(
+    insight: MASInsight,
+    held_out_rows: list[dict[str, Any]],
+) -> str | None:
+    """Return ``observed``/``rejected``/``hypothesis`` or ``None`` to leave as-is.
+
+    ``None`` means "no checkable claim could be extracted" -- the insight is left
+    untouched (still whatever status the upstream rule layer assigned, e.g.
+    ``hypothesis``). Every extractable-but-unverifiable case returns the explicit
+    ``"hypothesis"`` string.
+    """
+    claim = _extract_topology_claim(insight)
+    if claim is None:
+        # Loosely-structured insight: cannot derive a falsifiable prediction.
+        return "hypothesis" if insight.claim_status != "rejected" else None
+    topology, polarity, condition = claim
+    rows = _rows_in_condition(held_out_rows, condition)
+    losses = [loss for row in rows if (loss := _row_loss(row)) is not None]
+    target_losses = [
+        loss
+        for row in rows
+        if _row_topology_matches(row, topology)
+        and (loss := _row_loss(row)) is not None
+    ]
+    if not losses or not target_losses:
+        # Relevant rows missing => cannot verify.
+        return "hypothesis"
+    target_loss = fmean(target_losses)
+    median_loss = _median(losses)
+    if polarity == "good":
+        verified = target_loss <= median_loss
+    else:  # polarity == "bad"
+        verified = target_loss >= median_loss
+    return "observed" if verified else "rejected"
+
+
+def _extract_topology_claim(
+    insight: MASInsight,
+) -> tuple[str, str, dict[str, Any]] | None:
+    """Best-effort extraction of ``(topology, polarity, condition)`` from a claim.
+
+    Topology token is read, in priority order, from: an explicit
+    ``topology_name`` on an ``operation_recommendation``; the insight's
+    ``affected_skills`` (mapping a ``cf_*`` skill id back to its topology); or
+    the insight ``title``. Polarity (``"good"``/``"bad"``) is taken from the
+    operation ``action_type`` (preserve/prefer => good, avoid => bad); if no
+    operation carries a polarity but a topology is present we default to ``good``
+    (the planner is being told to keep it). Returns ``None`` when no topology can
+    be identified.
+    """
+    polarity = _claim_polarity(insight.operation_recommendations)
+    topology = _topology_from_operations(insight.operation_recommendations)
+    if topology is None:
+        topology = _topology_from_skills(insight.affected_skills)
+    if topology is None:
+        topology = _topology_from_title(insight.title)
+    if topology is None:
+        return None
+    condition = _condition_from_insight(insight)
+    return topology, polarity or "good", condition
+
+
+def _claim_polarity(operations: list[dict[str, Any]]) -> str | None:
+    has_good = False
+    has_bad = False
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        action = str(op.get("action_type", "")).strip().lower()
+        if action in _PREFER_ACTIONS:
+            has_good = True
+        elif action in _AVOID_ACTIONS:
+            has_bad = True
+    if has_bad and not has_good:
+        return "bad"
+    if has_good and not has_bad:
+        return "good"
+    # Mixed or no polarity-bearing action: leave undecided (caller defaults).
+    return None
+
+
+def _topology_from_operations(operations: list[dict[str, Any]]) -> str | None:
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        for source in (op, op.get("conditions")):
+            if isinstance(source, dict):
+                value = source.get("topology_name")
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return None
+
+
+def _topology_from_skills(affected_skills: list[str]) -> str | None:
+    for skill_id in affected_skills:
+        topology = _topology_from_skill_id(str(skill_id))
+        if topology:
+            return topology
+    return None
+
+
+# classify_topology assigns these stable skill ids; invert them so an insight
+# that only carries ``affected_skills`` is still checkable.
+_SKILL_ID_TOPOLOGY: dict[str, str] = {
+    "cf_accuracy_peer_star": "one_peer_exponential_dag_star",
+    "cf_budget_tree": "tree",
+    "cf_middle_ground_mesh_star": "mesh_star",
+}
+
+
+def _topology_from_skill_id(skill_id: str) -> str | None:
+    # Strip the condition-bucket suffix (``__a4arr128``) appended by
+    # condition_specific_skill_id before matching.
+    base = skill_id.split("__", 1)[0]
+    if base in _SKILL_ID_TOPOLOGY:
+        return _SKILL_ID_TOPOLOGY[base]
+    # Generic fallback for ``cf_topology_<name>`` ids.
+    prefix = "cf_topology_"
+    if base.startswith(prefix) and len(base) > len(prefix):
+        return base[len(prefix) :]
+    return None
+
+
+def _topology_from_title(title: str) -> str | None:
+    # The deterministic minister titles read ``"<topology> tradeoff ..."`` /
+    # ``"<topology> has reusable risk boundary"``; take the leading token only if
+    # it is a known topology to avoid grabbing generic advice titles.
+    head = title.strip().split(" ", 1)[0] if title else ""
+    known = set(_SKILL_ID_TOPOLOGY.values())
+    return head if head in known else None
+
+
+def _condition_from_insight(insight: MASInsight) -> dict[str, Any]:
+    for bucket in insight.condition_buckets:
+        if isinstance(bucket, dict) and bucket:
+            return bucket
+    return {}
+
+
+def _rows_in_condition(
+    rows: list[dict[str, Any]],
+    condition: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Filter held-out rows to the insight's condition bucket when one is given.
+
+    Matches on ``n_agents``/``array_size`` ranges from an ``infer_condition_scope``
+    bucket (``min_agents``/``max_agents``/``min_array_size``/``max_array_size``).
+    With no condition (or no range keys) every row is in scope ("overall").
+    """
+    if not condition:
+        return list(rows)
+    min_agents = _as_int(condition.get("min_agents"))
+    max_agents = _as_int(condition.get("max_agents"))
+    min_array = _as_int(condition.get("min_array_size"))
+    max_array = _as_int(condition.get("max_array_size"))
+    if (
+        min_agents is None
+        and max_agents is None
+        and min_array is None
+        and max_array is None
+    ):
+        return list(rows)
+    selected: list[dict[str, Any]] = []
+    for row in rows:
+        n_agents = _as_int(row.get("n_agents"))
+        if n_agents is not None:
+            if min_agents is not None and n_agents < min_agents:
+                continue
+            if max_agents is not None and n_agents > max_agents:
+                continue
+        array_size = _as_int(row.get("array_size"))
+        if array_size is not None and (min_array is not None or max_array is not None):
+            if min_array is not None and array_size < min_array:
+                continue
+            if max_array is not None and array_size > max_array:
+                continue
+        selected.append(row)
+    return selected
+
+
+def _row_topology_matches(row: dict[str, Any], topology: str) -> bool:
+    return str(row.get("topology_name", "")) == topology
+
+
+def _row_loss(row: dict[str, Any]) -> float | None:
+    """Uniform lower-is-better loss for one held-out aggregate row.
+
+    Prefers an explicit lower-is-better column; otherwise converts the first
+    available higher-is-better column via the shared ``primary_loss`` rule.
+    """
+    for key in _LOWER_IS_BETTER_ROW_KEYS:
+        value = row.get(key)
+        if value is not None:
+            return float(value)
+    for key in _HIGHER_IS_BETTER_ROW_KEYS:
+        value = row.get(key)
+        if value is not None:
+            return primary_loss(key, float(value))
+    return None
+
+
+def _median(values: list[float]) -> float:
+    return float(median(values))
+
+
+def _as_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _deterministic_insight_report(

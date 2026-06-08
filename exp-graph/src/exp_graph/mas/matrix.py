@@ -31,6 +31,7 @@ from exp_graph.mas.evolution import (
 )
 from exp_graph.mas.formatting import format_insight_report
 from exp_graph.mas.insights import (
+    falsify_insights,
     insight_report_to_patches,
     topology_structures_from_records,
 )
@@ -481,8 +482,19 @@ def analyze_matrix_insights(
     max_parallel_insight_shards: int = 1,
     role_llm_profiles: RoleLLMProfiles | None = None,
     role_llm_config_path: str | None = None,
+    falsify_held_out: bool = False,
 ) -> InsightReport:
-    """Extract batch-level MAS design insights from collected matrix evidence."""
+    """Extract batch-level MAS design insights from collected matrix evidence.
+
+    ``falsify_held_out`` is opt-in and defaults to ``False`` so the existing
+    counterfactual behavior (every rule-verified insight becomes a patch) is
+    unchanged. When ``True`` the rule-verified report is additionally run through
+    :func:`falsify_insights` against the cross-seed aggregate rows in
+    ``summary`` (held-out evidence), and only insights whose held-out check
+    passed (``claim_status == "observed"``) are turned into patches via
+    ``insight_report_to_patches(require_verified=True)``. Contradicted insights
+    are demoted to ``rejected`` and emit no accepted patch.
+    """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     records = read_evidence_jsonl(evidence_file)
@@ -512,6 +524,19 @@ def analyze_matrix_insights(
         )
     merged = _merge_insight_reports(reports, experiment_id=str(evidence_file))
     verified = _verify_batch_insight_report(merged, records, bank)
+    if falsify_held_out:
+        held_out_rows = summary.get("conditions", [])
+        falsified = falsify_insights(
+            verified,
+            held_out_rows if isinstance(held_out_rows, list) else [],
+        )
+        verified = falsified.model_copy(
+            update={
+                "skill_update_recommendations": insight_report_to_patches(
+                    falsified, require_verified=True
+                )
+            }
+        )
     _write_json(out / "insight_report.json", verified.model_dump(mode="json"))
     (out / "insight_report.md").write_text(
         format_insight_report(verified) + "\n",
