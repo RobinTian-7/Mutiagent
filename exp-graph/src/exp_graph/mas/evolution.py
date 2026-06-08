@@ -22,17 +22,23 @@ class ResultAnalystMinister:
 
     source = "result_analyst"
 
-    def analyze(self, aggregate_rows: list[dict[str, Any]]) -> list[SkillPatch]:
+    def analyze(
+        self,
+        aggregate_rows: list[dict[str, Any]],
+        *,
+        task_family: str = "count_frequency",
+    ) -> list[SkillPatch]:
         evidence = aggregate_rows_to_evidence(aggregate_rows)
         grouped = _group_dict_evidence_for_skills(evidence)
         patches = [
             build_skill_patch_for_topology(
                 str(rows[0].get("topology_name", rows[0].get("Topology", group_key))),
                 rows,
+                task_family=task_family,
             )
             for group_key, rows in sorted(grouped.items())
         ]
-        patches.extend(build_negative_patches(evidence))
+        patches.extend(build_negative_patches(evidence, task_family=task_family))
         return patches
 
 
@@ -41,7 +47,12 @@ class CostAnalystMinister:
 
     source = "cost_analyst"
 
-    def analyze(self, aggregate_rows: list[dict[str, Any]]) -> list[SkillPatch]:
+    def analyze(
+        self,
+        aggregate_rows: list[dict[str, Any]],
+        *,
+        task_family: str = "count_frequency",
+    ) -> list[SkillPatch]:
         evidence = aggregate_rows_to_evidence(aggregate_rows)
         if not _has_comparative_topology_evidence(evidence):
             return []
@@ -66,6 +77,7 @@ class CostAnalystMinister:
                 "strength": "lowest observed communication cost",
                 "weakness": "may sacrifice accuracy compared with peer propagation",
             },
+            task_family=task_family,
         )
         return [
             SkillPatch(
@@ -89,9 +101,14 @@ class CounterexampleMinister:
 
     source = "counterexample_analyst"
 
-    def analyze(self, aggregate_rows: list[dict[str, Any]]) -> list[SkillPatch]:
+    def analyze(
+        self,
+        aggregate_rows: list[dict[str, Any]],
+        *,
+        task_family: str = "count_frequency",
+    ) -> list[SkillPatch]:
         evidence = aggregate_rows_to_evidence(aggregate_rows)
-        return build_negative_patches(evidence)
+        return build_negative_patches(evidence, task_family=task_family)
 
 
 class TraceAnalystMinister:
@@ -110,7 +127,12 @@ class TraceAnalystMinister:
             )
         ] if trace_rows else []
 
-    def analyze_evidence(self, records: list[EvidenceRecord]) -> list[SkillPatch]:
+    def analyze_evidence(
+        self,
+        records: list[EvidenceRecord],
+        *,
+        task_family: str = "count_frequency",
+    ) -> list[SkillPatch]:
         patches: list[SkillPatch] = []
         trace_records = [record for record in records if record.source_type == "trace"]
         grouped: dict[str, list[EvidenceRecord]] = defaultdict(list)
@@ -141,23 +163,25 @@ class TraceAnalystMinister:
                 fallback["if_merge_errors_high"] = "use_llm_belief_merge_or_vote"
             if fallback:
                 update["fallback"] = fallback
+            candidate = make_skill_card(
+                skill_id=skill_id,
+                topology_name=topology,
+                objective=objective,
+                operators=operators,
+                evidence=[],
+                evidence_refs=[record.evidence_id for record in rows],
+                expected_tradeoff={
+                    "lesson": lesson,
+                    "trace_record_count": len(rows),
+                },
+                task_family=task_family,
+            )
             patches.append(
                 SkillPatch(
-                    patch_id=f"trace_{skill_id}",
+                    patch_id=f"trace_{candidate.skill_id}",
                     action="merge",
-                    target_skill_id=skill_id,
-                    candidate_skill=make_skill_card(
-                        skill_id=skill_id,
-                        topology_name=topology,
-                        objective=objective,
-                        operators=operators,
-                        evidence=[],
-                        evidence_refs=[record.evidence_id for record in rows],
-                        expected_tradeoff={
-                            "lesson": lesson,
-                            "trace_record_count": len(rows),
-                        },
-                    ),
+                    target_skill_id=candidate.skill_id,
+                    candidate_skill=candidate,
                     evidence_refs=[record.evidence_id for record in rows],
                     update=update,
                     lesson=(
@@ -190,13 +214,14 @@ def build_evolution_batch_from_evidence(
     records: list[EvidenceRecord],
     *,
     batch_id: str = "cf_evidence_batch",
+    task_family: str = "count_frequency",
 ) -> EvolutionBatch:
     """Build patch candidates from append-only evidence records."""
     patches = [
-        *build_result_patches_from_evidence(records),
-        *build_cost_patches_from_evidence(records),
-        *build_counterexample_patches_from_evidence(records),
-        *TraceAnalystMinister().analyze_evidence(records),
+        *build_result_patches_from_evidence(records, task_family=task_family),
+        *build_cost_patches_from_evidence(records, task_family=task_family),
+        *build_counterexample_patches_from_evidence(records, task_family=task_family),
+        *TraceAnalystMinister().analyze_evidence(records, task_family=task_family),
     ]
     return EvolutionBatch(
         batch_id=batch_id,
@@ -220,6 +245,8 @@ def consolidate_batch(batch: EvolutionBatch, bank: SkillBank | None = None) -> S
 
 def build_result_patches_from_evidence(
     records: list[EvidenceRecord],
+    *,
+    task_family: str = "count_frequency",
 ) -> list[SkillPatch]:
     aggregate_records = [
         record
@@ -263,6 +290,7 @@ def build_result_patches_from_evidence(
             analysis_evidence=analysis_evidence,
             evidence_refs=refs,
             expected_tradeoff=expected_tradeoff,
+            task_family=task_family,
         )
         patches.append(
             SkillPatch(
@@ -284,7 +312,11 @@ def build_result_patches_from_evidence(
     return patches
 
 
-def build_cost_patches_from_evidence(records: list[EvidenceRecord]) -> list[SkillPatch]:
+def build_cost_patches_from_evidence(
+    records: list[EvidenceRecord],
+    *,
+    task_family: str = "count_frequency",
+) -> list[SkillPatch]:
     aggregate_records = [
         record
         for record in records
@@ -319,6 +351,7 @@ def build_cost_patches_from_evidence(records: list[EvidenceRecord]) -> list[Skil
             "strength": "lowest observed communication cost",
             "weakness": "may sacrifice accuracy compared with peer propagation",
         },
+        task_family=task_family,
     )
     return [
         SkillPatch(
@@ -339,6 +372,8 @@ def build_cost_patches_from_evidence(records: list[EvidenceRecord]) -> list[Skil
 
 def build_counterexample_patches_from_evidence(
     records: list[EvidenceRecord],
+    *,
+    task_family: str = "count_frequency",
 ) -> list[SkillPatch]:
     aggregate_records = [
         record
@@ -375,6 +410,7 @@ def build_counterexample_patches_from_evidence(
                 "strength": "negative routing evidence",
                 "weakness": "dominated by stronger CF topology choices",
             },
+            task_family=task_family,
             counterexamples=[
                 {
                     "evidence_id": record.evidence_id,
@@ -414,6 +450,8 @@ def build_counterexample_patches_from_evidence(
 def build_skill_patch_for_topology(
     topology: str,
     rows: list[dict[str, Any]],
+    *,
+    task_family: str = "count_frequency",
 ) -> SkillPatch:
     avg_rmse = statistics.fmean(float(row["mean_rmse"]) for row in rows)
     avg_tokens = statistics.fmean(float(row["mean_token_cost"]) for row in rows)
@@ -449,6 +487,7 @@ def build_skill_patch_for_topology(
         operators=operators,
         evidence=rows,
         expected_tradeoff=expected_tradeoff,
+        task_family=task_family,
     )
     return SkillPatch(
         patch_id=f"result_{candidate.skill_id}",
@@ -462,7 +501,11 @@ def build_skill_patch_for_topology(
     )
 
 
-def build_negative_patches(evidence: list[dict[str, Any]]) -> list[SkillPatch]:
+def build_negative_patches(
+    evidence: list[dict[str, Any]],
+    *,
+    task_family: str = "count_frequency",
+) -> list[SkillPatch]:
     grouped = _group_dict_evidence_for_skills(evidence)
     if not grouped:
         return []
@@ -491,6 +534,7 @@ def build_negative_patches(evidence: list[dict[str, Any]]) -> list[SkillPatch]:
                 "weakness": "dominated by stronger CF topology choices",
             },
             counterexamples=rows,
+            task_family=task_family,
         )
         patches.append(
             SkillPatch(
@@ -552,6 +596,7 @@ def make_skill_card(
     analysis_evidence: list[dict[str, Any]] | None = None,
     evidence_refs: list[str] | None = None,
     counterexamples: list[dict[str, object]] | None = None,
+    task_family: str = "count_frequency",
 ) -> SkillCard:
     feature_evidence = analysis_evidence if analysis_evidence is not None else evidence
     condition_scope = infer_condition_scope(feature_evidence)
@@ -565,13 +610,16 @@ def make_skill_card(
         structure_features,
         condition_scope,
     )
-    final_skill_id = condition_specific_skill_id(
-        skill_id,
-        topology_name,
-        condition_scope,
+    final_skill_id = family_scoped_skill_id(
+        condition_specific_skill_id(
+            skill_id,
+            topology_name,
+            condition_scope,
+        ),
+        task_family,
     )
     trigger = {
-        "task_family": "count_frequency",
+        "task_family": task_family,
         "min_agents": condition_scope.get("min_agents", 1),
         "max_agents": condition_scope.get("max_agents", 999),
         "agent_bucket": condition_scope.get("agent_bucket", "agents_any"),
@@ -592,10 +640,18 @@ def make_skill_card(
         trigger["agent_counts"] = condition_scope["agent_counts"]
     if condition_scope.get("array_sizes"):
         trigger["array_sizes"] = condition_scope["array_sizes"]
+    budget_fallback_id = family_scoped_skill_id("cf_budget_tree", task_family)
+    tags = ["mas", "emperor-skill", _family_tag(task_family), objective]
+    # For CF, avoid skills are detected by their ``cf_avoid_`` id prefix
+    # (``is_avoid_skill``). Non-CF ids are family-namespaced (``silo__cf_avoid_*``)
+    # so that prefix check no longer fires; tag them explicitly so they stay
+    # negative-only constraints. CF tags are left byte-identical (no tag added).
+    if task_family != "count_frequency" and skill_id.startswith("cf_avoid_"):
+        tags.append("counterexample")
     return SkillCard(
         skill_id=final_skill_id,
         version="0.1.0",
-        task_family="count_frequency",
+        task_family=task_family,
         trigger=trigger,
         objective=objective,  # type: ignore[arg-type]
         organization_policy={
@@ -619,12 +675,12 @@ def make_skill_card(
         evidence=evidence,
         evidence_refs=evidence_refs or [],
         fallback={
-            "budget_first": "cf_budget_tree"
-            if final_skill_id != "cf_budget_tree"
+            "budget_first": budget_fallback_id
+            if final_skill_id != budget_fallback_id
             else None
         },
         counterexamples=counterexamples or [],
-        tags=["mas", "emperor-skill", "count-frequency", objective],
+        tags=tags,
     )
 
 
@@ -888,6 +944,30 @@ def condition_specific_skill_id(
         return skill_id
     suffix = condition_key.replace("agents_", "a").replace("arrays_", "arr")
     return f"{skill_id}__{suffix}"
+
+
+def family_scoped_skill_id(skill_id: str, task_family: str) -> str:
+    """Namespace a skill_id by family so non-CF skills cannot collide with CF.
+
+    ``SkillBank`` stores skills in a dict keyed by ``skill_id``; a Silo skill and
+    a CF skill that classify to the same id (e.g. ``cf_accuracy_peer_star``) would
+    otherwise overwrite each other in one bank. We keep ``count_frequency`` ids
+    byte-identical (the legacy default) and prefix every other family so the two
+    coexist. Idempotent: an id already carrying its family prefix is unchanged.
+    """
+    if task_family == "count_frequency":
+        return skill_id
+    prefix = f"{task_family}__"
+    if skill_id.startswith(prefix):
+        return skill_id
+    return f"{prefix}{skill_id}"
+
+
+def _family_tag(task_family: str) -> str:
+    """Cosmetic ``tags`` entry mirroring the family (CF stays ``count-frequency``)."""
+    if task_family == "count_frequency":
+        return "count-frequency"
+    return task_family.replace("_", "-")
 
 
 def _group_dict_evidence_for_skills(

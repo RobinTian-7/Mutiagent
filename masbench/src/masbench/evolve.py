@@ -58,11 +58,10 @@ from masbench.core.instance import BenchmarkInstance
 from masbench.engine import _build_llm_client
 
 # Task family the Silo planner/evolution operate in. The ResultAnalyst minister
-# is CF-era and hardcodes ``count_frequency`` on the skills it produces; we re-tag
-# its patches (and the aggregate rows) into this family so the planner retrieval,
-# the held-out gate, and the post-evolution selection probe all operate
-# consistently in one family rather than splitting CF-tagged skills from
-# silo-tagged requests.
+# accepts a ``task_family`` argument and stamps every emitted skill card, its
+# trigger, and its (family-namespaced) skill_id with this family natively, so the
+# planner retrieval, the held-out gate, and the post-evolution selection probe all
+# operate consistently in one family without any post-hoc re-tagging.
 SILO_TASK_FAMILY = "silo"
 
 # Default Plan-3 improvement knobs activated on the planner objective. These turn
@@ -245,32 +244,6 @@ def _collect_rows(
     return rows
 
 
-def _retag_patches_to_family(
-    patches: list[SkillPatch],
-    task_family: str,
-) -> list[SkillPatch]:
-    """Re-tag minister patches into ``task_family``.
-
-    The ResultAnalyst minister is CF-era and stamps every candidate skill (and its
-    trigger) with ``count_frequency``. Without this, a planner request in the silo
-    family would never retrieve those skills, so the post-evolution selection
-    would ignore everything evolution just learned. Re-tagging keeps retrieval,
-    the held-out gate, and the selection probe in one consistent family.
-    """
-    retagged: list[SkillPatch] = []
-    for patch in patches:
-        candidate = patch.candidate_skill
-        if candidate is None:
-            retagged.append(patch)
-            continue
-        trigger = {**candidate.trigger, "task_family": task_family}
-        new_candidate = candidate.model_copy(
-            update={"task_family": task_family, "trigger": trigger}
-        )
-        retagged.append(patch.model_copy(update={"candidate_skill": new_candidate}))
-    return retagged
-
-
 def run_evolution(
     adapter: SiloBenchAdapter,
     *,
@@ -352,8 +325,11 @@ def run_evolution(
     # any caller-supplied synthetic multi-topology rows (see module docstring).
     val_rows = [*val_rows_real, *(held_out_rows or [])]
 
-    patches = _retag_patches_to_family(
-        ResultAnalystMinister().analyze(train_rows), SILO_TASK_FAMILY
+    # The minister stamps every emitted skill (card, trigger, and namespaced id)
+    # with the silo family natively, so retrieval, the held-out gate, and the
+    # selection probe all operate in one family with no post-hoc re-tagging.
+    patches = ResultAnalystMinister().analyze(
+        train_rows, task_family=SILO_TASK_FAMILY
     )
 
     size_before = len(skill_bank)
