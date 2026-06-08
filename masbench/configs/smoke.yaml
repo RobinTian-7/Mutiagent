@@ -1,0 +1,8 @@
+# Documentation-only example mirroring the offline smoke command.
+benchmark: silo_bench
+benchmarks_dir: third_party/acl26-silo-bench/benchmarks
+levels: [I]
+topology: mesh
+llm: fake
+max_rounds: 3
+out: runs/smoke
