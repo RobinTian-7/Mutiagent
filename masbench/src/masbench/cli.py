@@ -197,6 +197,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         out=args.out,
         resume=getattr(args, "resume", False),
         workers=getattr(args, "workers", 1),
+        progress=not getattr(args, "quiet", False),
     )
     overall = results["overall"]
     bits = " ".join(
@@ -348,6 +349,13 @@ def build_parser() -> argparse.ArgumentParser:
              "sequential). The grid is I/O-bound (LLM calls release the GIL), so "
              ">1 dispatches independent run-units to a thread pool for near-linear "
              "speedup; checkpoint/resume semantics are unchanged.",
+    )
+    p_bench.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the live per-run progress stream (default: ON, prints a "
+             "startup line then one line per finished run-unit to stdout). The "
+             "final 'overall success' + 'wrote ...' summary still prints.",
     )
     p_bench.set_defaults(func=_cmd_bench)
 

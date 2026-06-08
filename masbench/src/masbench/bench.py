@@ -52,6 +52,7 @@ import csv
 import json
 import math
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -217,6 +218,7 @@ def _run_unit(
     topology: str | None,
     extra: dict[str, Any] | None = None,
     extra_from_score: Callable[[ScoreResult], dict[str, Any]] | None = None,
+    progress: "_Progress | None" = None,
 ) -> dict[str, Any]:
     """Run ONE unit in isolation -> a real record, or a failed record on any error.
 
@@ -228,22 +230,35 @@ def _run_unit(
     record fields from the successful score (e.g. graphgen's generated-graph
     diagnostics); it is only consulted on the success path.
 
+    This is the SINGLE chokepoint every produced run-record passes through in BOTH
+    the sequential and the ``--workers`` parallel path, so it is where the live
+    progress tick belongs (Plan 5 Task 5): the underlying run is timed with
+    ``time.monotonic()`` and, once the record is built (success OR failed),
+    :meth:`_Progress.tick` is called (thread-safe via its own lock) exactly once.
+    Resumed/skipped units never reach here, so they are not ticked (they are
+    pre-counted into the header's ``resumed``).
+
     Only ``Exception`` is isolated (``LLMTimeoutError`` is a ``RuntimeError``); a
     ``KeyboardInterrupt``/``SystemExit`` still propagates so an operator can abort
     a long grid with Ctrl-C and finished runs stay safely checkpointed on disk.
     """
+    started = time.monotonic()
     try:
         score = produce()
     except Exception as exc:  # noqa: BLE001 - isolation: one bad run never aborts the grid
-        return _failed_record(
+        record = _failed_record(
             arm, instance, seed, exc, topology=topology, extra=extra
         )
-    merged = dict(extra or {})
-    if extra_from_score is not None:
-        merged.update(extra_from_score(score))
-    return _run_record(
-        arm, instance, seed, score, topology=topology, extra=merged or None
-    )
+    else:
+        merged = dict(extra or {})
+        if extra_from_score is not None:
+            merged.update(extra_from_score(score))
+        record = _run_record(
+            arm, instance, seed, score, topology=topology, extra=merged or None
+        )
+    if progress is not None:
+        progress.tick(record, time.monotonic() - started)
+    return record
 
 
 class _Checkpoint:
@@ -279,6 +294,93 @@ class _Checkpoint:
                 with self._path.open("a", encoding="utf-8") as fh:
                     fh.write(line)
             self._completed.add(_run_key(record))
+
+
+def _fmt_hms(seconds: float) -> str:
+    """Render an elapsed duration as ``H:MM:SS`` (no fractional part)."""
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+class _Progress:
+    """Live per-run progress printer for a long ``run_benchmark`` grid.
+
+    A real-LLM grid can run for hours; before this, ``run_benchmark`` printed
+    nothing until the very end, so a hung run looked identical to slow progress.
+    This prints ONE startup :meth:`header` line and then ONE :meth:`tick` line per
+    finished run-unit (success or failed). The single hook lives in
+    :func:`_run_unit` -- the chokepoint every produced record passes through in
+    BOTH the sequential and the ``--workers`` parallel path -- so progress covers
+    both with one wiring point.
+
+    ``tick`` is called from worker threads under ``--workers>1``; a lock guards the
+    counters + the print so lines never interleave and ``done`` is a clean
+    monotone 1..to_run. Every method is a no-op when ``enabled`` is False
+    (``--quiet`` / ``progress=False``), so the disabled path costs only a branch.
+    """
+
+    def __init__(self, *, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self.total = 0
+        self.to_run = 0
+        self.done = 0
+        self.ok = 0
+        self.start = time.monotonic()
+        self._lock = threading.Lock()
+
+    def header(
+        self,
+        *,
+        total: int,
+        resumed: int,
+        to_run: int,
+        arms: list[str],
+        n_conditions: int,
+        n_seeds: int,
+        workers: int,
+        out: str | Path | None,
+    ) -> None:
+        """Print the one-line startup banner (counts, parallelism, out dir)."""
+        self.total = total
+        self.to_run = to_run
+        if not self.enabled:
+            return
+        resumed_note = f", {resumed} already done (resume)" if resumed else ""
+        out_note = f" | out={out}" if out is not None else ""
+        print(
+            f"bench: {total} run-units "
+            f"(arms={len(arms)} × conditions={n_conditions} × seeds={n_seeds}), "
+            f"{to_run} to run{resumed_note} | workers={workers}{out_note}",
+            flush=True,
+        )
+
+    def tick(self, record: dict[str, Any], elapsed_s: float) -> None:
+        """Account for + print one finished run-unit (thread-safe)."""
+        with self._lock:
+            self.done += 1
+            ok = bool(record.get("success"))
+            if ok:
+                self.ok += 1
+            if not self.enabled:
+                return
+            cumulative = _fmt_hms(time.monotonic() - self.start)
+            arm = record.get("arm", "?")
+            case_id = record.get("case_id", "?")
+            n = record.get("n_agents", "?")
+            seed = record.get("seed", "?")
+            tokens = record.get("tokens", 0)
+            status = "ok" if ok else "FAIL"
+            line = (
+                f"[{self.done}/{self.to_run}] {cumulative} "
+                f"{arm} {case_id} n{n} seed{seed} → {status} "
+                f"tok={tokens} ({elapsed_s:.1f}s) | success {self.ok}/{self.done}"
+            )
+            error = record.get("error")
+            if error:
+                line += f"  err={error}"
+            print(line, flush=True)
 
 
 def _load_checkpoint(out: Path, *, resume: bool) -> tuple[_Checkpoint, list[dict[str, Any]]]:
@@ -324,6 +426,52 @@ def _condition_key(case_id: str, n_agents: int) -> str:
     return f"{case_id}|n{n_agents}"
 
 
+def _all_unit_keys(
+    instances: list[BenchmarkInstance],
+    arms: list[str],
+    *,
+    seeds: list[int],
+    fixed_topologies: list[str],
+) -> list[tuple]:
+    """Enumerate every run-unit's :func:`_run_key`-shaped identity tuple.
+
+    The SINGLE source of truth for "how many run-units does this grid have" --
+    used to compute ``total``/``resumed`` for the progress header so the count is
+    correct for BOTH the sequential and the ``--workers`` path (each path produces
+    exactly one record per key here). Mirrors the per-arm expansion of both
+    execution paths: the fixed arm fans out per topology (its key carries the
+    topology), select/graphgen are one unit per (instance, seed), and the evolved
+    arm evaluates only on the held-out *test* seed (``seeds[-1]``).
+    """
+    test_seeds = [seeds[-1]] if seeds else [0]
+    keys: list[tuple] = []
+    for arm in arms:
+        if arm == "fixed":
+            for instance in instances:
+                for topology in fixed_topologies:
+                    for seed in seeds:
+                        keys.append(
+                            ("fixed", instance.case_id, instance.n_agents, seed, topology)
+                        )
+        elif arm in ("select", "graphgen"):
+            for instance in instances:
+                for seed in seeds:
+                    keys.append(
+                        (arm, instance.case_id, instance.n_agents, seed, None)
+                    )
+        elif arm == "evolved":
+            for instance in instances:
+                for seed in test_seeds:
+                    keys.append(
+                        ("evolved", instance.case_id, instance.n_agents, seed, None)
+                    )
+        else:
+            raise SystemExit(
+                f"unknown arm '{arm}' (valid: fixed, select, graphgen, evolved)"
+            )
+    return keys
+
+
 def run_benchmark(
     adapter: SiloBenchAdapter,
     *,
@@ -338,6 +486,7 @@ def run_benchmark(
     out: str | Path | None = None,
     resume: bool = False,
     workers: int = 1,
+    progress: bool = True,
     llm_client: LLMClient | None = None,
 ) -> dict[str, Any]:
     """Run the requested ARMS over a Silo-Bench grid and aggregate a Table-1.
@@ -408,6 +557,29 @@ def run_benchmark(
     else:
         ckpt, prior_records = _Checkpoint(None), []
 
+    # Live progress (Plan 5 Task 5): enumerate every run-unit ONCE (the single
+    # source of truth shared by both execution paths) to compute the header
+    # counts. ``resumed`` = units already checkpointed (skipped, never ticked);
+    # ``to_run`` = the units this session will actually execute + tick. The tick
+    # itself fires from inside ``_run_unit`` (the per-unit chokepoint), so the
+    # sequential and ``--workers`` paths are both covered by one hook.
+    prog = _Progress(enabled=progress)
+    unit_keys = _all_unit_keys(
+        instances, arms, seeds=seeds, fixed_topologies=fixed_topologies
+    )
+    total = len(unit_keys)
+    resumed = sum(1 for key in unit_keys if ckpt.done(key))
+    prog.header(
+        total=total,
+        resumed=resumed,
+        to_run=total - resumed,
+        arms=arms,
+        n_conditions=len(instances),
+        n_seeds=len(seeds),
+        workers=workers,
+        out=out,
+    )
+
     runs: list[dict[str, Any]] = list(prior_records)
     conditions: dict[str, Any] = {}
     # Accumulated motif evidence from graphgen-generated specs, fed back into
@@ -447,6 +619,7 @@ def run_benchmark(
             client=client,
             ckpt=ckpt,
             workers=workers,
+            progress=prog,
         )
         runs.extend(new_runs)
         # Aggregate each condition from EVERYTHING for it (resumed + freshly run).
@@ -472,12 +645,15 @@ def run_benchmark(
                 if arm == "fixed":
                     new_runs.extend(
                         _run_fixed_arm(
-                            instance, cfg_base, seeds, fixed_topologies, client, ckpt
+                            instance, cfg_base, seeds, fixed_topologies, client, ckpt,
+                            progress=prog,
                         )
                     )
                 elif arm == "select":
                     new_runs.extend(
-                        _run_select_arm(instance, cfg_base, seeds, client, ckpt)
+                        _run_select_arm(
+                            instance, cfg_base, seeds, client, ckpt, progress=prog
+                        )
                     )
                 elif arm == "graphgen":
                     arm_runs, new_motif_rows = _run_graphgen_arm(
@@ -488,6 +664,7 @@ def run_benchmark(
                         ckpt,
                         graphgen_candidates=graphgen_candidates,
                         motif_rows=motif_rows,
+                        progress=prog,
                     )
                     new_runs.extend(arm_runs)
                     motif_rows.extend(new_motif_rows)
@@ -503,6 +680,7 @@ def run_benchmark(
                             client=client,
                             cache=evolved_summaries,
                             ckpt=ckpt,
+                            progress=prog,
                         )
                     )
                 else:
@@ -566,6 +744,7 @@ def _run_parallel(
     client: LLMClient,
     ckpt: _Checkpoint,
     workers: int,
+    progress: _Progress | None = None,
 ) -> list[dict[str, Any]]:
     """Dispatch the full not-yet-done run-unit grid to a ``ThreadPoolExecutor``.
 
@@ -607,6 +786,7 @@ def _run_parallel(
         levels=levels,
         client=client,
         ckpt=ckpt,
+        progress=progress,
     )
     if not tasks:
         return []
@@ -639,6 +819,7 @@ def _build_parallel_tasks(
     levels: list[str] | None,
     client: LLMClient,
     ckpt: _Checkpoint,
+    progress: _Progress | None = None,
 ) -> list[_RunTask]:
     """Build the full list of not-yet-done run-units across the whole grid.
 
@@ -646,7 +827,9 @@ def _build_parallel_tasks(
     ``ckpt.done`` filter is applied here, so the pool never sees a duplicate or
     an already-finished unit). The graphgen motif snapshot and the sequential
     pre-run of the evolved arm's ``run_evolution`` (see :func:`_run_parallel`)
-    happen here, before any task is dispatched.
+    happen here, before any task is dispatched. ``progress`` (when given) is
+    threaded into each task's :func:`_run_unit` so the per-unit tick fires from
+    the worker thread that finished it.
     """
     tasks: list[_RunTask] = []
 
@@ -668,7 +851,10 @@ def _build_parallel_tasks(
                         if ckpt.done(key):
                             continue
                         tasks.append(
-                            _fixed_task(instance, cfg_base, seed, topology, client)
+                            _fixed_task(
+                                instance, cfg_base, seed, topology, client,
+                                progress=progress,
+                            )
                         )
         elif arm == "select":
             for instance in instances:
@@ -682,7 +868,11 @@ def _build_parallel_tasks(
                     )
                     if ckpt.done(key):
                         continue
-                    tasks.append(_select_task(instance, cfg_base, seed, client))
+                    tasks.append(
+                        _select_task(
+                            instance, cfg_base, seed, client, progress=progress
+                        )
+                    )
         elif arm == "graphgen":
             for instance in instances:
                 for seed in seeds:
@@ -703,6 +893,7 @@ def _build_parallel_tasks(
                             client,
                             graphgen_candidates=graphgen_candidates,
                             motif_stats=motif_stats,
+                            progress=progress,
                         )
                     )
         elif arm == "evolved":
@@ -717,6 +908,7 @@ def _build_parallel_tasks(
                     client=client,
                     cache=evolved_summaries,
                     ckpt=ckpt,
+                    progress=progress,
                 )
             )
         else:
@@ -733,6 +925,8 @@ def _fixed_task(
     seed: int,
     topology: str,
     client: LLMClient,
+    *,
+    progress: _Progress | None = None,
 ) -> _RunTask:
     """A single fixed-arm (topology, seed) run-unit (mirrors :func:`_run_fixed_arm`)."""
     cfg = _cfg_for(cfg_base, instance.n_agents, use_planner=False, seed=seed)
@@ -746,6 +940,7 @@ def _fixed_task(
             seed=seed,
             topology=topology,
             extra={"fixed_topology": topology},
+            progress=progress,
         )
     )
 
@@ -755,6 +950,8 @@ def _select_task(
     cfg_base: RunConfig,
     seed: int,
     client: LLMClient,
+    *,
+    progress: _Progress | None = None,
 ) -> _RunTask:
     """A single select-arm seed run-unit (mirrors :func:`_run_select_arm`)."""
     cfg = _cfg_for(
@@ -772,6 +969,7 @@ def _select_task(
             seed=seed,
             topology=None,
             extra=None,
+            progress=progress,
         )
     )
 
@@ -784,6 +982,7 @@ def _graphgen_task(
     *,
     graphgen_candidates: int,
     motif_stats: Any,
+    progress: _Progress | None = None,
 ) -> _RunTask:
     """A single graphgen-arm seed run-unit (mirrors :func:`_run_graphgen_arm`).
 
@@ -812,6 +1011,7 @@ def _graphgen_task(
                 "generated_steps": s.extra.get("generated_steps"),
                 "graph_fallback_reason": s.extra.get("graph_fallback_reason"),
             },
+            progress=progress,
         )
     )
 
@@ -827,6 +1027,7 @@ def _evolved_tasks(
     client: LLMClient,
     cache: dict[int, dict[str, Any]],
     ckpt: _Checkpoint,
+    progress: _Progress | None = None,
 ) -> list[_RunTask]:
     """Build the evolved arm's eval run-units, pre-running evolution sequentially.
 
@@ -891,6 +1092,7 @@ def _evolved_tasks(
                             seed=s,
                             topology=topo,
                             extra=ex,
+                            progress=progress,
                         )
                     )
                 )
@@ -965,6 +1167,8 @@ def _run_fixed_arm(
     fixed_topologies: list[str],
     client: LLMClient,
     ckpt: _Checkpoint,
+    *,
+    progress: _Progress | None = None,
 ) -> list[dict[str, Any]]:
     """Run every fixed topology over every seed (planner-OFF, forced topology).
 
@@ -988,6 +1192,7 @@ def _run_fixed_arm(
                 seed=seed,
                 topology=topology,
                 extra={"fixed_topology": topology},
+                progress=progress,
             )
             ckpt.append(record)
             records.append(record)
@@ -1000,6 +1205,8 @@ def _run_select_arm(
     seeds: list[int],
     client: LLMClient,
     ckpt: _Checkpoint,
+    *,
+    progress: _Progress | None = None,
 ) -> list[dict[str, Any]]:
     """Run the QueenBee ``topology_select`` arm over every seed (isolated/resumable)."""
     records: list[dict[str, Any]] = []
@@ -1021,6 +1228,7 @@ def _run_select_arm(
             seed=seed,
             topology=None,
             extra=None,
+            progress=progress,
         )
         ckpt.append(record)
         records.append(record)
@@ -1036,6 +1244,7 @@ def _run_graphgen_arm(
     *,
     graphgen_candidates: int,
     motif_rows: list[dict[str, Any]],
+    progress: _Progress | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Run the QueenBee graph_generate arm over every seed (isolated/resumable).
 
@@ -1074,6 +1283,7 @@ def _run_graphgen_arm(
                 "generated_steps": s.extra.get("generated_steps"),
                 "graph_fallback_reason": s.extra.get("graph_fallback_reason"),
             },
+            progress=progress,
         )
         # A real run feeds its (selected topology, loss) back as motif evidence so
         # the prior accumulates across conditions; a failed run (carrying
@@ -1101,6 +1311,7 @@ def _run_evolved_arm(
     client: LLMClient,
     cache: dict[int, dict[str, Any]],
     ckpt: _Checkpoint,
+    progress: _Progress | None = None,
 ) -> list[dict[str, Any]]:
     """Run (or reuse) the gated evolution loop, eval its selection on test seeds.
 
@@ -1192,6 +1403,7 @@ def _run_evolved_arm(
             seed=seed,
             topology=evolved_topology,
             extra=evolved_extra,
+            progress=progress,
         )
         ckpt.append(record)
         records.append(record)
