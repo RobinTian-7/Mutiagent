@@ -12,6 +12,11 @@ from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
 from masbench.engine import run_instance
+from masbench.evolve import (
+    INCUMBENT_BASELINE_TOPOLOGY,
+    accepting_held_out_rows,
+    run_evolution,
+)
 
 
 def _adapter(benchmark: str, benchmarks_dir: str) -> SiloBenchAdapter:
@@ -102,6 +107,64 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_evolve(args: argparse.Namespace) -> int:
+    adapter = _adapter(args.benchmark, args.benchmarks_dir)
+    cfg = RunConfig(
+        benchmark=args.benchmark,
+        use_planner=True,
+        use_skill_evolution=True,
+        objective=args.objective,
+        merge_mode=args.merge_mode,
+        init_mode=args.init_mode,
+        llm_provider=args.llm,
+        model_name=args.model_name,
+        base_url=getattr(args, "base_url", None),
+        api_key_env=getattr(args, "api_key_env", None),
+        seed=args.seed,
+    )
+    # Offline (fake LLM) Silo runs are topology-invariant on success, so by
+    # default we inject a synthetic multi-topology held-out set plus a baseline
+    # incumbent to make the gate decision real (see masbench.evolve). With a real
+    # LLM, pass --no-synthetic-held-out to score the gate purely on the real
+    # held-out Silo runs; in that mode we do NOT seed the synthetic baseline
+    # incumbent (it has no real held-out measurement), so the gate compares the
+    # planner's real-evidence fallback against the evolved skills.
+    use_synth = getattr(args, "synthetic_held_out", True)
+    incumbent = getattr(args, "seed_incumbent_topology", None) or None
+    summary = run_evolution(
+        adapter,
+        cases=getattr(args, "cases", None),
+        agent_counts=[int(a) for a in args.agent_counts] if args.agent_counts else None,
+        levels=getattr(args, "levels", None),
+        train_seeds=[int(s) for s in args.train_seeds],
+        val_seeds=[int(s) for s in args.val_seeds],
+        cfg=cfg,
+        held_out_rows=accepting_held_out_rows() if use_synth else None,
+        seed_incumbent_topology=incumbent if use_synth else None,
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+    gate = summary["gate"]
+    print(
+        f"gate accepted={gate['accepted']} "
+        f"J_before={gate['j_before']:.6f} J_after={gate['j_after']:.6f} "
+        f"epsilon={gate['epsilon']:.6f}"
+    )
+    print(
+        f"train={summary['train_cases']} (rows={summary['n_train_rows']}, "
+        f"success={summary['train_success_rate']:.3f}) | "
+        f"val={summary['val_cases']} (rows={summary['n_val_rows_real']}, "
+        f"success={summary['val_success_rate']:.3f})"
+    )
+    print(
+        f"knobs={summary['objective_knobs']} | "
+        f"skill_bank {summary['skill_bank_size_before']}->"
+        f"{summary['skill_bank_size_after']} mutated={summary['skill_bank_mutated']}"
+    )
+    return 0
+
+
 def _summarize(records: list[dict]) -> dict:
     n = len(records)
     successes = sum(1 for r in records if r["score"]["success"])
@@ -161,6 +224,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_report = sub.add_parser("report", help="aggregate a run directory")
     p_report.add_argument("--run-dir", required=True)
     p_report.set_defaults(func=_cmd_report)
+
+    p_evolve = sub.add_parser(
+        "evolve",
+        help="run the gated QueenBee self-evolution loop on Silo-Bench",
+    )
+    add_common(p_evolve)
+    p_evolve.add_argument("--levels", nargs="+", default=None)
+    p_evolve.add_argument("--agent-counts", nargs="+", default=None)
+    p_evolve.add_argument("--cases", nargs="+", default=None)
+    p_evolve.add_argument("--train-seeds", nargs="+", default=["0"])
+    p_evolve.add_argument("--val-seeds", nargs="+", default=["0"])
+    p_evolve.add_argument(
+        "--seed-incumbent-topology",
+        default=INCUMBENT_BASELINE_TOPOLOGY,
+        help="incumbent topology the planner starts from (for a real J_before)",
+    )
+    p_evolve.add_argument(
+        "--no-synthetic-held-out",
+        dest="synthetic_held_out",
+        action="store_false",
+        help="score the gate purely on real held-out Silo runs (real-LLM use)",
+    )
+    p_evolve.add_argument("--out", required=True)
+    p_evolve.set_defaults(func=_cmd_evolve)
 
     return parser
 

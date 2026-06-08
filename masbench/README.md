@@ -6,8 +6,10 @@ a normalized benchmark interface, a Silo-Bench adapter, and a CLI.
 ## Layout
 - `src/masbench/core` — instance, config, scoring, the `BenchmarkTaskAdapter` bridge
 - `src/masbench/adapters/silo_bench.py` — Silo-Bench loader
-- `src/masbench/engine.py` — runs an instance through `SynchronousRunner` (planner-OFF)
-- `src/masbench/cli.py` — `run`, `run-suite`, `report`
+- `src/masbench/adapters/silo_protocol.py` — Silo-Bench behind the QueenBee protocol engine
+- `src/masbench/engine.py` — runs an instance through `SynchronousRunner` (planner-OFF) or the QueenBee planner (`--planner`)
+- `src/masbench/evolve.py` — the gated QueenBee self-evolution loop (`run_evolution`)
+- `src/masbench/cli.py` — `run`, `run-suite`, `report`, `evolve`
 
 ## Setup
 ```bash
@@ -40,12 +42,66 @@ uv run python -m masbench.cli run-suite --benchmark silo_bench \
 uv run python -m masbench.cli report --run-dir runs/silo_real
 ```
 
+## Evolve (QueenBee self-evolution on Silo)
+`masbench evolve` runs the improved QueenBee self-evolution loop end-to-end on
+Silo-Bench: it splits the selected instances into TRAIN/HELD-OUT, runs each
+through the planner + `ProtocolRunner`, turns every run into an aggregate row
+(`summary_to_aggregate_row`), has the ResultAnalyst minister propose skill
+patches, and applies them through the **held-out validation gate** — committing
+the batch only if it does not regress the held-out objective `J_val`. The planner
+requests carry the Plan-3 improvement knobs (uncertainty-aware selection +
+counterexample veto + risk floor), so the loop exercises improvements D+E+F. See
+`docs/self_evolution_changes.md` for how each of the five improvements maps to its
+`exp_graph` module and how it differs from the paper.
+
+### Offline (no API keys, no cost)
+```bash
+cd masbench
+uv run python -m masbench.cli evolve --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --cases I-01 III-21 --agent-counts 2 \
+  --objective accuracy_first --llm fake --out runs/evolve
+```
+Prints the real gate decision and the before/after held-out objective, e.g.:
+```
+gate accepted=True J_before=1.000000 J_after=0.500000 epsilon=0.000000
+train=['I-01'] (rows=3, success=1.000) | val=['III-21'] (rows=3, success=0.000)
+knobs={'uncertainty_weight': 1.0, 'min_seeds': 1, 'enforce_avoid_veto': True, 'risk_weight': 0.5, 'max_acceptable_loss': 0.99} | skill_bank 1->4 mutated=True
+```
+The full result (gate `j_before`/`j_after`, accept/reject, per-set success
+rates, the activated knobs, and the resulting skill ids) is written to
+`runs/evolve/summary.json`. Because Silo's deterministic offline path is
+*topology-invariant on success* (a fake-LLM run of a case solves it or not, the
+same way for every topology), the offline command injects a small synthetic
+multi-topology held-out set so the gate's accept/reject is a real, non-degenerate
+decision; the gate arithmetic itself is real. Pass `--no-synthetic-held-out` to
+score the gate purely on the real held-out Silo runs (intended for the real-LLM
+path below).
+
+### Real LLM (uses your provider keys)
+```bash
+cd masbench
+export DASHSCOPE_API_KEY=...
+uv run python -m masbench.cli evolve --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --levels I --agent-counts 2 \
+  --objective accuracy_first \
+  --merge-mode llm_full_merge --init-mode llm_local_solve \
+  --llm dashscope --model-name qwen-flash --api-key-env DASHSCOPE_API_KEY \
+  --base-url https://dashscope.aliyuncs.com/compatible-mode/v1 \
+  --no-synthetic-held-out --out runs/evolve_real
+```
+With a real LLM the held-out Silo runs differ by topology, so the gate can decide
+on real evidence alone (`--no-synthetic-held-out`).
+
 ## Status
 - Plan 1 (done): planner-OFF, exact-match success rate on Silo-Bench via `SynchronousRunner`.
 - Plan 2 (done): exp_graph's protocol engine is now task-agnostic — `ProtocolTaskAdapter` +
   generic vote aggregation + generic step metrics. CF stays byte-identical (delegates to
   cf_final/cf_protocol); a non-CF `global_max` task runs end-to-end through `ProtocolRunner`.
-  exp_graph suite: 200 passed, 1 skipped.
-- Plan 3 (next): `SiloProtocolAdapter` + wire `--planner` to the QueenBee temporal-DAG pipeline
-  on Silo-Bench; self-evolution overhaul (validation gate, uncertainty-aware/veto/floor selection,
-  motif-level credit, insight falsification); official partial-correctness scorers.
+- Plan 3 (done): `SiloProtocolAdapter` + `--planner` wire the QueenBee temporal-DAG pipeline
+  onto Silo-Bench; the self-evolution overhaul is implemented and activated — held-out
+  validation gate, uncertainty-aware/veto/floor selection, motif-level credit, and insight
+  falsification — and `masbench evolve` runs the whole gated loop end-to-end (offline-verifiable
+  with `--llm fake`). See `docs/self_evolution_changes.md`. exp_graph suite: 237 passed, 1
+  skipped; masbench suite: 37 passed.
