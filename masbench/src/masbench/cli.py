@@ -186,6 +186,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         evolved_mode=getattr(args, "evolved_mode", "topology_select"),
         graph_validation_seeds=getattr(args, "graph_validation_seeds", 0),
         use_llm_insights=getattr(args, "use_llm_insights", False),
+        evolved_test_seeds=getattr(args, "evolved_test_seeds", 1),
     )
     results = run_benchmark(
         adapter,
@@ -389,6 +390,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="B2: run the LLM design-insight minister over the evolution evidence, "
              "falsify insights against held-out, and fold VERIFIED ones into the "
              "skill bank (richer design rules for generation). Extra LLM calls.",
+    )
+    p_bench.add_argument(
+        "--evolved-test-seeds",
+        dest="evolved_test_seeds",
+        type=int,
+        default=1,
+        help="how many trailing seeds the evolved arm holds out for eval + gate "
+             "(train=seeds[:-K], test=seeds[-K:]). K>1 gives the evolved arm more "
+             "eval points per condition -> much lower variance.",
     )
     p_bench.set_defaults(func=_cmd_bench)
 

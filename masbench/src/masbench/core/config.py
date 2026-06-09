@@ -34,6 +34,11 @@ class RunConfig:
     # the emperor refines from those references (anchor on what works, then
     # economize) -- best-of-both vs from-scratch graph_generate.
     evolved_mode: str = "topology_select"
+    # How many trailing seeds the evolved arm holds out for EVAL (and the gate's
+    # val): train = seeds[:-K], test = seeds[-K:]. Default 1 (current behaviour);
+    # K>1 evaluates evolved on more held-out seeds -> far less per-condition
+    # variance (each condition is no longer a single binary outcome).
+    evolved_test_seeds: int = 1
     num_graph_candidates: int = 1
     # D1 (opt-in): >0 turns on top-k candidate PROBE-evaluation -- each generated
     # candidate is actually run on this many validation seeds and the best-scoring

@@ -1021,6 +1021,21 @@ def _graphgen_task(
     )
 
 
+def _train_test_seeds(seeds: list[int], k: int) -> tuple[list[int], list[int]]:
+    """Split seeds into (train, test), holding out the LAST ``k`` for eval + gate.
+
+    ``k>=1``. If there are not strictly more than ``k`` seeds, all are reused for
+    both (offline-honest fallback; matches the old single-seed split at k=1).
+    Holding out more than one seed gives the evolved arm k x more eval points per
+    condition -> far less per-condition (binary) variance.
+    """
+    k = max(1, int(k))
+    seeds = list(seeds)
+    if len(seeds) <= k:
+        return seeds, seeds
+    return seeds[:-k], seeds[-k:]
+
+
 def _evolved_planner_mode(cfg_base: RunConfig) -> str:
     """The planner mode the evolution loop runs in for the evolved arm.
 
@@ -1119,7 +1134,7 @@ def _evolved_tasks(
     train/test split, gate-extra attachment and synthetic-offline gate of
     :func:`_run_evolved_arm`.
     """
-    test_seeds = [seeds[-1]] if seeds else [0]
+    _, test_seeds = _train_test_seeds(seeds, cfg_base.evolved_test_seeds)
 
     # Which instances still have a pending eval? (and which n_agents they need.)
     pending: list[tuple[BenchmarkInstance, list[int]]] = []
@@ -1203,8 +1218,7 @@ def _compute_evolution_summary(
     factored out so both the sequential and parallel paths produce an identical
     summary.
     """
-    train_seeds = list(seeds[:-1]) or list(seeds)
-    val_seeds = [seeds[-1]] if seeds else [0]
+    train_seeds, val_seeds = _train_test_seeds(seeds, cfg_base.evolved_test_seeds)
     cfg = _cfg_for(
         cfg_base,
         n_agents,
@@ -1239,6 +1253,7 @@ def _evolved_extra(summary: dict[str, Any]) -> dict[str, Any]:
             "accepted": bool(gate["accepted"]),
             "j_before": float(gate["j_before"]),
             "j_after": float(gate["j_after"]),
+            "mode": gate.get("mode"),
         },
         "val_success_rate": summary["val_success_rate"],
         "skill_bank_mutated": summary["skill_bank_mutated"],
@@ -1427,7 +1442,7 @@ def _run_evolved_arm(
     isolated against failure like every other run unit.
     """
     n_agents = instance.n_agents
-    test_seeds = [seeds[-1]] if seeds else [0]
+    _, test_seeds = _train_test_seeds(seeds, cfg_base.evolved_test_seeds)
 
     # Which eval seeds still need running for THIS instance?
     pending_seeds = [
@@ -1443,8 +1458,7 @@ def _run_evolved_arm(
     # Lazily compute (and cache) the heavy evolution summary -- only now that we
     # know an eval actually needs it.
     if n_agents not in cache:
-        train_seeds = list(seeds[:-1]) or list(seeds)
-        val_seeds = [seeds[-1]] if seeds else [0]
+        train_seeds, val_seeds = _train_test_seeds(seeds, cfg_base.evolved_test_seeds)
         cfg = _cfg_for(
             cfg_base,
             n_agents,
@@ -1486,6 +1500,7 @@ def _run_evolved_arm(
             "accepted": bool(gate["accepted"]),
             "j_before": float(gate["j_before"]),
             "j_after": float(gate["j_after"]),
+            "mode": gate.get("mode"),
         },
         "val_success_rate": summary["val_success_rate"],
         "skill_bank_mutated": summary["skill_bank_mutated"],
