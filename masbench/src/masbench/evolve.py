@@ -489,6 +489,7 @@ def run_evolution(
     levels: list[str] | None = None,
     held_out_rows: list[dict[str, Any]] | None = None,
     seed_incumbent_topology: str | None = None,
+    initial_skills: list[dict[str, Any]] | None = None,
     objective_variants: list[str] | None = None,
     epsilon: float = 0.0,
     batch_id: str = "silo_evolve_batch",
@@ -530,7 +531,13 @@ def run_evolution(
 
     # The evolving (held-out) bank is the one the gate mutates. Optionally seed an
     # incumbent so the gate has a concrete starting selection to improve on.
-    skill_bank = SkillBank()
+    # ``initial_skills`` seeds the bank from a prior round (the rounds-curve loop
+    # accumulates the evolved bank across iterations).
+    skill_bank = (
+        SkillBank(skills=[SkillCard.model_validate(s) for s in initial_skills])
+        if initial_skills
+        else SkillBank()
+    )
     if seed_incumbent_topology:
         skill_bank.apply_patch(
             SkillPatch(

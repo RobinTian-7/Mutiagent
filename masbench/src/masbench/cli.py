@@ -214,6 +214,54 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_curve(args: argparse.Namespace) -> int:
+    adapter = _adapter(args.benchmark, args.benchmarks_dir)
+    cfg = RunConfig(
+        benchmark=args.benchmark,
+        objective=args.objective,
+        merge_mode=args.merge_mode,
+        init_mode=args.init_mode,
+        llm_provider=args.llm,
+        model_name=args.model_name,
+        base_url=getattr(args, "base_url", None),
+        api_key_env=getattr(args, "api_key_env", None),
+        request_timeout=getattr(args, "request_timeout", 90.0),
+        evolved_mode=args.evolved_mode,
+        num_graph_candidates=args.graphgen_candidates,
+        graph_validation_seeds=getattr(args, "graph_validation_seeds", 0),
+        use_llm_insights=getattr(args, "use_llm_insights", False),
+    )
+    from masbench.curve import run_curves
+
+    res = run_curves(
+        adapter, cfg, n_agents=args.agent_count,
+        seeds=[int(s) for s in args.seeds], levels=args.levels, cases=args.cases,
+        holdout_frac=args.holdout_frac, data_points=args.data_points, rounds=args.rounds,
+    )
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "curves.json").write_text(json.dumps(res, indent=2, default=str))
+
+    def _g(pt: dict) -> str:
+        g = pt.get("gate") or {}
+        jb, ja = g.get("j_before"), g.get("j_after")
+        return f"J={jb}/{ja}" if jb is not None else ""
+
+    print(f"held-out TEST cases: {res['test_cases']}  |  train: {res['train_cases']}")
+    print("baselines (held-out success): " + "  ".join(
+        f"{k}={v * 100:.1f}%" for k, v in res["baselines"].items()))
+    print(f"\nDATA curve (evolved_mode={res['evolved_mode']}) -- held-out success vs #train cases:")
+    for pt in res["data_curve"]:
+        print(f"  k_cases={pt['k_cases']:>2}  score={pt['score'] * 100:5.1f}%  "
+              f"skills={pt['n_skills']:>2}  {_g(pt)}")
+    print("\nROUNDS curve -- held-out success vs #self-evolution rounds:")
+    for pt in res["rounds_curve"]:
+        print(f"  round={pt['round']:>2}  score={pt['score'] * 100:5.1f}%  "
+              f"skills={pt['n_skills']:>2}  {_g(pt)}")
+    print(f"\nwrote curves.json to {args.out}")
+    return 0
+
+
 def _summarize(records: list[dict]) -> dict:
     n = len(records)
     successes = sum(1 for r in records if r["score"]["success"])
@@ -401,6 +449,37 @@ def build_parser() -> argparse.ArgumentParser:
              "eval points per condition -> much lower variance.",
     )
     p_bench.set_defaults(func=_cmd_bench)
+
+    p_curve = sub.add_parser(
+        "curve", help="evolution learning curves on a disjoint held-out case split"
+    )
+    add_common(p_curve)
+    p_curve.add_argument("--levels", nargs="+", default=None)
+    p_curve.add_argument("--cases", nargs="+", default=None)
+    p_curve.add_argument("--agent-count", dest="agent_count", type=int, default=5)
+    p_curve.add_argument("--seeds", nargs="+", default=["1", "2", "3"])
+    p_curve.add_argument("--graphgen-candidates", dest="graphgen_candidates", type=int, default=3)
+    p_curve.add_argument("--graph-validation-seeds", dest="graph_validation_seeds", type=int, default=0)
+    p_curve.add_argument("--use-llm-insights", dest="use_llm_insights", action="store_true")
+    p_curve.add_argument(
+        "--evolved-mode", dest="evolved_mode",
+        choices=["topology_select", "graph_generate", "select_then_refine"],
+        default="graph_generate",
+    )
+    p_curve.add_argument(
+        "--holdout-frac", dest="holdout_frac", type=float, default=0.3,
+        help="fraction of cases held out (disjoint) as the curve's TEST set",
+    )
+    p_curve.add_argument(
+        "--data-points", dest="data_points", type=int, default=4,
+        help="number of points on the #train-cases (data-scaling) curve",
+    )
+    p_curve.add_argument(
+        "--rounds", dest="rounds", type=int, default=4,
+        help="number of self-evolution rounds on the rounds curve",
+    )
+    p_curve.add_argument("--out", required=True)
+    p_curve.set_defaults(func=_cmd_curve)
 
     return parser
 
