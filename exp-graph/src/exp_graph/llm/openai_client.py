@@ -99,7 +99,21 @@ class OpenAIChatClient:
             raise RuntimeError(
                 "Install exp-graph[openai] to use OpenAIChatClient"
             ) from exc
-        timeout = float(os.environ.get("OPENAI_TIMEOUT", "120"))
+        timeout_total = float(os.environ.get("OPENAI_TIMEOUT", "120"))
+        # Fail fast on a dead/wedged connection: a short CONNECT timeout means a
+        # proxy that accepts the TCP socket but never responds is abandoned
+        # quickly instead of tying up the (longer) read budget. The hard
+        # wall-clock TimeoutLLMClient guard still bounds the whole call regardless;
+        # this just shortens the common dead-connection case.
+        connect_timeout = float(
+            os.environ.get("OPENAI_CONNECT_TIMEOUT", str(min(10.0, timeout_total)))
+        )
+        try:
+            import httpx
+
+            timeout: object = httpx.Timeout(timeout_total, connect=connect_timeout)
+        except Exception:  # pragma: no cover - httpx ships with the openai SDK
+            timeout = timeout_total
         max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "2"))
         self._platform = platform.lower()
         self._thinking_enabled = thinking_enabled

@@ -80,6 +80,10 @@ class GraphValidationOptions(BaseModel):
     max_messages: int = 32
     max_receiver_fan_in: int = 4
     repair_attempts: int = 1
+    # D2 (opt-in): require the selected_primary sink to be temporally reachable
+    # from ALL agents (full information coverage). Default OFF -> CF/existing
+    # behaviour is byte-identical; masbench (Silo) enables it.
+    require_full_sink_coverage: bool = False
 
 
 class GraphValidationResult(BaseModel):
@@ -148,6 +152,7 @@ def plan_free_graph(
         max_messages=runtime.graph_max_messages,
         max_receiver_fan_in=runtime.graph_max_receiver_fan_in,
         repair_attempts=runtime.graph_repair_attempts,
+        require_full_sink_coverage=runtime.graph_require_full_sink_coverage,
     )
     # Pull a short task description from the adapter (duck-typed; CF adapters
     # don't define it -> None, and the CF prompt branch ignores it anyway) so the
@@ -281,6 +286,20 @@ def validate_graph_plan(
         warnings.append("selected_primary missing")
     if graph.selected_primary is not None and final_receivers:
         _add_reachability_warnings(graph, warnings)
+    if options.require_full_sink_coverage:
+        if graph.selected_primary is None:
+            errors.append(
+                "require_full_sink_coverage: a selected_primary sink is required"
+            )
+        else:
+            uncovered = _uncovered_agents(
+                graph.steps, graph.n_agents, graph.selected_primary
+            )
+            if uncovered:
+                errors.append(
+                    "require_full_sink_coverage: agents with no temporal path to "
+                    f"sink {graph.selected_primary}: {uncovered}"
+                )
     return GraphValidationResult(valid=not errors, errors=errors, warnings=warnings)
 
 
@@ -334,6 +353,11 @@ def repair_graph_plan(
     if selected is None or selected < 0 or selected >= options.n_agents:
         selected = final_receivers[-1] if final_receivers else None
         notes.append(f"repaired selected_primary={selected}")
+    if options.require_full_sink_coverage and selected is not None:
+        repaired_steps, coverage_notes = _repair_sink_coverage(
+            repaired_steps, selected, options, message_budget
+        )
+        notes.extend(coverage_notes)
     return (
         graph.model_copy(
             update={
@@ -878,12 +902,20 @@ def _evaluate_candidates(
             continue
         probe_rows: list[dict[str, object]] = []
         for probe_seed in validation_seeds:
-            global_task = task_adapter.build_global_task(
-                array_size=request.array_size or 64,
-                value_min=runtime.value_min,
-                value_max=runtime.value_max,
-                seed=int(probe_seed),
-            )
+            build_probe = getattr(task_adapter, "build_probe_global_task", None)
+            if callable(build_probe):
+                # Task-agnostic probe task (e.g. Silo runs the candidate on the
+                # actual instance; CF has no such method -> the array path below).
+                global_task = build_probe(
+                    seed=int(probe_seed), runtime=runtime, request=request
+                )
+            else:
+                global_task = task_adapter.build_global_task(
+                    array_size=request.array_size or 64,
+                    value_min=runtime.value_min,
+                    value_max=runtime.value_max,
+                    seed=int(probe_seed),
+                )
             soldier_llm = resolve_role_llm_config(runtime, "soldier")
             config = ProtocolRunnerConfig(
                 topology_name=f"generated:{state.graph.name}",
@@ -943,12 +975,14 @@ def _probe_row(result: ProtocolExperimentResult, objective: str) -> dict[str, ob
     summary = result.to_summary_dict()
     return {
         "objective": objective,
-        "mean_rmse": float(summary["FinalRMSE"]),
-        "exact_match_rate": 1.0 if summary["FinalExactMatch"] else 0.0,
-        "mean_messages": float(summary["TotalMessages"]),
-        "mean_model_calls": float(summary["TotalModelCalls"]),
+        # CF carries FinalRMSE; generic protocol tasks (Silo) carry PrimaryMetric.
+        # FinalRMSE first keeps CF byte-identical; PrimaryMetric is the Silo loss.
+        "mean_rmse": float(summary.get("FinalRMSE", summary.get("PrimaryMetric", 0.0))),
+        "exact_match_rate": 1.0 if summary.get("FinalExactMatch") else 0.0,
+        "mean_messages": float(summary.get("TotalMessages", 0)),
+        "mean_model_calls": float(summary.get("TotalModelCalls", 0)),
         "mean_token_cost": float(
-            summary["TotalPromptTokens"] + summary["TotalCompletionTokens"]
+            summary.get("TotalPromptTokens", 0) + summary.get("TotalCompletionTokens", 0)
         ),
     }
 
@@ -1259,6 +1293,69 @@ def _top_k_records(
         reverse=True,
     )
     return selectable[: max(1, top_k)]
+
+
+def _uncovered_agents(
+    steps: list[GeneratedGraphStep], n_agents: int, sink: int
+) -> list[int]:
+    """Agents with NO temporal (increasing-step) path to ``sink``.
+
+    Standard temporal-DAG information flow: each agent starts knowing itself; at
+    every step an edge ``src->dst`` gives ``dst`` everything ``src`` knows so far.
+    Returns the agents whose info never reaches the sink (= lossy for aggregation).
+    """
+    reachable: dict[int, set[int]] = {a: {a} for a in range(n_agents)}
+    for step in steps:
+        updates = {a: set(v) for a, v in reachable.items()}
+        for src, dst in step.edges:
+            if 0 <= src < n_agents and 0 <= dst < n_agents:
+                updates[dst].update(reachable.get(src, {src}))
+        reachable = updates
+    return sorted(set(range(n_agents)) - reachable.get(sink, {sink}))
+
+
+def _repair_sink_coverage(
+    steps: list[GeneratedGraphStep],
+    sink: int,
+    options: GraphValidationOptions,
+    message_budget: int,
+) -> tuple[list[GeneratedGraphStep], list[str]]:
+    """Best-effort: add steps routing uncovered agents to the sink (budget-bounded).
+
+    Each added step sends up to ``max_receiver_fan_in`` still-uncovered agents
+    directly to the sink; routing an agent also carries its transitive senders, so
+    a few edges can cover a subtree. ``a->sink`` always covers ``a``, so the
+    uncovered set strictly shrinks and the loop terminates. If the step/message
+    budget runs out before full coverage, the residual is left for validation to
+    reject (with D1, another candidate / the fallback is used).
+    """
+    new_steps = [
+        GeneratedGraphStep(
+            description=s.description, edges=list(s.edges), operator_hint=s.operator_hint
+        )
+        for s in steps
+    ]
+    added: list[int] = []
+    while message_budget > 0 and len(new_steps) < options.max_steps:
+        uncovered = [
+            a for a in _uncovered_agents(new_steps, options.n_agents, sink) if a != sink
+        ]
+        if not uncovered:
+            break
+        batch = uncovered[: min(options.max_receiver_fan_in, message_budget)]
+        if not batch:
+            break
+        new_steps.append(
+            GeneratedGraphStep(
+                description="sink-coverage repair",
+                operator_hint="aggregate",
+                edges=[(a, sink) for a in batch],
+            )
+        )
+        message_budget -= len(batch)
+        added.extend(batch)
+    notes = [f"routed uncovered agents to sink {sink}: {sorted(set(added))}"] if added else []
+    return new_steps, notes
 
 
 def _add_reachability_warnings(graph: GeneratedGraphPlan, warnings: list[str]) -> None:

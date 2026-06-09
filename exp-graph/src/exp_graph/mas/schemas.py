@@ -141,6 +141,9 @@ class MASRuntimeConfig(BaseModel):
     graph_max_receiver_fan_in: int = 4
     graph_repair_attempts: int = 1
     graph_validation_seeds: list[int] = Field(default_factory=list)
+    # D2 (opt-in): require the generated DAG's sink to be temporally reachable
+    # from ALL agents. Default OFF -> CF byte-identical; masbench (Silo) enables it.
+    graph_require_full_sink_coverage: bool = False
     # Structural-motif credit prior for graph-candidate selection (Plan 4 Task
     # 5, activating the Plan 3 Part G machinery). Both default to no-ops so
     # graph generation + candidate selection stay byte-identical to today:
