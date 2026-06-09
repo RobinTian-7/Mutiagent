@@ -61,6 +61,8 @@ from typing import Any, Callable
 import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.llm.base import LLMClient
 from exp_graph.mas.motifs import aggregate_motif_losses
+from exp_graph.mas.schemas import SkillCard
+from exp_graph.mas.skill_bank import SkillBank
 
 from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.core.config import RunConfig
@@ -786,6 +788,7 @@ def _run_parallel(
         levels=levels,
         client=client,
         ckpt=ckpt,
+        workers=workers,
         progress=progress,
     )
     if not tasks:
@@ -819,6 +822,7 @@ def _build_parallel_tasks(
     levels: list[str] | None,
     client: LLMClient,
     ckpt: _Checkpoint,
+    workers: int = 1,
     progress: _Progress | None = None,
 ) -> list[_RunTask]:
     """Build the full list of not-yet-done run-units across the whole grid.
@@ -908,6 +912,7 @@ def _build_parallel_tasks(
                     client=client,
                     cache=evolved_summaries,
                     ckpt=ckpt,
+                    workers=workers,
                     progress=progress,
                 )
             )
@@ -1016,6 +1021,80 @@ def _graphgen_task(
     )
 
 
+def _evolved_planner_mode(cfg_base: RunConfig) -> str:
+    """The planner mode the evolution loop runs in for the evolved arm.
+
+    ``graph_generate`` makes BOTH evidence collection and eval generate DAGs (so
+    the loop learns from generated structures); otherwise topology_select.
+    """
+    return "graph_generate" if cfg_base.evolved_mode == "graph_generate" else "topology_select"
+
+
+def _bank_from_summary(summary: dict[str, Any]) -> SkillBank:
+    """Rebuild the evolved skill bank from a ``run_evolution`` summary.
+
+    The bank is serialized into the summary (``evolved_skills``) so it survives the
+    cache/parallel boundary; in ``graph_generate`` mode the eval feeds it to the
+    emperor so the DAG is DESIGNED from the evolved skills, not generated cold.
+    """
+    skills = [SkillCard.model_validate(s) for s in summary.get("evolved_skills", [])]
+    return SkillBank(skills=skills)
+
+
+def _evolved_eval_unit(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    n_agents: int,
+    seed: int,
+    summary: dict[str, Any],
+    evolved_extra: dict[str, Any],
+    client: LLMClient,
+    *,
+    progress: "_Progress | None" = None,
+) -> dict[str, Any]:
+    """Produce ONE evolved eval record for ``(instance, seed)``.
+
+    * ``topology_select`` (default): run the evolution-SELECTED named topology.
+    * ``graph_generate``: the emperor GENERATES a bespoke DAG from the evolved
+      skill bank (self-designed topology).
+
+    Either way the record keys to ``(evolved, case, n, seed, None)`` (no
+    ``fixed_topology``), so checkpoint/resume is identical across modes.
+    """
+    if cfg_base.evolved_mode in ("graph_generate", "select_then_refine"):
+        # graph_generate: design from scratch (motif prior from generated evidence);
+        # the generation gate (C) discards the learned state if it didn't improve
+        # held-out generation. select_then_refine: always anchor on the bank's
+        # working-topology reference specs (its gate is the select-mode one).
+        gate = summary.get("gate") or {}
+        use_learned = (
+            cfg_base.evolved_mode != "graph_generate" or bool(gate.get("accepted", True))
+        )
+        bank = _bank_from_summary(summary) if use_learned else SkillBank()
+        motif_stats = (summary.get("evolved_motif_stats") or None) if use_learned else None
+        cfg = _cfg_for(
+            cfg_base, n_agents, use_planner=True,
+            planner_mode="graph_generate", seed=seed,
+        )
+        return _run_unit(
+            lambda: run_instance(
+                instance, cfg, llm_client=client,
+                skill_bank=bank, motif_stats=motif_stats,
+            ),
+            arm="evolved", instance=instance, seed=seed, topology=None,
+            extra=evolved_extra, progress=progress,
+        )
+    evolved_topology = summary["final_selection"]["topology_name"]
+    cfg = _cfg_for(cfg_base, n_agents, use_planner=False, seed=seed)
+    return _run_unit(
+        lambda: run_fixed_protocol(
+            instance, cfg, topology=evolved_topology, llm_client=client
+        ),
+        arm="evolved", instance=instance, seed=seed, topology=evolved_topology,
+        extra=evolved_extra, progress=progress,
+    )
+
+
 def _evolved_tasks(
     instances: list[BenchmarkInstance],
     cfg_base: RunConfig,
@@ -1027,6 +1106,7 @@ def _evolved_tasks(
     client: LLMClient,
     cache: dict[int, dict[str, Any]],
     ckpt: _Checkpoint,
+    workers: int = 1,
     progress: _Progress | None = None,
 ) -> list[_RunTask]:
     """Build the evolved arm's eval run-units, pre-running evolution sequentially.
@@ -1057,41 +1137,46 @@ def _evolved_tasks(
         return []
 
     # Pre-run + cache the heavy evolution sequentially, once per needed n_agents.
+    # A failure here (e.g. a total provider outage) must NOT abort the whole grid:
+    # log it and skip the evolved arm for that n_agents this run -- nothing is
+    # recorded for it, so a later --resume retries it once the provider recovers.
     needed_n_agents = {instance.n_agents for instance, _ in pending}
     for n_agents in sorted(needed_n_agents):
         if n_agents not in cache:
-            cache[n_agents] = _compute_evolution_summary(
-                n_agents,
-                adapter,
-                cfg_base,
-                seeds,
-                cases=cases,
-                levels=levels,
-                client=client,
-            )
+            try:
+                cache[n_agents] = _compute_evolution_summary(
+                    n_agents,
+                    adapter,
+                    cfg_base,
+                    seeds,
+                    cases=cases,
+                    levels=levels,
+                    client=client,
+                    workers=workers,
+                    progress=bool(progress and progress.enabled),
+                )
+            except Exception as exc:  # noqa: BLE001 - one evolved arm must not abort the grid
+                print(
+                    f"  [evolve n={n_agents}] evolution FAILED "
+                    f"({type(exc).__name__}: {exc}); skipping evolved arm for "
+                    f"n={n_agents} this run (--resume retries it).",
+                    flush=True,
+                )
 
-    # Now build the independent per-instance eval tasks.
+    # Now build the independent per-instance eval tasks (skipping any n_agents
+    # whose evolution failed above -- left un-recorded so --resume retries it).
     tasks: list[_RunTask] = []
     for instance, pending_seeds in pending:
+        if instance.n_agents not in cache:
+            continue
         summary = cache[instance.n_agents]
-        evolved_topology = summary["final_selection"]["topology_name"]
         evolved_extra = _evolved_extra(summary)
         for seed in pending_seeds:
-            cfg = _cfg_for(
-                cfg_base, instance.n_agents, use_planner=False, seed=seed
-            )
             tasks.append(
                 _RunTask(
                     produce=(
-                        lambda inst=instance, c=cfg, s=seed, topo=evolved_topology, ex=evolved_extra: _run_unit(
-                            lambda: run_fixed_protocol(
-                                inst, c, topology=topo, llm_client=client
-                            ),
-                            arm="evolved",
-                            instance=inst,
-                            seed=s,
-                            topology=topo,
-                            extra=ex,
+                        lambda inst=instance, s=seed, summ=summary, ex=evolved_extra: _evolved_eval_unit(
+                            inst, cfg_base, inst.n_agents, s, summ, ex, client,
                             progress=progress,
                         )
                     )
@@ -1109,6 +1194,8 @@ def _compute_evolution_summary(
     cases: list[str] | None,
     levels: list[str] | None,
     client: LLMClient,
+    workers: int = 1,
+    progress: bool = False,
 ) -> dict[str, Any]:
     """Run the heavy gated ``run_evolution`` for one ``n_agents`` (offline-honest).
 
@@ -1123,6 +1210,7 @@ def _compute_evolution_summary(
         n_agents,
         use_planner=True,
         use_skill_evolution=True,
+        planner_mode=_evolved_planner_mode(cfg_base),
     )
     use_synth = cfg_base.llm_provider == "fake"
     return run_evolution(
@@ -1138,6 +1226,8 @@ def _compute_evolution_summary(
             INCUMBENT_BASELINE_TOPOLOGY if use_synth else None
         ),
         llm_client=client,
+        workers=workers,
+        progress=progress,
     )
 
 
@@ -1360,25 +1450,36 @@ def _run_evolved_arm(
             n_agents,
             use_planner=True,
             use_skill_evolution=True,
+            planner_mode=_evolved_planner_mode(cfg_base),
         )
         use_synth = cfg_base.llm_provider == "fake"
-        cache[n_agents] = run_evolution(
-            adapter,
-            cases=cases,
-            agent_counts=[n_agents],
-            levels=levels,
-            train_seeds=train_seeds,
-            val_seeds=val_seeds,
-            cfg=cfg,
-            held_out_rows=accepting_held_out_rows() if use_synth else None,
-            seed_incumbent_topology=(
-                INCUMBENT_BASELINE_TOPOLOGY if use_synth else None
-            ),
-            llm_client=client,
-        )
+        try:
+            cache[n_agents] = run_evolution(
+                adapter,
+                cases=cases,
+                agent_counts=[n_agents],
+                levels=levels,
+                train_seeds=train_seeds,
+                val_seeds=val_seeds,
+                cfg=cfg,
+                held_out_rows=accepting_held_out_rows() if use_synth else None,
+                seed_incumbent_topology=(
+                    INCUMBENT_BASELINE_TOPOLOGY if use_synth else None
+                ),
+                llm_client=client,
+                workers=1,
+                progress=bool(progress and progress.enabled),
+            )
+        except Exception as exc:  # noqa: BLE001 - one evolved arm must not abort the grid
+            print(
+                f"  [evolve n={n_agents}] evolution FAILED "
+                f"({type(exc).__name__}: {exc}); skipping evolved arm for "
+                f"n={n_agents} this run (--resume retries it).",
+                flush=True,
+            )
+            return []
 
     summary = cache[n_agents]
-    evolved_topology = summary["final_selection"]["topology_name"]
     gate = summary["gate"]
     evolved_extra = {
         "gate": {
@@ -1390,19 +1491,12 @@ def _run_evolved_arm(
         "skill_bank_mutated": summary["skill_bank_mutated"],
     }
 
-    # Evaluate the evolved selection on the held-out/test seeds for this instance.
+    # Evaluate the evolved policy on the held-out/test seeds for this instance:
+    # a SELECTED named topology, or a self-designed DAG (evolved_mode).
     records: list[dict[str, Any]] = []
     for seed in pending_seeds:
-        cfg = _cfg_for(cfg_base, n_agents, use_planner=False, seed=seed)
-        record = _run_unit(
-            lambda c=cfg: run_fixed_protocol(
-                instance, c, topology=evolved_topology, llm_client=client
-            ),
-            arm="evolved",
-            instance=instance,
-            seed=seed,
-            topology=evolved_topology,
-            extra=evolved_extra,
+        record = _evolved_eval_unit(
+            instance, cfg_base, n_agents, seed, summary, evolved_extra, client,
             progress=progress,
         )
         ckpt.append(record)

@@ -38,6 +38,9 @@ synthetic rows are unnecessary and ``held_out_rows`` can be left ``None``.
 
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from typing import Any
 
@@ -45,9 +48,23 @@ import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.llm.base import LLMClient
 from exp_graph.mas.consolidation import consolidate_skill_updates
 from exp_graph.mas.evolution import ResultAnalystMinister
+from exp_graph.mas.insights import (
+    LLMInsightMinister,
+    build_evidence_pack,
+    falsify_insights,
+    insight_report_to_patches,
+)
 from exp_graph.mas.planner import EmperorPlanner
+from exp_graph.mas.motifs import aggregate_motif_losses, spec_motif_keys
 from exp_graph.mas.runner import summary_to_aggregate_row
-from exp_graph.mas.schemas import ObjectiveSpec, PlannerRequest, SkillCard, SkillPatch
+from exp_graph.mas.schemas import (
+    EvidenceRecord,
+    MASRuntimeConfig,
+    ObjectiveSpec,
+    PlannerRequest,
+    SkillCard,
+    SkillPatch,
+)
 from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
 
@@ -55,7 +72,7 @@ from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
-from masbench.engine import _build_llm_client
+from masbench.engine import _build_llm_client, _plan_graph_generate
 
 # Task family the Silo planner/evolution operate in. The ResultAnalyst minister
 # accepts a ``task_family`` argument and stamps every emitted skill card, its
@@ -102,6 +119,7 @@ def _run_one(
     skill_bank: SkillBank,
     seed: int,
     llm_client: LLMClient,
+    motif_stats: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Run one instance through the QueenBee planner path and return its row.
 
@@ -118,7 +136,21 @@ def _run_one(
         n_agents=n_agents,
         objective=objective,
     )
-    plan = EmperorPlanner(skill_bank).plan(request)
+    if cfg.planner_mode == "graph_generate":
+        # Self-design evidence: GENERATE a DAG (cold, diverse via candidates) so the
+        # minister + motif loop learn from real generated structures, not topology
+        # picks. skill_bank is the fresh per-row bank; the motif prior is OFF here
+        # (we are MEASURING which structures win, not yet biasing toward them).
+        plan, _planner_extra = _plan_graph_generate(
+            cfg,
+            n_agents=n_agents,
+            task_adapter=task_adapter,
+            client=llm_client,
+            skill_bank=skill_bank,
+            motif_stats=motif_stats,
+        )
+    else:
+        plan = EmperorPlanner(skill_bank).plan(request)
 
     config_kwargs: dict[str, Any] = {
         "topology_name": plan.topology_name,
@@ -147,7 +179,134 @@ def _run_one(
     row["case_id"] = instance.case_id
     row["seed"] = seed
     row["task_family"] = SILO_TASK_FAMILY
+    if cfg.planner_mode == "graph_generate" and plan.protocol_spec is not None:
+        # Structural-motif evidence so the motif-credit loop can learn which
+        # GENERATED structures (fan-in, depth, sink pattern) correlate with low
+        # loss. Lower-is-better loss; offline this is topology-invariant.
+        row["motif_keys"] = spec_motif_keys(plan.protocol_spec)
+        row["mean_primary_loss"] = 1.0 - float(row.get("ExactMatchRate", 0.0))
     return row
+
+
+def _generation_gate(
+    val_instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    val_seeds: list[int],
+    llm_client: LLMClient,
+    evolved_bank: SkillBank,
+    motif_stats: dict[str, dict] | None,
+    epsilon: float,
+    objective: ObjectiveSpec,
+) -> dict[str, Any]:
+    """C: accept the learned state only if it improves held-out GENERATION.
+
+    ``j_before`` = mean held-out primary loss when GENERATING with the PRE state
+    (empty bank, no motif prior); ``j_after`` = with the evolved bank + motif
+    prior. Accept iff ``j_after <= j_before + epsilon`` (accept-if-improves). This
+    is the objective the self-design loop optimizes -- unlike the topology-select
+    gate, it can actually move because generation quality varies with the learned
+    state. Offline Silo is topology-invariant so ``j_before == j_after`` (accept).
+    """
+    def _mean_loss(bank: SkillBank, stats: dict[str, dict] | None) -> float:
+        losses: list[float] = []
+        for inst in val_instances:
+            for seed in val_seeds or [0]:
+                row = _run_one(
+                    inst, cfg, objective=objective, skill_bank=bank, seed=seed,
+                    llm_client=llm_client, motif_stats=stats,
+                )
+                losses.append(
+                    float(row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0))))
+                )
+        return sum(losses) / len(losses) if losses else 1.0
+
+    j_before = _mean_loss(SkillBank(), None)
+    j_after = _mean_loss(evolved_bank, motif_stats)
+    return {
+        "accepted": bool(j_after <= j_before + epsilon),
+        "j_before": j_before,
+        "j_after": j_after,
+        "epsilon": epsilon,
+        "mode": "generation",
+    }
+
+
+def _evidence_record_from_row(row: dict[str, Any]) -> EvidenceRecord:
+    """Adapt an evolution aggregate row to an EvidenceRecord for the insight pack.
+
+    Maps the row's metrics to the lower-case keys the insight minister reads
+    (mean_rmse / mean_messages / mean_token_cost / exact_match_rate).
+    """
+    exact = float(row.get("ExactMatchRate", 0.0))
+    return EvidenceRecord(
+        evidence_id=(
+            f"agg:{row.get('case_id')}:n{row.get('Agents')}"
+            f":s{row.get('seed')}:{row.get('Topology')}"
+        ),
+        source_type="aggregate",
+        task_family=str(row.get("task_family", SILO_TASK_FAMILY)),
+        topology_name=str(row.get("Topology", "")),
+        n_agents=int(row["Agents"]) if row.get("Agents") is not None else None,
+        seed=int(row["seed"]) if row.get("seed") is not None else None,
+        metrics={
+            "mean_rmse": float(row.get("MeanFinalRMSE", row.get("MeanPrimaryMetric", 0.0))),
+            "mean_messages": float(row.get("MeanTotalMessages", 0.0)),
+            "mean_token_cost": float(row.get("MeanTokenCost", 0.0)),
+            "exact_match_rate": exact,
+            "mean_primary_loss": float(row.get("mean_primary_loss", 1.0 - exact)),
+        },
+        status="observed",
+    )
+
+
+def _held_out_rows_for_falsify(val_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Held-out rows for falsify_insights: topology_name + a lower-is-better loss."""
+    rows: list[dict[str, Any]] = []
+    for r in val_rows:
+        exact = float(r.get("ExactMatchRate", 0.0))
+        rows.append(
+            {
+                "topology_name": str(r.get("Topology", "")),
+                "n_agents": r.get("Agents"),
+                "mean_primary_loss": float(r.get("mean_primary_loss", 1.0 - exact)),
+                "mean_rmse": float(r.get("MeanFinalRMSE", r.get("MeanPrimaryMetric", 0.0))),
+            }
+        )
+    return rows
+
+
+def _llm_insight_patches(
+    train_rows: list[dict[str, Any]],
+    val_rows: list[dict[str, Any]],
+    skill_bank: SkillBank,
+    cfg: RunConfig,
+    client: LLMClient,
+    batch_id: str,
+) -> int:
+    """B2: LLM design-insight minister -> falsify vs held-out -> fold VERIFIED
+    insights into the bank (so they drive generation). Returns #patches applied.
+
+    Offline (fake) the minister uses its deterministic fallback. Verified-only
+    (``require_verified=True``) so a plausible-but-wrong insight can't enter.
+    """
+    records = [_evidence_record_from_row(r) for r in train_rows]
+    pack = build_evidence_pack(
+        records=records, skill_bank=skill_bank, experiment_id=batch_id
+    )
+    runtime = MASRuntimeConfig(
+        llm_provider=cfg.llm_provider,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+    )
+    report = LLMInsightMinister(runtime=runtime, llm_client=client).analyze(
+        evidence_pack=pack, skill_bank=skill_bank
+    )
+    report = falsify_insights(report, _held_out_rows_for_falsify(val_rows))
+    patches = insight_report_to_patches(report, require_verified=True)
+    if patches:
+        skill_bank.apply_patches(patches)
+    return len(patches)
 
 
 def _split_train_val(
@@ -211,6 +370,37 @@ def _incumbent_skill(topology: str, *, objective_name: str) -> SkillCard:
     )
 
 
+class _EvolveProgress:
+    """Thread-safe, throttled progress printer for evolution row collection.
+
+    The evolution pre-phase is hundreds of serial protocol runs with otherwise
+    ZERO output -- which is exactly why a long run looks frozen. This emits ~20
+    progress lines per phase so the user can see it working.
+    """
+
+    def __init__(self, phase: str, total: int) -> None:
+        self._phase = phase
+        self._total = total
+        self._done = 0
+        self._failed = 0
+        self._start = time.monotonic()
+        self._lock = threading.Lock()
+        self._step = max(1, total // 20)
+
+    def tick(self, ok: bool = True) -> None:
+        with self._lock:
+            self._done += 1
+            if not ok:
+                self._failed += 1
+            if self._done == self._total or self._done % self._step == 0:
+                elapsed = time.monotonic() - self._start
+                print(
+                    f"  [evolve {self._phase}] {self._done}/{self._total} runs"
+                    f" ({self._failed} failed) {elapsed:5.1f}s",
+                    flush=True,
+                )
+
+
 def _collect_rows(
     instances: list[BenchmarkInstance],
     cfg: RunConfig,
@@ -218,6 +408,9 @@ def _collect_rows(
     objective_variants: list[ObjectiveSpec],
     seeds: list[int],
     llm_client: LLMClient,
+    workers: int = 1,
+    progress: bool = False,
+    phase: str = "",
 ) -> list[dict[str, Any]]:
     """Collect real planner-run rows across objective variants.
 
@@ -226,22 +419,63 @@ def _collect_rows(
     -> tree, balanced -> mesh_star). Running every instance under several
     objectives yields multi-topology evidence, which is what lets the held-out
     validation gate make a non-degenerate accept/reject decision.
+
+    The (instance, objective, seed) runs are independent (fresh ``SkillBank``
+    each), so with ``workers > 1`` they fan out across a thread pool -- turning
+    the otherwise-serial evolution pre-phase (hundreds of runs) from hours into
+    minutes. Results preserve submission order so the aggregate is byte-identical
+    to the serial path. A single run that fails (e.g. a hard ``LLMTimeoutError``
+    from a wedged provider call) is dropped with a logged warning rather than
+    aborting the whole evolution.
     """
-    rows: list[dict[str, Any]] = []
-    for inst in instances:
-        for objective in objective_variants:
-            for seed in seeds or [0]:
-                rows.append(
-                    _run_one(
-                        inst,
-                        cfg,
-                        objective=objective,
-                        skill_bank=SkillBank(),
-                        seed=seed,
-                        llm_client=llm_client,
-                    )
-                )
-    return rows
+    tasks = [
+        (inst, objective, seed)
+        for inst in instances
+        for objective in objective_variants
+        for seed in (seeds or [0])
+    ]
+    total = len(tasks)
+    if total == 0:
+        return []
+    results: list[dict[str, Any] | None] = [None] * total
+    prog = _EvolveProgress(phase, total) if progress else None
+
+    def _do(index: int) -> tuple[int, dict[str, Any] | None]:
+        inst, objective, seed = tasks[index]
+        try:
+            row = _run_one(
+                inst,
+                cfg,
+                objective=objective,
+                skill_bank=SkillBank(),
+                seed=seed,
+                llm_client=llm_client,
+            )
+            return index, row
+        except Exception as exc:  # noqa: BLE001 - one bad run must not abort evolution
+            print(
+                f"  [evolve {phase}] run {index + 1}/{total} FAILED:"
+                f" {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return index, None
+
+    if workers and workers > 1 and total > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, total)) as executor:
+            futures = [executor.submit(_do, i) for i in range(total)]
+            for future in as_completed(futures):
+                index, row = future.result()
+                results[index] = row
+                if prog is not None:
+                    prog.tick(ok=row is not None)
+    else:
+        for i in range(total):
+            index, row = _do(i)
+            results[index] = row
+            if prog is not None:
+                prog.tick(ok=row is not None)
+
+    return [row for row in results if row is not None]
 
 
 def run_evolution(
@@ -259,6 +493,8 @@ def run_evolution(
     epsilon: float = 0.0,
     batch_id: str = "silo_evolve_batch",
     llm_client: LLMClient | None = None,
+    workers: int = 1,
+    progress: bool = False,
 ) -> dict[str, Any]:
     """Run the gated QueenBee self-evolution loop on Silo-Bench.
 
@@ -312,6 +548,9 @@ def run_evolution(
         objective_variants=variant_specs,
         seeds=train_seeds,
         llm_client=client,
+        workers=workers,
+        progress=progress,
+        phase=f"n={cfg.n_agents} train",
     )
     val_rows_real = _collect_rows(
         val_instances,
@@ -319,6 +558,9 @@ def run_evolution(
         objective_variants=variant_specs,
         seeds=val_seeds,
         llm_client=client,
+        workers=workers,
+        progress=progress,
+        phase=f"n={cfg.n_agents} val",
     )
 
     # Held-out validation rows the gate scores against: real Silo VAL rows plus
@@ -342,6 +584,12 @@ def run_evolution(
         epsilon=epsilon,
         gate=True,
     )
+    # B2: fold VERIFIED LLM design insights into the bank so they drive generation.
+    n_insight_patches = 0
+    if cfg.use_llm_insights:
+        n_insight_patches = _llm_insight_patches(
+            train_rows, val_rows, skill_bank, cfg, client, batch_id
+        )
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now
@@ -352,6 +600,26 @@ def run_evolution(
     final_selection = _selection_probe(skill_bank, cfg.n_agents or 2, objective)
 
     accepted = bool(result.gate_accepted)
+    # B1: in self-design mode, aggregate the GENERATED evidence into a structural-
+    # motif credit map (which fan-in/depth/sink patterns correlate with low loss).
+    # Carried in the summary so the eval can bias generation toward winning motifs.
+    motif_stats = (
+        aggregate_motif_losses(train_rows)
+        if cfg.planner_mode == "graph_generate"
+        else {}
+    )
+    # C: in self-design mode, gate on held-out GENERATION quality (generating with
+    # vs without the learned bank+motif prior) rather than topology selection --
+    # this is the objective that can actually improve for generation.
+    gen_gate = (
+        _generation_gate(
+            val_instances, cfg, val_seeds=val_seeds, llm_client=client,
+            evolved_bank=skill_bank, motif_stats=motif_stats, epsilon=epsilon,
+            objective=objective,
+        )
+        if cfg.planner_mode == "graph_generate"
+        else None
+    )
     return {
         "benchmark": cfg.benchmark,
         "objective": cfg.objective,
@@ -372,7 +640,8 @@ def run_evolution(
         "train_success_rate": _success_rate(train_rows),
         "val_success_rate": _success_rate(val_rows_real),
         "n_patches": len(patches),
-        "gate": {
+        "n_insight_patches": n_insight_patches,
+        "gate": gen_gate if gen_gate is not None else {
             "accepted": accepted,
             "j_before": float(result.gate_j_before)
             if result.gate_j_before is not None
@@ -388,6 +657,11 @@ def run_evolution(
         "skill_bank_size_after": size_after,
         "skill_bank_mutated": accepted,
         "skill_ids_after": sorted(skill.skill_id for skill in skill_bank),
+        # Serialized evolved skills so the eval can rebuild the bank across the
+        # cache/parallel boundary and feed it to graph generation (evolved_mode=
+        # graph_generate -> the emperor designs a DAG from these skills).
+        "evolved_skills": [skill.model_dump(mode="json") for skill in skill_bank],
+        "evolved_motif_stats": motif_stats,
         "final_selection": final_selection,
     }
 

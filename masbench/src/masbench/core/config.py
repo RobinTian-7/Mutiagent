@@ -12,6 +12,10 @@ class RunConfig:
     benchmark: str = "silo_bench"
     use_planner: bool = False
     use_skill_evolution: bool = False
+    # B2 (opt-in): run the LLM design-insight minister over the evolution evidence,
+    # falsify insights against held-out, and fold the VERIFIED ones into the skill
+    # bank (richer design rules that drive generation). Default off (extra LLM calls).
+    use_llm_insights: bool = False
     topology: str = "mesh"
     objective: str = "balanced"
     # Planner-path only. ``topology_select`` (default) picks a named topology;
@@ -20,7 +24,21 @@ class RunConfig:
     # protocol_spec. The graph_* knobs are the hard constraints handed to the
     # generator (defaults mirror MASRuntimeConfig / the paper).
     planner_mode: str = "topology_select"
+    # The `evolved` bench arm's mode. ``topology_select`` (default): evolution
+    # tunes the skill bank, then PICKS a named topology. ``graph_generate``:
+    # evolution tunes the skill bank, then the emperor GENERATES a bespoke DAG
+    # from those evolved skills (self-designed topology) -- the evolved bank is
+    # threaded into plan_free_graph at eval time. ``select_then_refine``: evidence
+    # is collected via topology_select (so the bank's minister skills carry the
+    # WORKING topologies' reference protocol_specs), then the eval GENERATES a DAG
+    # the emperor refines from those references (anchor on what works, then
+    # economize) -- best-of-both vs from-scratch graph_generate.
+    evolved_mode: str = "topology_select"
     num_graph_candidates: int = 1
+    # D1 (opt-in): >0 turns on top-k candidate PROBE-evaluation -- each generated
+    # candidate is actually run on this many validation seeds and the best-scoring
+    # one is selected (vs the default blind first-valid/motif pick). 0 = off.
+    graph_validation_seeds: int = 0
     graph_max_steps: int = 4
     graph_max_messages: int = 32
     graph_max_receiver_fan_in: int = 4

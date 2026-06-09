@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.configs import ExperimentConfig
 from exp_graph.llm.base import LLMClient
-from exp_graph.llm.factory import create_llm_client
+from exp_graph.llm.factory import WALLCLOCK_TIMEOUT_ENV, create_llm_client
 from exp_graph.mas.graph_generation import plan_free_graph
 from exp_graph.mas.planner import EmperorPlanner
 from exp_graph.mas.schemas import (
@@ -31,22 +32,27 @@ from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
 from masbench.core.task_bridge import BenchmarkTaskAdapter, canonical_answer
 from masbench.llm.fake import BenchmarkFakeLLMClient
-from masbench.llm.timeout import TimeoutLLMClient
 
 
 def _build_llm_client(cfg: RunConfig) -> LLMClient:
     if cfg.llm_provider == "fake":
         # The fake client is instant and deterministic; no timeout guard needed.
         return BenchmarkFakeLLMClient()
-    # Wrap the real provider client in a per-request hard wall-clock timeout so a
-    # hung remote call fails fast instead of freezing the whole run.
-    inner = create_llm_client(
+    # Make the hard wall-clock guard UNIVERSAL. Engine-internal sites build their
+    # OWN clients via create_llm_client (role clients, the graph-generation
+    # candidate evaluator, the insight minister, the ProtocolRunner fallback);
+    # setting the env ensures those are guarded too -- not only the client we
+    # thread in here. Without it, a hung call on an unwrapped internal client
+    # freezes the whole run (this was the real root cause of the evolved/graphgen
+    # "no progress" stall).
+    os.environ[WALLCLOCK_TIMEOUT_ENV] = str(cfg.request_timeout)
+    return create_llm_client(
         cfg.llm_provider,
         base_url=cfg.base_url,
         api_key_env=cfg.api_key_env,
         thinking_enabled=cfg.thinking_enabled,
+        timeout_s=cfg.request_timeout,
     )
-    return TimeoutLLMClient(inner, cfg.request_timeout)
 
 
 def _count_messages(result) -> int:
@@ -238,6 +244,7 @@ def _run_planner(
     *,
     llm_client: LLMClient | None,
     motif_stats: dict[str, dict] | None = None,
+    skill_bank: SkillBank | None = None,
 ) -> ScoreResult:
     """Run one instance through the QueenBee planner + ProtocolRunner and score it.
 
@@ -269,6 +276,7 @@ def _run_planner(
             task_adapter=task_adapter,
             client=client,
             motif_stats=motif_stats,
+            skill_bank=skill_bank,
         )
     else:
         plan, planner_extra = _plan_topology_select(cfg, n_agents=n_agents)
@@ -327,6 +335,7 @@ def _plan_graph_generate(
     task_adapter: SiloProtocolAdapter,
     client: LLMClient,
     motif_stats: dict[str, dict] | None = None,
+    skill_bank: SkillBank | None = None,
 ):
     """FULL QueenBee plan: the emperor LLM invents a bespoke temporal DAG.
 
@@ -358,6 +367,13 @@ def _plan_graph_generate(
         graph_max_receiver_fan_in=cfg.graph_max_receiver_fan_in,
         use_motif_prior=True,
         motif_stats=motif_stats,
+        # D2: reject/repair generated DAGs whose sink isn't reachable from ALL
+        # agents (the lossy-reduction failure mode that made generation lose).
+        graph_require_full_sink_coverage=True,
+        # D1: probe-evaluate each candidate on N validation seeds (real task runs)
+        # and select the best-scoring one; 0 -> off (blind first-valid/motif pick).
+        graph_search_mode=("topk" if cfg.graph_validation_seeds > 0 else "single"),
+        graph_validation_seeds=list(range(cfg.graph_validation_seeds)),
     )
     request = PlannerRequest(
         task_family="silo",
@@ -371,7 +387,7 @@ def _plan_graph_generate(
         result = plan_free_graph(
             request=request,
             runtime=runtime,
-            skill_bank=SkillBank(),
+            skill_bank=skill_bank if skill_bank is not None else SkillBank(),
             seed=cfg.seed,
             task_adapter=task_adapter,
             output_dir=Path(tmpdir),
@@ -393,6 +409,7 @@ def run_instance(
     *,
     llm_client: LLMClient | None = None,
     motif_stats: dict[str, dict] | None = None,
+    skill_bank: SkillBank | None = None,
 ) -> ScoreResult:
     """Run one instance and score it.
 
@@ -400,10 +417,17 @@ def run_instance(
     otherwise the planner-OFF SynchronousRunner path runs unchanged. ``motif_stats``
     is forwarded to the graph_generate planner so accumulated motif evidence can
     activate the structural-motif credit prior (inert on the other paths).
+    ``skill_bank`` (graph_generate only) is the bank whose evolved design_insights
+    the emperor uses to DESIGN the DAG; defaults to an empty bank (cold generation,
+    the plain graphgen behaviour).
     """
     if cfg.use_planner:
         return _run_planner(
-            instance, cfg, llm_client=llm_client, motif_stats=motif_stats
+            instance,
+            cfg,
+            llm_client=llm_client,
+            motif_stats=motif_stats,
+            skill_bank=skill_bank,
         )
 
     task_adapter = BenchmarkTaskAdapter(instance)

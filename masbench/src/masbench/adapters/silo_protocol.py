@@ -469,6 +469,17 @@ VERIFIED_ANSWER_JSON:
             structured_state=verified_belief_state.structured_state,
         )
 
+    def build_probe_global_task(
+        self, *, seed: int = 0, runtime: Any = None, request: Any = None
+    ) -> dict:
+        """Candidate probe-eval task (D1): run the candidate on THIS Silo instance.
+
+        Unlike CF (which generates a fresh random array per probe seed), Silo
+        instances are fixed, so every probe uses the instance's own task; the
+        ProtocolRunner still varies execution by ``seed``.
+        """
+        return self.build_global_task()
+
     # ------------------------------------------------------------------ #
     # ProtocolTaskAdapter: answer extraction / scoring / metrics
     # ------------------------------------------------------------------ #

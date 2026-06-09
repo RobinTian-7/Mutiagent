@@ -183,6 +183,9 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         base_url=getattr(args, "base_url", None),
         api_key_env=getattr(args, "api_key_env", None),
         request_timeout=getattr(args, "request_timeout", 90.0),
+        evolved_mode=getattr(args, "evolved_mode", "topology_select"),
+        graph_validation_seeds=getattr(args, "graph_validation_seeds", 0),
+        use_llm_insights=getattr(args, "use_llm_insights", False),
     )
     results = run_benchmark(
         adapter,
@@ -356,6 +359,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="suppress the live per-run progress stream (default: ON, prints a "
              "startup line then one line per finished run-unit to stdout). The "
              "final 'overall success' + 'wrote ...' summary still prints.",
+    )
+    p_bench.add_argument(
+        "--evolved-mode",
+        dest="evolved_mode",
+        choices=["topology_select", "graph_generate", "select_then_refine"],
+        default="topology_select",
+        help="the evolved arm's mode. topology_select (default): evolution tunes "
+             "the skill bank, then PICKS a named topology. graph_generate: the "
+             "emperor DESIGNS a bespoke DAG from scratch. select_then_refine: "
+             "evidence via select (bank gets the WORKING topologies' reference "
+             "specs), then the emperor REFINES a DAG from those references "
+             "(anchor-on-what-works).",
+    )
+    p_bench.add_argument(
+        "--graph-validation-seeds",
+        dest="graph_validation_seeds",
+        type=int,
+        default=0,
+        help="D1: >0 turns on top-k candidate PROBE-evaluation for generated "
+             "topologies (graphgen + evolved generate/refine) -- each candidate is "
+             "run on this many seeds and the best is selected. 0 = off (blind pick). "
+             "Real-LLM cost scales with candidates x seeds.",
+    )
+    p_bench.add_argument(
+        "--use-llm-insights",
+        dest="use_llm_insights",
+        action="store_true",
+        help="B2: run the LLM design-insight minister over the evolution evidence, "
+             "falsify insights against held-out, and fold VERIFIED ones into the "
+             "skill bank (richer design rules for generation). Extra LLM calls.",
     )
     p_bench.set_defaults(func=_cmd_bench)
 
