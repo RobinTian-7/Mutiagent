@@ -542,13 +542,23 @@ def _generation_gate(
             cache.put(cache_key, {"loss": loss})
         return loss
 
+    # M5: a 3-sample binary gate is a coin flip (dev round 1 rejected a
+    # genuinely-good bank on cold 3/3 vs deployed 2/3). Evaluate each arm on
+    # ``gate_seed_factor`` derived seeds per val seed; the derivation is
+    # deterministic and never touches eval seeds (val INSTANCES only).
+    factor_raw = os.environ.get("MASBENCH_GATE_SEED_FACTOR", "").strip()
+    factor = int(factor_raw) if factor_raw else int(getattr(cfg, "gate_seed_factor", 1) or 1)
+    gate_seeds = [
+        seed + 1009 * k for k in range(max(1, factor)) for seed in (val_seeds or [0])
+    ]
+
     def _mean_loss(
         bank: SkillBank, stats: dict[str, dict] | None, phase_label: str
     ) -> float:
         tasks = [
             (inst, seed)
             for inst in val_instances
-            for seed in (val_seeds or [0])
+            for seed in gate_seeds
         ]
         if not tasks:
             return 1.0
@@ -578,11 +588,17 @@ def _generation_gate(
         j_before = _mean_loss(SkillBank(), None, "gate:before")
         gate_mode_label = "generation"
     j_after = _mean_loss(evolved_bank, motif_stats, "gate:after")
+    # M5 noise floor: tolerate exactly ONE discordant miss across the gate
+    # grid (binary outcomes make j quantized in steps of 1/n); two or more
+    # extra misses still reject. epsilon keeps its caller-set floor.
+    n_samples = max(1, len(val_instances) * len(gate_seeds))
+    epsilon_eff = max(epsilon, 1.0 / n_samples)
     return {
-        "accepted": bool(j_after <= j_before + epsilon),
+        "accepted": bool(j_after <= j_before + epsilon_eff),
         "j_before": j_before,
         "j_after": j_after,
-        "epsilon": epsilon,
+        "epsilon": epsilon_eff,
+        "n_samples": n_samples,
         "mode": gate_mode_label,
     }
 

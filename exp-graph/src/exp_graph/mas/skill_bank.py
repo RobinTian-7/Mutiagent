@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 from pathlib import Path
 
@@ -202,7 +203,7 @@ class SkillBank:
     ) -> tuple[int, float, int, str]:
         return (
             -_condition_specificity(skill, request),
-            _skill_mean_rmse(skill),
+            _skill_retrieval_loss(skill),
             -_skill_evidence_count(skill),
             skill.skill_id,
         )
@@ -534,6 +535,32 @@ def _condition_specificity(skill: SkillCard, request: PlannerRequest) -> int:
         ):
             score += 2
     return score
+
+
+# Pessimism for retrieval ordering of GENERIC (loss-carrying) skills: a skill
+# measured once at loss 0 ranks as 0 + kappa/1 = 0.5, a 16-row veteran at loss
+# 0.25 ranks as 0.25 + 0.125 = 0.375 -- the veteran retrieves first. Phase-3
+# dev round 1: a 1-row lucky explore organization displaced the proven
+# champion in raw-mean order and the held-out score dropped 25pp on that case.
+RETRIEVAL_LCB_KAPPA = 0.5
+
+
+def _skill_retrieval_loss(skill: SkillCard) -> float:
+    """Retrieval-ranking loss: LCB-adjusted for loss-carrying skills.
+
+    CF skills never carry ``mean_primary_loss``, so they fall through to
+    ``_skill_mean_rmse`` and their historical raw-RMSE-ascending retrieval
+    order stays byte-identical.
+    """
+    loss = skill.expected_tradeoff.get("mean_primary_loss")
+    if loss is None:
+        return _skill_mean_rmse(skill)
+    try:
+        loss_f = float(loss)
+    except (TypeError, ValueError):
+        return _skill_mean_rmse(skill)
+    n = max(1, _skill_sample_count(skill))
+    return loss_f + RETRIEVAL_LCB_KAPPA / math.sqrt(n)
 
 
 def _skill_mean_rmse(skill: SkillCard) -> float:

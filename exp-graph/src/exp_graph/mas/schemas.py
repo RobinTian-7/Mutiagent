@@ -157,6 +157,10 @@ class MASRuntimeConfig(BaseModel):
     # better); see ``graph_generation._select_candidate``.
     use_motif_prior: bool = False
     motif_stats: dict[str, dict] | None = None
+    # LCB pessimism for the motif prior: per-key predicted loss becomes
+    # ``mean_loss + kappa/sqrt(n)`` so a 1-run lucky motif cannot outrank a
+    # well-measured veteran. 0.0 (default) = historical behavior.
+    motif_uncertainty_kappa: float = 0.0
     role_llm_profiles: RoleLLMProfiles | None = None
     role_llm_config_path: str | None = None
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import masbench.evolve as evolve
 from exp_graph.mas.schemas import SkillCard
 from exp_graph.mas.skill_bank import SkillBank
@@ -184,18 +186,19 @@ def test_transfer_gate_env_kill_switch(monkeypatch):
 def test_ratchet_gate_rejects_round_worse_than_incumbent(monkeypatch):
     """j_before must be the INCUMBENT bank's loss once a bank is inherited.
 
-    Controlled losses: cold 1.0, incumbent 0.2, post-round 0.5. The old gate
-    (vs cold) would accept 0.5 <= 1.0; the ratchet must reject 0.5 > 0.2 and
-    export the incumbent state unchanged.
+    Controlled losses: cold 1.0, incumbent 0.1, post-round 0.9. The old gate
+    (vs cold) would accept 0.9 <= 1.0; the ratchet must reject (0.9 - 0.1
+    far exceeds the one-miss noise floor) and export the incumbent state
+    unchanged.
     """
     orig = evolve._run_one
 
     def fake_run_one(inst, cfg, **kwargs):
         phase = kwargs.get("diag_phase", "")
         if phase == "gate:incumbent":
-            return {"ExactMatchRate": 0.8, "mean_primary_loss": 0.2}
+            return {"ExactMatchRate": 0.9, "mean_primary_loss": 0.1}
         if phase == "gate:after":
-            return {"ExactMatchRate": 0.5, "mean_primary_loss": 0.5}
+            return {"ExactMatchRate": 0.1, "mean_primary_loss": 0.9}
         if phase == "gate:before":
             return {"ExactMatchRate": 0.0, "mean_primary_loss": 1.0}
         return orig(inst, cfg, **kwargs)
@@ -206,8 +209,8 @@ def test_ratchet_gate_rejects_round_worse_than_incumbent(monkeypatch):
     assert initial
     second = _evolve(initial_skills=initial)
     assert second["gate"]["mode"] == "generation_ratchet"
-    assert second["gate"]["j_before"] == 0.2
-    assert second["gate"]["j_after"] == 0.5
+    assert second["gate"]["j_before"] == pytest.approx(0.1)
+    assert second["gate"]["j_after"] == pytest.approx(0.9)
     assert second["gate"]["accepted"] is False
     assert second["skill_bank_mutated"] is False
     assert [s["skill_id"] for s in second["evolved_skills"]] == [

@@ -155,6 +155,8 @@ def aggregate_motif_losses(rows: Iterable[dict]) -> dict[str, dict]:
 def score_spec_by_motifs(
     spec: ProtocolGraphSpec,
     motif_stats: dict[str, dict],
+    *,
+    uncertainty_kappa: float = 0.0,
 ) -> float:
     """Predict a lower-is-better loss for ``spec`` from motif evidence.
 
@@ -185,7 +187,16 @@ def score_spec_by_motifs(
         n = float(entry.get("n", 0) or 0)
         if n <= 0.0:
             continue
-        weighted_sum += n * float(entry["mean_loss"])
+        # ``uncertainty_kappa`` > 0 makes the per-key credit pessimistic
+        # (LCB-style): a motif backed by one lucky run scores mean + kappa
+        # while a 16-sample veteran scores mean + kappa/4. Without it, a spec
+        # whose ONLY matched key is a 1-run loss-0 motif outranks every
+        # well-measured champion (the rounds-curve "champion flip"
+        # instability). Default 0.0 keeps historical behavior byte-identical.
+        adjusted = float(entry["mean_loss"]) + (
+            uncertainty_kappa / math.sqrt(n) if uncertainty_kappa > 0.0 else 0.0
+        )
+        weighted_sum += n * adjusted
         weight_total += n
     if weight_total <= 0.0:
         return math.inf

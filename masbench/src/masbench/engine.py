@@ -395,6 +395,8 @@ def _plan_graph_generate(
         graph_max_receiver_fan_in=cfg.graph_max_receiver_fan_in,
         use_motif_prior=True,
         motif_stats=motif_stats,
+        # M4: a 1-run lucky motif must not outrank a measured veteran.
+        motif_uncertainty_kappa=getattr(cfg, "motif_uncertainty_kappa", 0.0),
         # D2: reject/repair generated DAGs whose sink isn't reachable from ALL
         # agents (the lossy-reduction failure mode that made generation lose).
         graph_require_full_sink_coverage=True,

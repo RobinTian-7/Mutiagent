@@ -1,0 +1,127 @@
+{
+  "benchmark": "silo_bench",
+  "objective": "accuracy_first",
+  "config": {
+    "benchmark": "silo_bench",
+    "use_planner": false,
+    "use_skill_evolution": false,
+    "use_llm_insights": false,
+    "topology": "mesh",
+    "objective": "accuracy_first",
+    "planner_mode": "graph_generate",
+    "evolved_mode": "graph_generate",
+    "evolve_explore": 1,
+    "graph_gen_temperature": null,
+    "transfer_gate": "feature",
+    "evidence_portfolio": "chain",
+    "gate_mode": "auto",
+    "evolved_test_seeds": 1,
+    "num_graph_candidates": 3,
+    "graph_validation_seeds": 0,
+    "graph_max_steps": 4,
+    "graph_max_messages": 32,
+    "graph_max_receiver_fan_in": 4,
+    "merge_mode": "llm_full_merge",
+    "init_mode": "llm_local_solve",
+    "n_agents": 5,
+    "max_rounds": 4,
+    "llm_provider": "openai",
+    "model_name": "gpt-4o-mini",
+    "base_url": null,
+    "api_key_env": null,
+    "thinking_enabled": null,
+    "seed": 0,
+    "consensus_threshold": 0.8,
+    "final_accept_threshold": 0.7,
+    "temperature": 0.0,
+    "request_timeout": 120.0
+  },
+  "objective_knobs": {
+    "uncertainty_weight": 1.0,
+    "min_seeds": 1,
+    "enforce_avoid_veto": true,
+    "risk_weight": 0.5,
+    "max_acceptable_loss": 0.99
+  },
+  "train_cases": [
+    "I-01",
+    "I-03",
+    "I-05",
+    "II-13"
+  ],
+  "val_cases": [
+    "I-02",
+    "I-04",
+    "I-06"
+  ],
+  "n_train_rows": 32,
+  "n_val_rows": 0,
+  "n_val_rows_real": 0,
+  "n_synthetic_held_out_rows": 0,
+  "train_success_rate": 0.40625,
+  "val_success_rate": 0.0,
+  "n_patches": 7,
+  "n_insight_patches": 0,
+  "n_explore_rows": 0,
+  "n_portfolio_rows": 8,
+  "gate": {
+    "accepted": false,
+    "j_before": 0.0,
+    "j_after": 0.3333333333333333,
+    "epsilon": 0.0,
+    "mode": "generation"
+  },
+  "gate_mode": "auto",
+  "selection_gate": {
+    "accepted": true,
+    "j_before": 0.0,
+    "j_after": 0.0,
+    "epsilon": 0.0,
+    "counts": {
+      "added": 7
+    },
+    "warnings": []
+  },
+  "skill_bank_size_before": 0,
+  "skill_bank_size_after": 7,
+  "skill_bank_mutated": false,
+  "skill_ids_after": [
+    "silo__cf_avoid_chain",
+    "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+    "silo__cf_topology_chain",
+    "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+    "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+    "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+    "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0"
+  ],
+  "rejected_skill_ids": [
+    "silo__cf_avoid_chain",
+    "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+    "silo__cf_topology_chain",
+    "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+    "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+    "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+    "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0"
+  ],
+  "evolved_skills": [],
+  "evolved_motif_stats": {},
+  "final_selection": {
+    "topology_name": "generated:staged_aggregation_to_sink",
+    "skill_id": "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+    "score": 0.8949951641102583,
+    "score_breakdown": {
+      "accuracy": 1.0,
+      "cost": 0.2999677607350551,
+      "stability": 1.0,
+      "rmse": 0.0,
+      "token_cost": 10066.0,
+      "messages": 8.0,
+      "std_rmse": 0.0,
+      "uncertainty_weight": 1.0,
+      "uncertainty_std": 0.0,
+      "uncertainty_n": 1.0,
+      "loss_lcb": 0.0
+    },
+    "rationale": "Selected generated:staged_aggregation_to_sink from skill silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0 for accuracy_first. Excluded vetoed topologies ['chain', 'generated:staged_tree_aggregation'] via counterexample skills."
+  }
+}

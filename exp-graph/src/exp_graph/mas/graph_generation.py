@@ -873,7 +873,11 @@ def _select_candidate(
         if state.spec is None:
             predicted = float("inf")
         else:
-            predicted = score_spec_by_motifs(state.spec, motif_stats)
+            predicted = score_spec_by_motifs(
+                state.spec,
+                motif_stats,
+                uncertainty_kappa=runtime.motif_uncertainty_kappa,
+            )
         # ``rank`` is the deterministic tiebreak that preserves the incoming
         # probe-sorted / generation order on equal (or +inf) motif scores.
         scored.append((predicted, rank, state))

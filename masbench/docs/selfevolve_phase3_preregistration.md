@@ -43,7 +43,10 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
 - P2 (burned): TRAIN {I-01..I-06} TEST {I-09,II-16}; reserved-confirmatory
   TEST {II-13,II-16} @ n10.
 - Dev round 1 (this phase): TRAIN {I-01..I-06, II-13} TEST {II-15,II-16,II-19}
-  (pool = I-01..06 + II-13,15,16,19; n=5).
+  (pool = I-01..06 + II-13,15,16,19; n=5), eval seeds 11-18.
+- Dev round 2 (registered 2026-06-11 before gen-mode dev-1 results): pool =
+  I-01 I-02 I-04 I-05 I-07 I-08 II-12 II-13 II-16 II-20 -> TRAIN {I-01,I-02,
+  I-04,I-05,I-07,I-08,II-12} TEST {II-13,II-16,II-20}; eval seeds 21-28.
 
 ## Method-change ground rules (from the operator brief)
 
@@ -60,6 +63,21 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   for the feature extractor's tests.
 - Budget: cumulative real-LLM spend ≤ $40 (ledger `masbench/runs/COST_LEDGER.json`;
   $12.16 already spent by P1+P2). Reserve ≥ $9 for confirmatory attempts.
+
+## Method changelog (applied symmetrically; baseline arm never executes
+## learner-internal paths)
+
+- Round 1 (commit 9991fcd): M1 transfer gate, M2 ratchet, M3 chain portfolio
+  (details below). Run on dev split 1: refine PASS (r2 +20.8pp, r3 +16.7pp);
+  round-1 gate falsely rejected a good bank (3-sample binary val).
+- Round 2 (designed from refine-mode dev-1 diagnostics, before gen-mode
+  results): M4a LCB retrieval ordering (kappa=0.5 over mean_primary_loss;
+  CF skills byte-identical), M4b LCB motif prior
+  (MASRuntimeConfig.motif_uncertainty_kappa, default 0 = old behavior;
+  masbench sets 0.5), M5 gate seed expansion (gate_seed_factor=3, derived
+  seeds s+1009k, val instances only -- never eval seeds) + one-miss noise
+  floor (epsilon_eff = max(epsilon, 1/n_samples)). Perf: gate runs
+  parallelized (measurement-identical).
 
 ## Phase-3 round-1 planned method changes (registered before the run)
 

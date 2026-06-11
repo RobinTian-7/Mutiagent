@@ -56,6 +56,17 @@ class RunConfig:
     # each round (the objective-variant detour only measures aggregation
     # defaults). "" disables. Env override: MASBENCH_EVIDENCE_PORTFOLIO.
     evidence_portfolio: str = "chain"
+    # Phase-3 M4: LCB pessimism for the motif prior (exp_graph
+    # MASRuntimeConfig.motif_uncertainty_kappa). A 1-run lucky motif cannot
+    # outrank a measured veteran. 0.0 = phase-2 behavior.
+    motif_uncertainty_kappa: float = 0.5
+    # Phase-3 M5: the generation gate evaluates each arm on
+    # len(val_seeds) * gate_seed_factor derived seeds (s, s+1009, s+2017, ...)
+    # instead of the raw val_seeds, and tolerates exactly one discordant miss
+    # (epsilon_eff = max(epsilon, 1/n_samples)). A 3-sample binary gate is a
+    # coin flip: dev round 1 rejected a genuinely-good bank on cold 3/3 vs
+    # deployed 2/3. Env override: MASBENCH_GATE_SEED_FACTOR.
+    gate_seed_factor: int = 3
     # Held-out acceptance gate for run_evolution. ``auto`` (default): gate on the
     # DEPLOYED objective -- generation loss when the evolved state will generate
     # at eval (graph_generate / select_then_refine), topology-selection J
