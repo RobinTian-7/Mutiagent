@@ -1,5 +1,13 @@
 """Deterministic task-context features from the task TEXT (phase 3, M1).
 
+STATUS (M7): these regex heuristics are the OFFLINE FALLBACK ONLY (fake-LLM
+tests, explicit ablation arm). The method derives task features via
+:mod:`masbench.task_classify` -- the run's own LLM answering benchmark-
+agnostic questions -- so nothing here is load-bearing for generalization.
+The patterns below are fitted to Silo's statement templates and validated
+against its labels; that is acceptable for test scaffolding and exactly why
+they must not be the method.
+
 The phase-2 boundary finding: executable-spec replay deploys one learned
 organization onto every held-out case, and when the test case's information-
 flow demands differ from every case the organization was earned on, blind

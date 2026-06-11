@@ -78,7 +78,11 @@ from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.engine import _build_llm_client, _plan_graph_generate
-from masbench.task_features import instance_agg_kind, instance_feature_key
+from masbench.task_classify import (
+    classification_bucket,
+    classification_kind,
+    classify_task,
+)
 from masbench.transfer import (
     deployment_view,
     inject_transfer_evidence,
@@ -189,11 +193,20 @@ def _run_one(
         n_agents=n_agents,
         objective=objective,
     )
-    # M1: the case's task-feature bucket (from the statement text only). Rows
-    # carry it so the transfer ledger can attribute success per bucket, and
-    # deployment is gated on it below.
-    feature_bucket = instance_feature_key(instance)
-    feature_kind = instance_agg_kind(instance)
+    # M1/M7: the case's task-feature bucket + agg kind, classified from the
+    # statement text by the run's own LLM (benchmark-agnostic questions;
+    # cached per text hash; heuristic fallback offline). Rows carry them so
+    # the transfer ledger can attribute success per bucket/kind, and
+    # deployment is gated on them below.
+    classification = classify_task(
+        instance.task_prompt,
+        llm_client=llm_client,
+        model_name=cfg.model_name,
+        llm_provider=cfg.llm_provider,
+        source=getattr(cfg, "task_feature_source", "llm"),
+    )
+    feature_bucket = classification_bucket(classification)
+    feature_kind = classification_kind(classification)
     transfer_mode = (
         os.environ.get("MASBENCH_TRANSFER_GATE", "").strip()
         or getattr(cfg, "transfer_gate", "feature")
@@ -345,11 +358,18 @@ def _run_fixed_one(
     ).run()
     summary = result.to_summary_dict()
     row = summary_to_aggregate_row(summary)
+    classification = classify_task(
+        instance.task_prompt,
+        llm_client=llm_client,
+        model_name=cfg.model_name,
+        llm_provider=cfg.llm_provider,
+        source=getattr(cfg, "task_feature_source", "llm"),
+    )
     row["case_id"] = instance.case_id
     row["seed"] = seed
     row["task_family"] = SILO_TASK_FAMILY
-    row["task_features_key"] = instance_feature_key(instance)
-    row["task_agg_kind"] = instance_agg_kind(instance)
+    row["task_features_key"] = classification_bucket(classification)
+    row["task_agg_kind"] = classification_kind(classification)
     try:
         steps = build_protocol_schedule(topology, n_agents)
     except Exception:

@@ -96,6 +96,15 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   Trigger: staged_aggregate_to_sink (vote 1.00 n5 / count 0.17 n6, bucket
   mean 0.55) deterministically failed count-kind val every round and the
   gate nuked whole banks x3 in gen mode.
+- Round 4 (operator directive: the method must generalize, not overfit
+  Silo): M7 -- task features (bucket + agg kind) are produced by the run's
+  own LLM answering benchmark-agnostic distributed-computation questions
+  (order-sensitivity, answer locality, statistic family from a generic
+  vocabulary), temp-0, cached per statement hash (MASBENCH_FEATURE_CACHE).
+  The Silo-fitted regexes are demoted to offline fake-LLM fallback / test
+  scaffolding (cfg.task_feature_source: llm|heuristic). Layering: the
+  benchmark adapter contributes ONLY the task statement; classifier,
+  ledger, trust, gates are benchmark-agnostic.
 
 ## Phase-3 round-1 planned method changes (registered before the run)
 

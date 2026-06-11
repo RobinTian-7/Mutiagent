@@ -60,6 +60,14 @@ class RunConfig:
     # MASRuntimeConfig.motif_uncertainty_kappa). A 1-run lucky motif cannot
     # outrank a measured veteran. 0.0 = phase-2 behavior.
     motif_uncertainty_kappa: float = 0.5
+    # Phase-3 M7 (generalizability): how task features (bucket + agg kind)
+    # are derived from the task statement. "llm" (default): the run's own
+    # LLM answers benchmark-agnostic questions (order-sensitivity, answer
+    # locality, statistic family), temp-0, cached per text hash (env
+    # MASBENCH_FEATURE_CACHE persists across processes); fake provider falls
+    # back to heuristics. "heuristic": regex fallback only (offline tests /
+    # ablation arm; NOT the method).
+    task_feature_source: str = "llm"
     # Phase-3 M5: the generation gate evaluates each arm on
     # len(val_seeds) * gate_seed_factor derived seeds (s, s+1009, s+2017, ...)
     # instead of the raw val_seeds, and tolerates exactly one discordant miss
