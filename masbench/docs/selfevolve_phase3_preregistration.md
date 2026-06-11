@@ -24,14 +24,19 @@ no behavior changes.
 ## Confirmatory procedure (fixed before confirmatory; dev results may refine
 ONLY the power parameters below, never after a confirmatory attempt starts)
 
-1. Case pool: levels I+II at n=5 (20 cases). The confirmatory case list is
-   drawn by a recorded RNG call (`python -c "import random,secrets; s=secrets.randbits(32); ..."`,
-   seed recorded in the attempt log) subject to: the induced lexicographic
-   30% split (train_cases, test_cases) must not appear in the dev split
-   registry below, nor equal any P1/P2 split.
-2. Eval seeds: K fresh random integers (K pre-registered after dev power
-   check; initial plan K=10, range 10000-99999) drawn on the spot by recorded
-   RNG, disjoint from train/val seeds.
+1. Case pool shape (AMENDED 2026-06-11 after dev-2 r1 forensics, before any
+   confirmatory attempt): the case list is 10 level-I cases (all of I-01..
+   I-10) plus exactly 2 level-II cases drawn by recorded RNG. The
+   lexicographic 30% split then yields TEST = {last two I cases, the two II
+   cases} and TRAIN = 8 level-I cases. Rationale (recorded in the evidence
+   report): lexicographic tails make II-heavier pools structurally
+   unwinnable (os-test cases with no learnable os train signal — dev round
+   2's split demonstrated this), while provider time-drift makes per-CASE
+   diversity, not per-seed diversity, the power lever. The induced split
+   must not appear in the dev registry nor equal any P1/P2 split; redraw
+   the II pair otherwise.
+2. Eval seeds: K=8 fresh random integers (range 10000-99999) drawn on the
+   spot by recorded RNG, disjoint from train/val seeds.
 3. Run both modes with the same case list + seeds. Exit 0 both = PASS.
 4. Budget guard before each attempt; honest-failure clause: "no stable
    detectable effect at this scale" is a legitimate final report.
@@ -47,6 +52,9 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
 - Dev round 2 (registered 2026-06-11 before gen-mode dev-1 results): pool =
   I-01 I-02 I-04 I-05 I-07 I-08 II-12 II-13 II-16 II-20 -> TRAIN {I-01,I-02,
   I-04,I-05,I-07,I-08,II-12} TEST {II-13,II-16,II-20}; eval seeds 21-28.
+- Dev round 3 (registered 2026-06-11, pilots the amended confirmatory shape):
+  pool = I-01..I-10 + II-17 + II-19 -> TRAIN {I-01..I-08} TEST {I-09,I-10,
+  II-17,II-19}; eval seeds 31-38.
 
 ## Method-change ground rules (from the operator brief)
 

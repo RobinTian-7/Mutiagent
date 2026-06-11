@@ -61,8 +61,29 @@ Mechanism findings (diag `runs/p3_dev1/`):
 Code: commit cb32a26 (M4a/M4b LCB, M5 gate seeds x3 + one-miss floor,
 parallel gate). Registered before gen-mode dev-1 results.
 
-- select_then_refine: (pending)
+- select_then_refine: r1 4.2% vs baseline 29.2% (rest pending at writing).
 - graph_generate: (pending)
+
+Round-1 forensics (the -25pp is NOT a method regression):
+
+1. **M1+M5 behaved exactly as designed.** No organization earned os trust
+   (every org scored 0/2 on the only os train case II-12 — even chain), so
+   the evolved arm abstained on ALL 24 test pairs; its generated DAGs are
+   hash-identical to the cold arm's (same selected_primary, same
+   messages/calls/tokens). M5's expanded gate accepted the (of-only) bank.
+2. **Provider time-drift, not pipeline difference, produced the delta**:
+   on II-13 the IDENTICAL deterministic DAG with the same seeds scored 5/8
+   in the cold arm (~02:40) and 0/8 in the evolved arm (~03:05) —
+   p≈4e-4 under independence. gpt-4o-mini at temp 0 is bistable on some
+   cases and the flips are time/batch-correlated. Consequence for power:
+   adding eval SEEDS does not help (all seeds flip together per case);
+   adding TEST CASES does. Confirmatory power must come from more cases.
+3. **The split itself is structurally unwinnable**: all-os test with an
+   unlearnable sole os train case means the best possible evolved behavior
+   is tie-by-abstention plus drift noise. Split-design lesson recorded for
+   the confirmatory procedure (lexicographic tails make mixed pools II-heavy;
+   a winnable pool needs either k_II < n_test — mixed test, of-winnable —
+   or a learnable os case in train).
 
 ## Borrowed designs
 
