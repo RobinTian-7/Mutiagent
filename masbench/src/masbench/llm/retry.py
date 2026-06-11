@@ -6,11 +6,12 @@ the frozen judgment target, its eval pool has no per-run isolation, so the
 pipeline client absorbs transient failures instead.
 
 Scope is deliberately narrow:
-* Only connection-class errors are retried (matched by exception-type NAME
+* Connection-class errors are retried (matched by exception-type NAME
   anywhere in the MRO, so no hard dependency on openai/httpx imports).
-* The wall-clock guard's ``LLMTimeoutError`` keeps its fail-fast semantics
-  (its abandoned worker thread may still hold a connection; piling retries on
-  top re-creates the freeze the guard exists to prevent).
+* The wall-clock guard's ``LLMTimeoutError`` gets exactly ONE bounded retry
+  (phase-3 dev-4: a single sporadic 120s call crashed a whole judge run via
+  the frozen eval pool's lack of isolation). One fresh attempt is bounded by
+  the same guard; unbounded piling on a wedged endpoint stays forbidden.
 * Real API errors (auth, bad request, rate-limit-with-retry-after handled by
   the SDK) propagate immediately.
 """
@@ -52,22 +53,32 @@ class RetryLLMClient:
 
     @staticmethod
     def _is_transient(exc: BaseException) -> bool:
-        if type(exc).__name__ == "LLMTimeoutError":
-            return False
         return any(t.__name__ in TRANSIENT_ERROR_NAMES for t in type(exc).__mro__)
 
+    @staticmethod
+    def _is_timeout(exc: BaseException) -> bool:
+        return type(exc).__name__ == "LLMTimeoutError"
+
+    def _attempts_for(self, exc: BaseException) -> int:
+        if self._is_timeout(exc):
+            return min(2, self._attempts)
+        if self._is_transient(exc):
+            return self._attempts
+        return 1
+
     def complete(self, *args: Any, **kwargs: Any) -> Any:
-        for attempt in range(1, self._attempts + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             try:
                 return self._inner.complete(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 - classified below
-                if attempt >= self._attempts or not self._is_transient(exc):
+                if attempt >= self._attempts_for(exc):
                     raise
                 delay = self._base_delay * attempt
                 print(
-                    f"  [llm retry] transient {type(exc).__name__}; "
-                    f"attempt {attempt}/{self._attempts}, retrying in {delay:.0f}s",
+                    f"  [llm retry] {type(exc).__name__}; "
+                    f"attempt {attempt}/{self._attempts_for(exc)}, retrying in {delay:.0f}s",
                     flush=True,
                 )
                 self._sleep(delay)
-        raise RuntimeError("unreachable")  # pragma: no cover
