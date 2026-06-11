@@ -59,6 +59,43 @@ _PER_AGENT_PATTERNS = (
     re.compile(r"submits? their own final segment", re.IGNORECASE),
 )
 
+# Aggregation-semantics kind, FIRST match wins (M6) -- order is load-bearing:
+# `seq` outranks `count`/`sum` (II-15 "count the subsequence" is sequential),
+# `vote` outranks `count` (I-03 says both), `topk` outranks `max` (I-09 "10
+# largest"), `stats` outranks `mean` (I-10's two-phase text mentions mean).
+# The kind names the statistic the answer requires; a LOSSY organization can
+# be perfect for one kind (vote/max survive summarization) and fatal for
+# another (count maps don't: dev-1 gen staged_aggregate_to_sink was 1.00 on
+# I-03 vote and 0.17 on I-05 count). Text-only.
+_AGG_KIND_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("vote", re.compile(r"\bvot(e|es|ing)\b", re.IGNORECASE)),
+    ("seq", re.compile(
+        r"prefix sum|cumulative|moving average|cellular automaton|hash chain"
+        r"|difference array|\brank\b|palindrom|subsequence|trapping|elevation",
+        re.IGNORECASE,
+    )),
+    ("topk", re.compile(r"top[- ]?k|top \d+|\b\d+ largest\b", re.IGNORECASE)),
+    ("count", re.compile(r"\bcount\b|occurrences|frequency|how many", re.IGNORECASE)),
+    ("max", re.compile(r"\bmaximum\b|\blargest\b", re.IGNORECASE)),
+    ("min", re.compile(r"\bminimum\b|\bsmallest\b", re.IGNORECASE)),
+    ("any", re.compile(r"\bANY\b|\bcontains\b.*\bsubstring\b", re.IGNORECASE)),
+    ("xor", re.compile(r"\bXOR\b|checksum", re.IGNORECASE)),
+    ("stats", re.compile(r"standard deviation|variance|median", re.IGNORECASE)),
+    ("mean", re.compile(r"\baverage\b|\bmean\b", re.IGNORECASE)),
+    ("set", re.compile(r"\bDISTINCT\b|\bunique\b|deduplicat", re.IGNORECASE)),
+    ("sum", re.compile(r"\bsum\b", re.IGNORECASE)),
+    ("sort", re.compile(r"\bsort(ed)?\b|ascending|descending", re.IGNORECASE)),
+)
+
+
+def agg_kind(task_text: str | None) -> str:
+    """The task's required aggregation-statistic kind (text-only)."""
+    text = task_text or ""
+    for kind, pattern in _AGG_KIND_PATTERNS:
+        if pattern.search(text):
+            return kind
+    return "other"
+
 
 def extract_task_features(task_text: str | None) -> dict[str, bool]:
     """Boolean task features from the statement text only."""
@@ -80,3 +117,8 @@ def feature_key(features: dict[str, Any]) -> str:
 def instance_feature_key(instance: Any) -> str:
     """Feature bucket of a BenchmarkInstance (text-only; never reads labels)."""
     return feature_key(extract_task_features(getattr(instance, "task_prompt", "") or ""))
+
+
+def instance_agg_kind(instance: Any) -> str:
+    """Aggregation-kind of a BenchmarkInstance (text-only)."""
+    return agg_kind(getattr(instance, "task_prompt", "") or "")

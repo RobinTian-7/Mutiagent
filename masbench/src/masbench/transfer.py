@@ -42,18 +42,28 @@ def _row_em(row: dict[str, Any]) -> float:
 def build_transfer_ledger(
     rows: list[dict[str, Any]],
 ) -> dict[str, dict[str, dict[str, float]]]:
-    """Per-(topology, feature bucket) success ledger from raw evolution rows."""
+    """Per-(topology, feature bucket) success ledger from raw evolution rows.
+
+    M6: each row also feeds a ``bucket#agg_kind`` sub-slot so trust can be
+    REFINED to kind granularity when the bucket-level evidence is
+    contradictory (an organization perfect on vote-kind tasks and fatal on
+    count-kind tasks must not ride the bucket mean onto count cases).
+    """
     ledger: dict[str, dict[str, dict[str, float]]] = {}
     for row in rows:
         topology = str(row.get("Topology", "") or "")
         bucket = row.get("task_features_key")
         if not topology or not bucket:
             continue
-        slot = ledger.setdefault(topology, {}).setdefault(
-            str(bucket), {"n": 0, "em_sum": 0.0}
-        )
-        slot["n"] += 1
-        slot["em_sum"] += _row_em(row)
+        slots = ledger.setdefault(topology, {})
+        keys = [str(bucket)]
+        kind = row.get("task_agg_kind")
+        if kind:
+            keys.append(f"{bucket}#{kind}")
+        for key in keys:
+            slot = slots.setdefault(key, {"n": 0, "em_sum": 0.0})
+            slot["n"] += 1
+            slot["em_sum"] += _row_em(row)
     return ledger
 
 
@@ -114,18 +124,43 @@ def snapshot_transfer_evidence(
     return out
 
 
-def skill_trusted_for(skill: SkillCard, bucket: str) -> bool:
+def _slot_passes(stats: Any) -> bool | None:
+    """True/False when the slot has enough rows to judge, None otherwise."""
+    if not isinstance(stats, dict):
+        return None
+    n = int(stats.get("n", 0))
+    if n < MIN_TRUST_ROWS:
+        return None
+    return (float(stats.get("em_sum", 0.0)) / n) >= MIN_TRUST_EM
+
+
+def _bucket_contradicted(ledger: dict[str, Any], bucket: str) -> bool:
+    """M6: does this skill's evidence DISAGREE across kinds within the bucket?
+
+    Trust lives at the coarsest granularity consistent with the evidence:
+    only when one well-measured kind passes while another well-measured kind
+    fails is bucket-level trust withdrawn in favor of kind-level trust.
+    """
+    verdicts = [
+        _slot_passes(stats)
+        for key, stats in ledger.items()
+        if key.startswith(f"{bucket}#")
+    ]
+    return any(v is True for v in verdicts) and any(v is False for v in verdicts)
+
+
+def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) -> bool:
     policy = skill.organization_policy or {}
     ledger = policy.get(TRANSFER_EVIDENCE_KEY)
     if not isinstance(ledger, dict):
         return False
-    stats = ledger.get(bucket)
-    if not isinstance(stats, dict):
+    if _slot_passes(ledger.get(bucket)) is not True:
         return False
-    n = int(stats.get("n", 0))
-    if n < MIN_TRUST_ROWS:
-        return False
-    return (float(stats.get("em_sum", 0.0)) / n) >= MIN_TRUST_EM
+    if kind and _bucket_contradicted(ledger, bucket):
+        # Kind-sensitive organization: only its measured winning kinds stay
+        # trusted; the case's kind must pass on its own evidence.
+        return _slot_passes(ledger.get(f"{bucket}#{kind}")) is True
+    return True
 
 
 def deployment_view(
@@ -133,6 +168,7 @@ def deployment_view(
     motif_stats: dict[str, dict] | None,
     bucket: str,
     *,
+    kind: str | None = None,
     mode: str = "feature",
 ) -> tuple[SkillBank, dict[str, dict] | None, bool]:
     """The per-case (bank, motif, abstained) actually handed to generation.
@@ -145,7 +181,7 @@ def deployment_view(
         return bank, motif_stats, False
     trusted = [
         skill for skill in bank
-        if not is_avoid_skill(skill) and skill_trusted_for(skill, bucket)
+        if not is_avoid_skill(skill) and skill_trusted_for(skill, bucket, kind)
     ]
     if not trusted:
         return SkillBank(), None, True

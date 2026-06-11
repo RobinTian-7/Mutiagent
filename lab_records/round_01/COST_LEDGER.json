@@ -164,11 +164,11 @@
       "verdict": "STABLE JUDGE PASS (dev split 1, refine): base 20.8%, curve r1=20.8(gate REJECTED bank on 3-sample binary val, j 0.0->0.33)/r2=41.7*(+20.8pp,8:3)/r3=37.5*(+16.7pp,8:4). M1 trust gate deployed one_peer_exponential via II-13-earned os trust: II-15 44->88%, II-16 6->25%. r3 wobble = champion flip by 1-row lucky explore org (M4 LCB needed). Tokens 2.81M"
     },
     {
-      "round": "p3_dev1_gen_partial",
+      "round": "p3_dev1_gen",
       "date": "2026-06-11",
-      "est_usd": 0.26,
-      "verdict": "gen-mode r1 reproduced the SAME 3-sample gate false-reject (j 0.0->0.333, 7-skill bank nuked) -> M5 confirmed cross-mode. BONUS noise calibration: identical cold policy measured twice = 20.8% vs 8.3% (wins2/losses5) on 24 pairs. Run SIGKILLED externally mid-round-2 (harness background-pipeline instability; tail-30 empty, buffered lines lost) -> no report; relaunch detached (nohup) on round-2 code"
+      "est_usd": 0.44,
+      "verdict": "FAIL (old method, complete): gate false-rejected the bank ALL THREE rounds (j 0.0->0.333 each; skills=0x3; curve 8/12/21% = cold noise). ROOT CAUSE refined: not pure noise -- staged_aggregate_to_sink is kind-bimodal (train: vote 1.00 n5, count 0.17 n6; bucket mean 0.55 earned trust) and deterministically failed the count-kind val case I-02 every round -> M6 contradiction-triggered kind refinement. Earlier 'SIGKILLED' claim was wrong (phantom harness notification); run completed normally"
     }
   ],
-  "total_est_usd": 13.27
+  "total_est_usd": 13.45
 }

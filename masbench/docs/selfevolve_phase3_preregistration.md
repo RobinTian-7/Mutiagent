@@ -78,6 +78,16 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   seeds s+1009k, val instances only -- never eval seeds) + one-miss noise
   floor (epsilon_eff = max(epsilon, 1/n_samples)). Perf: gate runs
   parallelized (measurement-identical).
+- Round 3 (designed from COMPLETE gen-mode dev-1 data, while dev-2 runs
+  cb32a26 untouched): M6 contradiction-triggered trust refinement -- rows
+  carry a text-derived agg-kind (vote/count/max/.../seq); the ledger keeps
+  bucket#kind sub-slots; when a skill's well-measured kinds DISAGREE inside
+  a bucket (one >= trust bar, another < it), bucket trust is withdrawn and
+  only the case's own kind evidence can authorize replay. Uniform-evidence
+  skills keep bucket-level trust (preserves dev-1's II-15 mechanism).
+  Trigger: staged_aggregate_to_sink (vote 1.00 n5 / count 0.17 n6, bucket
+  mean 0.55) deterministically failed count-kind val every round and the
+  gate nuked whole banks x3 in gen mode.
 
 ## Phase-3 round-1 planned method changes (registered before the run)
 

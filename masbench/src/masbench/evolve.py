@@ -78,7 +78,7 @@ from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.engine import _build_llm_client, _plan_graph_generate
-from masbench.task_features import instance_feature_key
+from masbench.task_features import instance_agg_kind, instance_feature_key
 from masbench.transfer import (
     deployment_view,
     inject_transfer_evidence,
@@ -193,6 +193,7 @@ def _run_one(
     # carry it so the transfer ledger can attribute success per bucket, and
     # deployment is gated on it below.
     feature_bucket = instance_feature_key(instance)
+    feature_kind = instance_agg_kind(instance)
     transfer_mode = (
         os.environ.get("MASBENCH_TRANSFER_GATE", "").strip()
         or getattr(cfg, "transfer_gate", "feature")
@@ -210,7 +211,8 @@ def _run_one(
         # exact cold path (empty bank, no motif prior) -- do no harm on
         # representationally-uncovered cases.
         view_bank, view_motif, abstained = deployment_view(
-            skill_bank, motif_stats, feature_bucket, mode=transfer_mode
+            skill_bank, motif_stats, feature_bucket,
+            kind=feature_kind, mode=transfer_mode,
         )
         plan, _planner_extra = _plan_graph_generate(
             cfg,
@@ -251,6 +253,7 @@ def _run_one(
     row["seed"] = seed
     row["task_family"] = SILO_TASK_FAMILY
     row["task_features_key"] = feature_bucket
+    row["task_agg_kind"] = feature_kind
     # A2: carry the executed schedule so minister skills can store it
     # (organization_policy.protocol_spec) and the refine eval can replay it.
     row["protocol_spec"] = _executed_spec(plan, n_agents)
@@ -277,6 +280,7 @@ def _run_one(
             "n_agents": n_agents,
             "bank_size": len(skill_bank),
             "transfer_bucket": feature_bucket,
+            "transfer_kind": feature_kind,
             "transfer_abstained": abstained,
             "topology": row.get("Topology"),
             "exact_match": row.get("ExactMatchRate"),
@@ -345,6 +349,7 @@ def _run_fixed_one(
     row["seed"] = seed
     row["task_family"] = SILO_TASK_FAMILY
     row["task_features_key"] = instance_feature_key(instance)
+    row["task_agg_kind"] = instance_agg_kind(instance)
     try:
         steps = build_protocol_schedule(topology, n_agents)
     except Exception:
