@@ -94,25 +94,52 @@ def test_contradiction_restricts_trust_to_winning_kinds():
     assert skill_trusted_for(skill, "of", "max") is False
 
 
-def test_uniform_evidence_keeps_bucket_trust():
-    # one_peer_exponential's dev-1 profile: sparse but consistent os success.
+def test_kind_equality_carries_trust_without_breadth():
+    # one_peer_exponential's dev-1 profile: sparse but consistent os#seq
+    # success. M8: same-kind cases deploy via DIRECT kind evidence (this is
+    # what carried the II-13 -> II-15/16 wins); UNMEASURED kinds do NOT
+    # inherit from one narrow kind (dev-3: sparse one-kind generated orgs
+    # rode bucket trust onto foreign kinds and lost to cold, I-09 0.67 vs 0.88).
     skill = _skill_with_ledger({
         "os": {"n": 3, "em_sum": 2.4},
         "os#seq": {"n": 3, "em_sum": 2.4},
     })
-    # No contradiction -> bucket-level trust covers kinds without evidence
-    # (this is what preserved the II-15 +44pp win in dev round 1).
     assert skill_trusted_for(skill, "os", "seq") is True
-    assert skill_trusted_for(skill, "os", "set") is True
+    assert skill_trusted_for(skill, "os", "set") is False
 
 
-def test_single_lowstat_kind_does_not_trigger_contradiction():
+def test_breadth_earns_extrapolation_to_unmeasured_kinds():
+    skill = _skill_with_ledger({
+        "of": {"n": 8, "em_sum": 7.0},
+        "of#max": {"n": 3, "em_sum": 3.0},
+        "of#vote": {"n": 3, "em_sum": 2.5},
+        "of#mean": {"n": 2, "em_sum": 1.5},
+    })
+    # 3 kinds passing, none failing -> broad uniform competence extrapolates.
+    assert skill_trusted_for(skill, "of", "topk") is True
+    # ...but a well-measured failing kind blocks extrapolation entirely.
+    skill2 = _skill_with_ledger({
+        "of": {"n": 10, "em_sum": 7.0},
+        "of#max": {"n": 3, "em_sum": 3.0},
+        "of#vote": {"n": 3, "em_sum": 2.5},
+        "of#count": {"n": 4, "em_sum": 0.5},
+    })
+    assert skill_trusted_for(skill2, "of", "topk") is False
+
+
+def test_single_lowstat_kind_means_no_extrapolation():
     skill = _skill_with_ledger({
         "of": {"n": 3, "em_sum": 3.0},
         "of#max": {"n": 2, "em_sum": 2.0},
-        "of#count": {"n": 1, "em_sum": 0.0},  # below MIN_TRUST_ROWS
+        "of#count": {"n": 1, "em_sum": 0.0},  # below MIN_TRUST_ROWS -> undecided
     })
-    assert skill_trusted_for(skill, "of", "count") is True  # bucket trust holds
+    assert skill_trusted_for(skill, "of", "max") is True  # direct evidence
+    assert skill_trusted_for(skill, "of", "count") is False  # narrow: no extrapolation
+
+
+def test_legacy_ledger_without_subslots_keeps_bucket_semantics():
+    skill = _skill_with_ledger({"of": {"n": 4, "em_sum": 4.0}})
+    assert skill_trusted_for(skill, "of", "max") is True
 
 
 def test_deployment_view_kind_aware():

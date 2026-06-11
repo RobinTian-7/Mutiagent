@@ -54,7 +54,14 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   I-04,I-05,I-07,I-08,II-12} TEST {II-13,II-16,II-20}; eval seeds 21-28.
 - Dev round 3 (registered 2026-06-11, pilots the amended confirmatory shape):
   pool = I-01..I-10 + II-17 + II-19 -> TRAIN {I-01..I-08} TEST {I-09,I-10,
-  II-17,II-19}; eval seeds 31-38.
+  II-17,II-19}; eval seeds 31-38. RESULT: both modes FAIL; shape abandoned
+  (level-I tail kinds disjoint from train kinds; II-17/19 floors).
+- Dev round 4 (registered 2026-06-11): pool = I-01..I-06 + II-13 + II-17 +
+  II-18 + II-20 -> TRAIN {I-01..06, II-13} TEST {II-17,II-18,II-20}; eval
+  seeds 41-48; code = single version M7+M8 (no mid-driver commits -- dev-3
+  hygiene lesson). Question piloted: do II-13-earned seq replays crack
+  UNTUNED seq floors? Yes -> confirmatory viable on unburned II cases;
+  no -> honest-boundary evidence.
 
 ## Method-change ground rules (from the operator brief)
 
@@ -105,6 +112,13 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   scaffolding (cfg.task_feature_source: llm|heuristic). Layering: the
   benchmark adapter contributes ONLY the task statement; classifier,
   ledger, trust, gates are benchmark-agnostic.
+- Round 5 (from dev-3 forensics): M8 trust-breadth -- extrapolating trust
+  to an UNMEASURED kind requires >= 2 distinct kinds passing and none
+  failing; direct kind evidence always decides when present; narrow
+  one-kind evidence earns only that kind (fixes M6's inverted epistemics:
+  sparse generated orgs rode "no contradiction" onto foreign kinds while
+  only well-measured veterans got demoted). Kind-equality still carries
+  the seq-kind II->II transfer that won dev-1.
 
 ## Phase-3 round-1 planned method changes (registered before the run)
 

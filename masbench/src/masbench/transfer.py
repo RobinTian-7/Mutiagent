@@ -134,33 +134,47 @@ def _slot_passes(stats: Any) -> bool | None:
     return (float(stats.get("em_sum", 0.0)) / n) >= MIN_TRUST_EM
 
 
-def _bucket_contradicted(ledger: dict[str, Any], bucket: str) -> bool:
-    """M6: does this skill's evidence DISAGREE across kinds within the bucket?
-
-    Trust lives at the coarsest granularity consistent with the evidence:
-    only when one well-measured kind passes while another well-measured kind
-    fails is bucket-level trust withdrawn in favor of kind-level trust.
-    """
-    verdicts = [
-        _slot_passes(stats)
-        for key, stats in ledger.items()
-        if key.startswith(f"{bucket}#")
-    ]
-    return any(v is True for v in verdicts) and any(v is False for v in verdicts)
+# M8: extrapolating trust to a kind the skill was never measured on demands
+# BREADTH -- at least this many distinct kinds each passing on their own
+# evidence (and none failing). "No contradiction" alone is not consistency
+# when the evidence is narrow: dev round 3 showed one-kind generated
+# organizations riding bucket trust onto foreign kinds (harm), while the
+# well-measured veterans were the only ones contradiction-demoted
+# (inverted epistemics).
+BUCKET_TRUST_MIN_KINDS = 2
 
 
 def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) -> bool:
+    """Trust = measured competence at the finest available granularity.
+
+    1. The bucket aggregate must pass (sanity floor).
+    2. Direct kind evidence decides when it exists (pass -> trust,
+       well-measured fail -> no trust).
+    3. Extrapolation to an UNMEASURED kind requires breadth: >=
+       ``BUCKET_TRUST_MIN_KINDS`` kinds passing and none failing.
+    4. Ledgers with no kind sub-slots at all (legacy cards) keep plain
+       bucket-level semantics.
+    """
     policy = skill.organization_policy or {}
     ledger = policy.get(TRANSFER_EVIDENCE_KEY)
     if not isinstance(ledger, dict):
         return False
     if _slot_passes(ledger.get(bucket)) is not True:
         return False
-    if kind and _bucket_contradicted(ledger, bucket):
-        # Kind-sensitive organization: only its measured winning kinds stay
-        # trusted; the case's kind must pass on its own evidence.
-        return _slot_passes(ledger.get(f"{bucket}#{kind}")) is True
-    return True
+    sub = {
+        key.split("#", 1)[1]: _slot_passes(stats)
+        for key, stats in ledger.items()
+        if key.startswith(f"{bucket}#")
+    }
+    if not sub:
+        return True  # legacy ledger: bucket-level semantics
+    if kind:
+        direct = sub.get(kind)
+        if direct is not None:
+            return direct
+    passing = sum(1 for v in sub.values() if v is True)
+    failing = any(v is False for v in sub.values())
+    return passing >= BUCKET_TRUST_MIN_KINDS and not failing
 
 
 def deployment_view(
