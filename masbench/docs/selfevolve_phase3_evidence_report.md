@@ -162,6 +162,51 @@ Queued method round: M9 (instruction-carrying replay) + M11 (structural
 identity) + M12 (lossless-need trust key), then floor screen + known-signal
 screen; M10 (train-time verified recipe search) behind them.
 
+## Rounds 8-9: the breakthrough chain (M9-M12 + recipes)
+
+Round-8 screens (seeds 61-63): all-abstain again — but now CORRECTLY:
+M12 had aligned classifications (II-13/15/16/19 all os+lossless) and the
+ledgers were right; at those seeds simply nothing cleared the trust bar on
+the lone os anchor (chain 0/2, explore 1/1). Diagnosis moved from routing
+to ANCHOR-EVIDENCE SCARCITY → M10.
+
+Round-9 screens (seeds 71-73, M10 + M9 active):
+
+- **A (known-signal cases, refine): exit 0, +33.3pp (3:0)** — evolved
+  33.3% vs cold 0.0%.
+- **B (floor cases, refine): exit 0, +22.2pp (2:0)** — II-17 and II-18,
+  0/72 under dev-4's verbatim replay, each cracked by
+  one_peer_exponential replay WITH M9-rewritten per-step instructions
+  (instr=True on every deployed row; II-20 os-seg correctly abstained).
+  The "capability floor" boundary is REVISED: structure + task-adapted
+  role instructions creates capability that verbatim structure replay
+  cannot.
+- A (gen): M10's loop verified 3 recipes into the bank (II-13's on the
+  2nd attempt after procedural feedback), but minister-card trigger
+  specificity pushed recipe cards out of the top-3 seeded slots → 0%.
+  After trigger-parity fix: +11.1pp (1:0) — recipes deploy and win, gen
+  mode remains the thinner mode.
+
+Provenance audits (operator requirement): every win traces to a bank
+skill (replayed structure + architect-written instructions); zero
+non-skill-driven wins claimed.
+
+## Thesis alignment (operator's ultimate framing)
+
+The system IS the thesis: frozen workers (soldier prompts never learned);
+an LLM architect (emperor) designs the temporal communication DAG (steps =
+rounds, transmissions = who→whom, selected_primary = answer emitter)
+conditioned on a memory of design rules (SkillBank) distilled from past
+runs; rules are evidence-conditioned (trust ledger: bucket#lossless slots,
+n≥2, mean≥0.5, LCB) and motif-attached (bucket-namespaced motif credit +
+structural-hash families). Action vocabulary: Preserve = trusted replay;
+Modify = refine + per-step instruction rewrite; Avoid = avoid cards +
+withdrawn trust. Definitional line: per-step instructions are part of the
+DESIGN ARTIFACT (the architect decides what each edge carries and what
+receivers do with it, at design time); worker solving prompts stay frozen.
+Remaining schema work: make the Preserve/Modify/Avoid action an explicit
+card field (M13 finishing move).
+
 ## Borrowed designs
 
 - SkillLens (arXiv:2605.08386): verifier SKIP route -> M1 abstention to the

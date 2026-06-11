@@ -62,6 +62,13 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   hygiene lesson). Question piloted: do II-13-earned seq replays crack
   UNTUNED seq floors? RESULT: NO -- 0 wins in 72 evolved evals; floors are
   model-capability floors. n=10 scout: all-zero (both arms, 5 cases).
+- Round-8/9 screens (cheap judge, seeds 61-63 / 71-73): case sets = dev-1's
+  and dev-4's; outcomes in lab_records/round_09.
+- Dev round 6 (registered 2026-06-11, stable judge, code 37c64ea): pool =
+  I-01 I-02 I-04 I-06 I-07 I-08 + II-13 + II-15 II-17 II-19 -> TRAIN
+  {I-01,I-02,I-04,I-06,I-07,I-08,II-13} TEST {II-15,II-17,II-19}; eval
+  seeds 81-88; both modes. Mixes a known-range case, a cracked floor, and
+  a near-floor.
 - Dev round 5 (registered 2026-06-11, method-final validation): dev-1's
   split (TRAIN {I-01..06,II-13} TEST {II-15,II-16,II-19}) with FRESH dev
   seeds 51-58 and the full current method (M1-M8, code 2ceb76f), both

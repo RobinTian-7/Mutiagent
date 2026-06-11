@@ -1,0 +1,97 @@
+{
+  "mode": "select_then_refine",
+  "n_agents": 5,
+  "train_cases": [
+    "I-01",
+    "I-02",
+    "I-04",
+    "I-06",
+    "I-07",
+    "I-08",
+    "II-13"
+  ],
+  "test_cases": [
+    "II-15",
+    "II-17",
+    "II-19"
+  ],
+  "train_seeds": [
+    1,
+    2
+  ],
+  "val_seeds": [
+    3
+  ],
+  "eval_seeds": [
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88
+  ],
+  "n_pairs": 24,
+  "baseline_mean": 0.08333333333333333,
+  "rounds": [
+    {
+      "round": 1,
+      "mean": 0.041666666666666664,
+      "delta": -0.041666666666666664,
+      "wins": 1,
+      "losses": 2,
+      "dominates": false,
+      "n_skills": 9,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.3333333333333333,
+        "j_after": 0.3333333333333333,
+        "epsilon": 0.1111111111111111,
+        "n_samples": 9,
+        "mode": "generation"
+      }
+    },
+    {
+      "round": 2,
+      "mean": 0.2916666666666667,
+      "delta": 0.20833333333333337,
+      "wins": 7,
+      "losses": 2,
+      "dominates": true,
+      "n_skills": 13,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.5555555555555556,
+        "j_after": 0.3333333333333333,
+        "epsilon": 0.1111111111111111,
+        "n_samples": 9,
+        "mode": "generation_ratchet"
+      }
+    },
+    {
+      "round": 3,
+      "mean": 0.041666666666666664,
+      "delta": -0.041666666666666664,
+      "wins": 0,
+      "losses": 1,
+      "dominates": false,
+      "n_skills": 15,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.2222222222222222,
+        "j_after": 0.2222222222222222,
+        "epsilon": 0.1111111111111111,
+        "n_samples": 9,
+        "mode": "generation_ratchet"
+      }
+    }
+  ],
+  "criteria": {
+    "delta_min": 0.05,
+    "win_margin": 2,
+    "stable_rounds": 2
+  },
+  "machinery_ok": true,
+  "passed": false
+}
