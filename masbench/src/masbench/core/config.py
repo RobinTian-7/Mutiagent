@@ -60,6 +60,10 @@ class RunConfig:
     # MASRuntimeConfig.motif_uncertainty_kappa). A 1-run lucky motif cannot
     # outrank a measured veteran. 0.0 = phase-2 behavior.
     motif_uncertainty_kappa: float = 0.5
+    # Phase-3 M10: run budget (protocol executions per evolution round) for
+    # train-time VERIFIED recipe search on unanchored bucket#slots. 0 = off.
+    # Env: MASBENCH_RECIPE_BUDGET.
+    recipe_search_budget: int = 18
     # Phase-3 M9: replay candidates get per-step receiver instructions
     # REWRITTEN for the current task (one emperor call per seeded candidate)
     # and the protocol runner injects them into merge prompts. False =

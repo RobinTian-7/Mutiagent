@@ -84,11 +84,13 @@ from masbench.task_classify import (
     classification_lossless_slot,
     classify_task,
 )
+from masbench.recipes import recipe_skill_card, search_recipe
 from masbench.transfer import (
     deployment_view,
     inject_transfer_evidence,
     merge_structural_duplicates,
     namespace_motif_keys,
+    skill_trusted_for,
     snapshot_transfer_evidence,
 )
 
@@ -505,6 +507,124 @@ def _collect_portfolio_rows(
             if prog is not None:
                 prog.tick(ok=row is not None)
     return [row for row in results if row is not None]
+
+
+def _run_spec_on_instance(
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    *,
+    spec,
+    seed: int,
+    llm_client: LLMClient,
+) -> tuple[float, dict[str, Any]]:
+    """Execute one instruction-bearing spec; return (EM, procedural feedback)."""
+    task_adapter = SiloProtocolAdapter(instance)
+    global_task = task_adapter.build_global_task()
+    n_agents = cfg.n_agents or instance.n_agents
+    config = ProtocolRunnerConfig(
+        topology_name=f"generated:{spec.name}",
+        n_agents=n_agents,
+        seed=seed,
+        merge_mode=cfg.merge_mode,
+        init_mode=cfg.init_mode,
+        llm_provider=cfg.llm_provider,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+        protocol_spec=spec,
+        enable_step_instructions=True,
+    )
+    result = ProtocolRunner(
+        config=config, task_adapter=task_adapter,
+        global_task=global_task, llm_client=llm_client,
+    ).run()
+    row = summary_to_aggregate_row(result.to_summary_dict())
+    em = float(row.get("ExactMatchRate", 0.0))
+    n_wrong = round((1.0 - em) * n_agents)
+    feedback = {
+        "wrong_agents": f"{n_wrong} of {n_agents} agents",
+        "holder_state": (
+            "correct" if em >= 0.99
+            else "wrong or not shared by all agents"
+        ),
+    }
+    return em, feedback
+
+
+def _recipe_search_phase(
+    train_instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    skill_bank: SkillBank,
+    train_seeds: list[int],
+    llm_client: LLMClient,
+) -> tuple[list[dict[str, Any]], int]:
+    """M10: manufacture VERIFIED anchor evidence where one-shot collection
+    cannot (no skill trusted for a train case's bucket#slot). Returns
+    (diag traces, runs spent). Verified recipes enter the bank as
+    immediately-trusted, instruction-bearing skills (their ledger rows ARE
+    their verification runs).
+    """
+    budget_raw = os.environ.get("MASBENCH_RECIPE_BUDGET", "").strip()
+    budget = int(budget_raw) if budget_raw else int(getattr(cfg, "recipe_search_budget", 0))
+    if budget <= 0:
+        return [], 0
+    traces: list[dict[str, Any]] = []
+    runs_spent = 0
+    base = train_seeds[0] if train_seeds else 0
+    verify_seeds = [base, base + 7919]
+    n_agents = cfg.n_agents or (train_instances[0].n_agents if train_instances else 2)
+    max_steps = max(4, n_agents + 2)
+    for inst in train_instances:
+        if runs_spent >= budget:
+            break
+        classification = classify_task(
+            inst.task_prompt, llm_client=llm_client, model_name=cfg.model_name,
+            llm_provider=cfg.llm_provider,
+            source=getattr(cfg, "task_feature_source", "llm"),
+        )
+        bucket = classification_bucket(classification)
+        slot = classification_lossless_slot(classification)
+        anchored = any(
+            skill_trusted_for(skill, bucket, slot) for skill in skill_bank
+        )
+        if anchored:
+            continue
+
+        def _score(spec, seed, _inst=inst):
+            nonlocal runs_spent
+            runs_spent += 1
+            try:
+                return _run_spec_on_instance(
+                    _inst, cfg, spec=spec, seed=seed, llm_client=llm_client
+                )
+            except Exception as exc:  # noqa: BLE001 - a failed attempt is feedback
+                return 0.0, {"wrong_agents": "run failed", "holder_state": f"{type(exc).__name__}"}
+
+        spec, trace = search_recipe(
+            task_brief=(inst.task_prompt or "")[:1800],
+            n_agents=n_agents, max_steps=max_steps,
+            shards=list(inst.shards),
+            llm_client=llm_client, model_name=cfg.model_name,
+            run_and_score=_score, verify_seeds=verify_seeds,
+            attempts=4,
+        )
+        traces.append({
+            "case_id": inst.case_id, "bucket": bucket, "slot": slot,
+            "verified": spec is not None, "trace": trace,
+        })
+        if spec is not None:
+            card = recipe_skill_card(
+                spec, task_family=SILO_TASK_FAMILY, bucket=bucket,
+                lossless_slot=slot, n_agents=n_agents,
+                verify_count=len(verify_seeds),
+            )
+            skill_bank.apply_patch(
+                SkillPatch(
+                    patch_id=f"recipe_{card.skill_id}", action="add",
+                    candidate_skill=card,
+                )
+            )
+    return traces, runs_spent
 
 
 def _generation_gate(
@@ -1228,6 +1348,14 @@ def run_evolution(
     # M11/M13c: same-structure cards merge into one family member so trust
     # evidence accumulates per STRUCTURE and the bank stops growing linearly.
     n_merged_duplicates = merge_structural_duplicates(skill_bank)
+    # M10: for train cases whose bucket#slot has NO trusted skill, search a
+    # verified recipe (structure + per-step instructions) against the train
+    # signal; verified recipes enter the bank trusted (their ledger rows are
+    # their verification runs) and the gate below vets the whole state.
+    recipe_traces, n_recipe_runs = _recipe_search_phase(
+        train_instances, cfg, skill_bank=skill_bank,
+        train_seeds=train_seeds, llm_client=client,
+    )
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now
@@ -1316,6 +1444,8 @@ def run_evolution(
         "n_explore_rows": n_explore_rows,
         "n_portfolio_rows": n_portfolio_rows,
         "n_merged_duplicates": n_merged_duplicates,
+        "n_recipe_runs": n_recipe_runs,
+        "recipe_traces": recipe_traces,
         "gate": gate_info,
         "gate_mode": gate_mode,
         "selection_gate": selection_gate,
