@@ -94,16 +94,19 @@ def build_transfer_ledger(
             continue
         slots = ledger.setdefault(identity, {})
         keys = [str(bucket)]
-        # M12: the sub-slot key is the MECHANISTIC bit the old agg-kind
-        # taxonomy proxied -- whether correctness survives local
-        # summarization. A 14-way statistic vocabulary fractured trust at
-        # fuzzy boundaries (dev-5: "longest palindrome length" read as max,
-        # its earned trust unreachable from "seq" test cases). Two robust
-        # bits accumulate evidence fast and separate the measured failure
-        # modes (lossy-safe vote/max successes vs lossless count failures).
+        # M12/M16: the sub-slot key is the pair of MECHANISTIC bits the old
+        # agg-kind taxonomy proxied -- does correctness survive local
+        # summarization, and is the answer a single value or a composite
+        # structure needing assembly. Robust to classify, fast to
+        # accumulate, and they separate every measured failure mode
+        # (vote-vs-count bimodality; scalar II-13/15 preserve vs composite
+        # II-17/19 needing Modify).
         lossless = row.get("task_needs_lossless")
         if lossless is not None:
-            keys.append(f"{bucket}#{'lossless' if lossless else 'lossy'}")
+            shape = "composite" if row.get("task_answer_composite") else "scalar"
+            keys.append(
+                f"{bucket}#{'lossless' if lossless else 'lossy'}-{shape}"
+            )
         for key in keys:
             slot = slots.setdefault(key, {"n": 0, "em_sum": 0.0})
             slot["n"] += 1

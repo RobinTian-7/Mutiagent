@@ -80,8 +80,8 @@ def test_ledger_writes_lossless_subslots():
     ]
     ledger = build_transfer_ledger(rows)["t"]
     assert ledger["of"] == {"n": 4, "em_sum": 2.0}
-    assert ledger["of#lossy"] == {"n": 2, "em_sum": 2.0}
-    assert ledger["of#lossless"] == {"n": 2, "em_sum": 0.0}
+    assert ledger["of#lossy-scalar"] == {"n": 2, "em_sum": 2.0}
+    assert ledger["of#lossless-scalar"] == {"n": 2, "em_sum": 0.0}
 
 
 def test_lossy_safe_success_does_not_authorize_lossless_cases():
@@ -89,11 +89,11 @@ def test_lossy_safe_success_does_not_authorize_lossless_cases():
     # (lossless) fatal; bucket mean passes.
     skill = _skill_with_ledger({
         "of": {"n": 11, "em_sum": 6.0},
-        "of#lossy": {"n": 5, "em_sum": 5.0},
-        "of#lossless": {"n": 6, "em_sum": 1.0},
+        "of#lossy-scalar": {"n": 5, "em_sum": 5.0},
+        "of#lossless-scalar": {"n": 6, "em_sum": 1.0},
     })
-    assert skill_trusted_for(skill, "of", "lossy") is True
-    assert skill_trusted_for(skill, "of", "lossless") is False
+    assert skill_trusted_for(skill, "of", "lossy-scalar") is True
+    assert skill_trusted_for(skill, "of", "lossless-scalar") is False
 
 
 def test_anchor_trust_reaches_same_slot_targets():
@@ -101,48 +101,75 @@ def test_anchor_trust_reaches_same_slot_targets():
     # reachable from II-15/16/19 (lossless) -- same slot, direct evidence.
     skill = _skill_with_ledger({
         "os": {"n": 2, "em_sum": 1.0},
-        "os#lossless": {"n": 2, "em_sum": 1.0},
+        "os#lossless-scalar": {"n": 2, "em_sum": 1.0},
     })
-    assert skill_trusted_for(skill, "os", "lossless") is True
+    assert skill_trusted_for(skill, "os", "lossless-scalar") is True
     # ...but a lossless anchor says nothing about the lossy slot alone;
     # narrow evidence never extrapolates (M8).
-    assert skill_trusted_for(skill, "os", "lossy") is False
+    assert skill_trusted_for(skill, "os", "lossy-scalar") is False
 
 
 def test_breadth_requires_both_bits():
     both = _skill_with_ledger({
         "of": {"n": 6, "em_sum": 5.0},
-        "of#lossy": {"n": 3, "em_sum": 3.0},
-        "of#lossless": {"n": 3, "em_sum": 2.0},
+        "of#lossy-scalar": {"n": 3, "em_sum": 3.0},
+        "of#lossless-scalar": {"n": 3, "em_sum": 2.0},
     })
     # both bits measured and passing -> trusted on either slot
-    assert skill_trusted_for(both, "of", "lossy") is True
-    assert skill_trusted_for(both, "of", "lossless") is True
+    assert skill_trusted_for(both, "of", "lossy-scalar") is True
+    assert skill_trusted_for(both, "of", "lossless-scalar") is True
 
 
 def test_single_lowstat_slot_means_no_extrapolation():
     skill = _skill_with_ledger({
         "of": {"n": 3, "em_sum": 3.0},
-        "of#lossy": {"n": 2, "em_sum": 2.0},
-        "of#lossless": {"n": 1, "em_sum": 0.0},  # below MIN_TRUST_ROWS
+        "of#lossy-scalar": {"n": 2, "em_sum": 2.0},
+        "of#lossless-scalar": {"n": 1, "em_sum": 0.0},  # below MIN_TRUST_ROWS
     })
-    assert skill_trusted_for(skill, "of", "lossy") is True
-    assert skill_trusted_for(skill, "of", "lossless") is False
+    assert skill_trusted_for(skill, "of", "lossy-scalar") is True
+    assert skill_trusted_for(skill, "of", "lossless-scalar") is False
 
 
 def test_legacy_ledger_without_subslots_keeps_bucket_semantics():
     skill = _skill_with_ledger({"of": {"n": 4, "em_sum": 4.0}})
-    assert skill_trusted_for(skill, "of", "lossy") is True
+    assert skill_trusted_for(skill, "of", "lossy-scalar") is True
 
 
 def test_deployment_view_slot_aware():
     contradicted = _skill_with_ledger({
         "of": {"n": 11, "em_sum": 6.0},
-        "of#lossy": {"n": 5, "em_sum": 5.0},
-        "of#lossless": {"n": 6, "em_sum": 1.0},
+        "of#lossy-scalar": {"n": 5, "em_sum": 5.0},
+        "of#lossless-scalar": {"n": 6, "em_sum": 1.0},
     })
     bank = SkillBank(skills=[contradicted])
-    view, _, abstained, _tier = deployment_view(bank, None, "of", kind="lossless")
+    view, _, abstained, _tier = deployment_view(bank, None, "of", kind="lossless-scalar")
     assert abstained is True and len(view) == 0
-    view, _, abstained, _tier = deployment_view(bank, None, "of", kind="lossy")
+    view, _, abstained, _tier = deployment_view(bank, None, "of", kind="lossy-scalar")
     assert abstained is False and len(view) == 1
+
+
+def test_m16_shape_routes_preserve_vs_modify():
+    """dev-9 forensics: II-13 (scalar) direct evidence marked II-17
+    (composite) 'preserve' -> bare structure 0.00 where Modify had cracked
+    it. With the shape bit: scalar slot keeps preserve; composite slot has
+    no direct evidence and routes through breadth extrapolation -> modify."""
+    from masbench.transfer import deployment_view
+
+    veteran = _skill_with_ledger({
+        "os": {"n": 6, "em_sum": 4.0},
+        "os#lossless-scalar": {"n": 3, "em_sum": 2.5},
+        "os#lossy-scalar": {"n": 3, "em_sum": 1.5},
+    })
+    bank = SkillBank(skills=[veteran])
+    # II-15-like: scalar slot, direct evidence -> preserve
+    view, _, _, _ = deployment_view(
+        bank, None, "os", kind="lossless-scalar", fallback_tier=True,
+    )
+    assert next(iter(view)).organization_policy["deploy_action"] == "preserve"
+    # II-17-like: composite slot, no direct evidence; breadth (2 slots pass,
+    # none fail) extrapolates trust -> deploy as MODIFY (rewrite for task)
+    view2, _, abstained2, _ = deployment_view(
+        bank, None, "os", kind="lossless-composite", fallback_tier=True,
+    )
+    assert abstained2 is False
+    assert next(iter(view2)).organization_policy["deploy_action"] == "modify"

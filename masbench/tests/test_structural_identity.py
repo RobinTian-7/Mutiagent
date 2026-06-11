@@ -65,7 +65,7 @@ def test_same_structure_different_names_share_one_ledger_row_pool():
     (identity, slots), = ledger.items()
     assert identity == spec_struct_hash(_SPEC)
     assert slots["os"] == {"n": 2, "em_sum": 2.0}
-    assert slots["os#lossless"] == {"n": 2, "em_sum": 2.0}
+    assert slots["os#lossless-scalar"] == {"n": 2, "em_sum": 2.0}
 
 
 def test_rows_without_spec_fall_back_to_name():
@@ -82,17 +82,17 @@ def test_inject_matches_skill_by_structure_not_name():
     ]
     inject_transfer_evidence(bank, rows)
     ledger = skill.organization_policy[TRANSFER_EVIDENCE_KEY]
-    assert ledger["os#lossless"] == {"n": 2, "em_sum": 2.0}
+    assert ledger["os#lossless-scalar"] == {"n": 2, "em_sum": 2.0}
 
 
 def test_merge_structural_duplicates_keeps_veteran_and_combines():
     veteran = _skill(
         "vet", "generated:a", _spec("a"),
-        {"os": {"n": 4, "em_sum": 3.0}, "os#lossless": {"n": 4, "em_sum": 3.0}},
+        {"os": {"n": 4, "em_sum": 3.0}, "os#lossless-scalar": {"n": 4, "em_sum": 3.0}},
     )
     newcomer = _skill(
         "new", "generated:b", _spec("b"),
-        {"os": {"n": 1, "em_sum": 1.0}, "os#lossless": {"n": 1, "em_sum": 1.0}},
+        {"os": {"n": 1, "em_sum": 1.0}, "os#lossless-scalar": {"n": 1, "em_sum": 1.0}},
     )
     other = _skill("other", "chain", None, {"os": {"n": 2, "em_sum": 1.0}})
     bank = SkillBank(skills=[veteran, newcomer, other])

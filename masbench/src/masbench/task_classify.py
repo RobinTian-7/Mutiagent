@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -58,8 +59,9 @@ Answer four questions about WHAT THE TASK REQUIRES (not about any suggested prot
 2. per_agent_output: Must EACH agent end up holding its OWN distinct part of the answer (per-segment results), rather than one shared global answer? true/false.
 3. agg_kind: Which ONE statistic family best describes the required answer? Choose exactly one of: %s. Use "seq" for order-dependent transforms over sequences (prefix sums, sliding windows, automata, chained hashes, substring/subsequence structure), "stats" for variance-like statistics, "other" if nothing fits.
 4. needs_lossless: Can each agent's shard be safely REDUCED to a small local summary (a max, a sum, one vote) before sharing, and the summaries combined into the correct answer? If yes -> false. If instead the raw data (or near-complete structure) must reach whoever computes the answer -- counting distinct/structured occurrences, cross-boundary patterns, reconstructing sequences -- then true.
+5. answer_composite: Is the required FINAL ANSWER a single small value (one number, one word, one boolean) -> false, or a COMPOSITE structure that must be assembled (an array/sequence, a dictionary, per-position or per-segment results) -> true.
 
-Reply with ONLY a JSON object: {"order_sensitive": bool, "per_agent_output": bool, "agg_kind": "<kind>", "needs_lossless": bool}"""
+Reply with ONLY a JSON object: {"order_sensitive": bool, "per_agent_output": bool, "agg_kind": "<kind>", "needs_lossless": bool, "answer_composite": bool}"""
 
 
 _LOCK = threading.Lock()
@@ -106,6 +108,27 @@ def _store_persistent(key: str, value: dict[str, Any]) -> None:
 _LOSSLESS_KINDS = frozenset({"count", "set", "topk", "sort", "seq", "stats"})
 
 
+# Offline-fallback composite-answer detector (the method asks the LLM).
+_COMPOSITE_PATTERNS = (
+    re.compile(r"output:?\**\s*(a |the )?(complete |sorted |full )?"
+               r"(array|list|dictionary|sequence)", re.IGNORECASE),
+    re.compile(r"\blist of \d+|\btop \d+|\b\d+ largest\b", re.IGNORECASE),
+    re.compile(r"submits? (their|its) (own |)?(portion|segment|part)", re.IGNORECASE),
+    re.compile(r"dictionary mapping", re.IGNORECASE),
+)
+_SCALAR_PATTERNS = (
+    re.compile(r"output:?\**\s*a single (integer|number|value|word|string|boolean)",
+               re.IGNORECASE),
+)
+
+
+def _heuristic_composite(task_text: str) -> bool:
+    text = task_text or ""
+    if any(p.search(text) for p in _SCALAR_PATTERNS):
+        return False
+    return any(p.search(text) for p in _COMPOSITE_PATTERNS)
+
+
 def _heuristic_classification(task_text: str) -> dict[str, Any]:
     feats = _heuristic_features(task_text)
     kind = _heuristic_agg_kind(task_text)
@@ -114,6 +137,7 @@ def _heuristic_classification(task_text: str) -> dict[str, Any]:
         "per_agent_output": bool(feats["per_agent_output"]),
         "agg_kind": kind,
         "needs_lossless": kind in _LOSSLESS_KINDS,
+        "answer_composite": _heuristic_composite(task_text),
         "source": "heuristic",
     }
 
@@ -139,6 +163,7 @@ def _parse_classification(text: str) -> dict[str, Any] | None:
         "per_agent_output": bool(data.get("per_agent_output", False)),
         "agg_kind": kind,
         "needs_lossless": bool(data.get("needs_lossless", kind in _LOSSLESS_KINDS)),
+        "answer_composite": bool(data.get("answer_composite", False)),
         "source": "llm",
     }
 
@@ -200,5 +225,13 @@ def classification_kind(classification: dict[str, Any]) -> str:
 
 
 def classification_lossless_slot(classification: dict[str, Any]) -> str:
-    """M12 trust sub-slot name: 'lossless' | 'lossy'."""
-    return "lossless" if classification.get("needs_lossless") else "lossy"
+    """M12/M16 trust sub-slot name: '(lossless|lossy)-(scalar|composite)'.
+
+    M16 added the answer-shape bit after dev-9 forensics: II-13/15 (scalar
+    answers) and II-17/19 (composite arrays needing assembly) shared one
+    slot, so direct II-13 evidence marked II-17 'preserve' and the bare
+    structure scored 0 where Modify-rewritten instructions had cracked it.
+    """
+    lossless = "lossless" if classification.get("needs_lossless") else "lossy"
+    shape = "composite" if classification.get("answer_composite") else "scalar"
+    return f"{lossless}-{shape}"

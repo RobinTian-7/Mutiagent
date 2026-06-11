@@ -284,6 +284,7 @@ def _run_one(
     row["task_features_key"] = feature_bucket
     row["task_agg_kind"] = feature_kind
     row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
+    row["task_answer_composite"] = bool(classification.get("answer_composite"))
     # A2: carry the executed schedule so minister skills can store it
     # (organization_policy.protocol_spec) and the refine eval can replay it.
     row["protocol_spec"] = _executed_spec(plan, n_agents)
@@ -390,6 +391,7 @@ def _run_fixed_one(
     row["task_features_key"] = classification_bucket(classification)
     row["task_agg_kind"] = classification_kind(classification)
     row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
+    row["task_answer_composite"] = bool(classification.get("answer_composite"))
     try:
         steps = build_protocol_schedule(topology, n_agents)
     except Exception:
