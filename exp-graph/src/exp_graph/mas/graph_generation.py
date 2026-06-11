@@ -73,6 +73,10 @@ class GeneratedGraphPlan(BaseModel):
     rationale: str = ""
     expected_tradeoff: dict[str, object] = Field(default_factory=dict)
     fallback_topology: str | None = None
+    # M14: seeded replays from skills with DIRECT slot evidence are deployed
+    # verbatim (Preserve); only transfers into unevidenced territory get
+    # their instructions rewritten (Modify). Default True = historical.
+    allow_instruction_rewrite: bool = True
 
 
 class GraphValidationOptions(BaseModel):
@@ -653,6 +657,10 @@ def _rewrite_replay_instructions(
     """
     if not runtime.replay_instruction_rewrite or not seeded or not task_brief:
         return
+    # M14: Preserve-marked replays keep their proven artifact verbatim.
+    seeded = [graph for graph in seeded if graph.allow_instruction_rewrite]
+    if not seeded:
+        return
     emperor_llm = resolve_role_llm_config(runtime, "emperor")
     if emperor_llm.platform == "fake":
         return
@@ -727,7 +735,11 @@ def _graph_from_skill_protocol(
     spec: ProtocolGraphSpec,
 ) -> GeneratedGraphPlan:
     selected = spec.metadata.get("selected_primary")
+    deploy_action = str(
+        (skill.organization_policy or {}).get("deploy_action", "")
+    ).lower()
     return GeneratedGraphPlan(
+        allow_instruction_rewrite=(deploy_action != "preserve"),
         candidate_id=f"skill_{_safe_candidate_id(skill.skill_id)}",
         name=spec.name or _safe_candidate_id(skill.skill_id),
         graph_type=str(spec.metadata.get("graph_type") or "temporal_dag"),

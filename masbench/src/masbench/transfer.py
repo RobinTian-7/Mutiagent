@@ -337,6 +337,19 @@ def deployment_view(
     if not trusted:
         return SkillBank(), None, True, "cold"
     view = SkillBank(skills=[skill.model_copy(deep=True) for skill in trusted])
+    # M14: evidence-conditioned action, PER SKILL. A skill whose DIRECT slot
+    # evidence passes is deployed verbatim -- PRESERVE the proven artifact
+    # (dev-8 4-arm: unconditional rewriting dragged a 41.7% structure to
+    # 33.3%). A skill trusted only by breadth extrapolation / legacy bucket
+    # semantics is transferring into unevidenced territory -- MODIFY (rewrite
+    # role instructions for the live task; the floor-cracking scenario).
+    for skill in view:
+        policy = skill.organization_policy
+        if policy is None:
+            continue
+        ledger = policy.get(TRANSFER_EVIDENCE_KEY) or {}
+        direct = _slot_passes(ledger.get(f"{bucket}#{kind}")) if kind else None
+        policy["deploy_action"] = "preserve" if direct is True else "modify"
     return view, motif_view(motif_stats, bucket), False, tier
 
 

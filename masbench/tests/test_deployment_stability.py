@@ -116,3 +116,86 @@ def test_motif_displacement_requires_margin():
     assert _select_candidate([incumbent, challenger], _runtime(0.15, 0.1)) is challenger
     # margin 0 (historical behavior): even hair-thin advantage displaces
     assert _select_candidate([incumbent, challenger], _runtime(0.45, 0.0)) is challenger
+
+
+def test_m14_preserve_skips_rewrite_modify_rewrites():
+    """dev-8 4-arm: unconditional rewriting dragged a 41.7% bare structure to
+    33.3%. Direct-slot-trusted deployments (Preserve) keep the proven
+    artifact verbatim; tier-2 transfers (Modify) get rewritten."""
+    from exp_graph.mas.graph_generation import (
+        _graph_from_skill_protocol,
+        _rewrite_replay_instructions,
+    )
+    from exp_graph.protocols.spec import ProtocolGraphSpec
+    from masbench.transfer import deployment_view
+    from exp_graph.mas.schemas import SkillCard
+
+    def _card(skill_id, ledger):
+        return SkillCard(
+            skill_id=skill_id, objective="balanced", task_family="silo",
+            trigger={"task_family": "silo"},
+            organization_policy={
+                "topology_name": skill_id,
+                "protocol_spec": {
+                    "name": skill_id, "n_agents": 2,
+                    "steps": [{"transmissions": [[0, 1]], "description": "x",
+                               "operator": "replay", "instruction": "stored role"}],
+                    "metadata": {"selected_primary": 1},
+                },
+                "transfer_evidence": ledger,
+            },
+            expected_tradeoff={"mean_primary_loss": 0.1},
+            tags=["mas", "silo"],
+        )
+
+    direct = _card("direct", {
+        "os": {"n": 2, "em_sum": 2.0}, "os#lossless": {"n": 2, "em_sum": 2.0},
+    })
+    generalist = _card("generalist", {
+        "of": {"n": 6, "em_sum": 5.0},
+        "of#lossy": {"n": 3, "em_sum": 3.0}, "of#lossless": {"n": 3, "em_sum": 2.0},
+    })
+    # kind tier -> preserve
+    view, _, _, tier = deployment_view(
+        SkillBank(skills=[direct]), None, "os", kind="lossless", fallback_tier=True,
+    )
+    assert tier == "kind"
+    s = next(iter(view))
+    assert s.organization_policy["deploy_action"] == "preserve"
+    spec = ProtocolGraphSpec.model_validate(s.organization_policy["protocol_spec"])
+    plan = _graph_from_skill_protocol(s, spec)
+    assert plan.allow_instruction_rewrite is False
+    # breadth extrapolation (no direct slot evidence) -> modify
+    view2, _, _, tier2 = deployment_view(
+        SkillBank(skills=[generalist]), None, "of", kind="other-slot",
+        fallback_tier=True,
+    )
+    s2 = next(iter(view2))
+    assert s2.organization_policy["deploy_action"] == "modify"
+    spec2 = ProtocolGraphSpec.model_validate(s2.organization_policy["protocol_spec"])
+    plan2 = _graph_from_skill_protocol(s2, spec2)
+    assert plan2.allow_instruction_rewrite is True
+
+    # Preserve-marked plans are excluded from the rewrite pass entirely.
+    class _Boom:
+        def complete(self, *a, **k):
+            raise AssertionError("rewrite must not be called for preserve plans")
+
+    from exp_graph.mas.schemas import MASRuntimeConfig
+    runtime = MASRuntimeConfig(
+        llm_provider="openai", model_name="m", replay_instruction_rewrite=True,
+    )
+    _rewrite_replay_instructions([plan], runtime=runtime, llm_client=_Boom(), task_brief="t")
+    assert plan.steps[0].instruction == "stored role"
+
+
+def test_m15_gen_mode_portfolio_includes_named_aggregators():
+    from masbench.evolve import _portfolio_topologies
+    from masbench.core.config import RunConfig
+
+    gen_cfg = RunConfig(planner_mode="graph_generate")
+    topos = _portfolio_topologies(gen_cfg)
+    assert "chain" in topos and "one_peer_exponential_dag_star" in topos
+    assert "tree" in topos and "mesh_star" in topos
+    refine_cfg = RunConfig(planner_mode="topology_select")
+    assert _portfolio_topologies(refine_cfg) == ["chain"]

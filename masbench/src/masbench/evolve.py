@@ -443,7 +443,18 @@ def _portfolio_topologies(cfg: RunConfig) -> list[str]:
         if os.environ.get("MASBENCH_EVIDENCE_PORTFOLIO") is not None
         else getattr(cfg, "evidence_portfolio", "chain")
     )
-    return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+    topologies = [item.strip() for item in str(raw or "").split(",") if item.strip()]
+    # M15 portfolio parity: gen-mode evidence is generated rows only, so the
+    # named aggregation organizations are never measured there -- its bank
+    # could not hold the generalist that fixed/select ride (dev-8 beats_gen:
+    # evolved abstained everywhere, 0.0 == coldgen pairwise, while
+    # fixed=one_peer_exp took 33.3%). Refine mode already measures these via
+    # the objective-variant detour; gen mode gets them explicitly.
+    if topologies and cfg.planner_mode == "graph_generate":
+        for named in ("one_peer_exponential_dag_star", "tree", "mesh_star"):
+            if named not in topologies:
+                topologies.append(named)
+    return topologies
 
 
 def _collect_portfolio_rows(
