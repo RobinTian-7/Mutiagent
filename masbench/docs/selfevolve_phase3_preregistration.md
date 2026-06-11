@@ -21,6 +21,20 @@ empty bank and no motif prior. The judge imports protocol helpers from
 `_evolved_planner_mode`, `_bounded`); these are treated as frozen protocol:
 no behavior changes.
 
+## OPERATOR BAR RAISE (2026-06-11, before any confirmatory attempt)
+
+The acceptance bar is raised: self-evolve must UNCONDITIONALLY beat the
+BEST single topology in the baseline pool (fixed_best_on_train), not the
+mean / cold start. Instrument: the FROZEN phase-2 judge
+`scripts/verify_beats_baselines.py` (4-arm paired; PASS needs >=5pp AND
+win-margin >=2 vs EACH of select / graphgen / fixed_best). Confirmatory now
+requires BOTH frozen judges to exit 0 on both modes (stable curve judge +
+beats-baselines judge). When gen and refine conflict in design trade-offs,
+refine has priority. Mechanical consequence registered: abstention is
+neutral vs the cold baseline but LOSES vs fixed-best -> deployment gains a
+tiered fallback (kind-trusted replay -> strong-bucket-trusted best skill ->
+cold) so uncovered cases hold parity instead of bleeding pairs.
+
 ## Confirmatory procedure (fixed before confirmatory; dev results may refine
 ONLY the power parameters below, never after a confirmatory attempt starts)
 
@@ -69,6 +83,10 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   {I-01,I-02,I-04,I-06,I-07,I-08,II-13} TEST {II-15,II-17,II-19}; eval
   seeds 81-88; both modes. Mixes a known-range case, a cracked floor, and
   a near-floor.
+- Dev round 7 (registered 2026-06-11, code 764bcb0 round-10 stability
+  fixes): SAME split as dev-6, fresh seeds 91-98, both modes -- the direct
+  A/B for replay-first + sticky margin + instruction-keeping dedupe
+  (dev-6: gen PASS, refine r3 reshuffle FAIL).
 - Dev round 5 (registered 2026-06-11, method-final validation): dev-1's
   split (TRAIN {I-01..06,II-13} TEST {II-15,II-16,II-19}) with FRESH dev
   seeds 51-58 and the full current method (M1-M8, code 2ceb76f), both
