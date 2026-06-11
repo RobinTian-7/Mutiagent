@@ -353,6 +353,13 @@ def _effective_graph_max_steps(cfg: RunConfig, n_agents: int) -> int:
     return max(4, n_agents + 2)
 
 
+def _replay_rewrite_enabled(cfg: RunConfig) -> bool:
+    raw = os.environ.get("MASBENCH_REPLAY_REWRITE", "").strip()
+    if raw:
+        return raw not in {"0", "false", "off"}
+    return bool(getattr(cfg, "replay_rewrite", False))
+
+
 def _plan_graph_generate(
     cfg: RunConfig,
     *,
@@ -401,6 +408,8 @@ def _plan_graph_generate(
         motif_stats=motif_stats,
         # M4: a 1-run lucky motif must not outrank a measured veteran.
         motif_uncertainty_kappa=getattr(cfg, "motif_uncertainty_kappa", 0.0),
+        # M9: adapt replayed structures' per-step role guidance to THIS task.
+        replay_instruction_rewrite=_replay_rewrite_enabled(cfg),
         # D2: reject/repair generated DAGs whose sink isn't reachable from ALL
         # agents (the lossy-reduction failure mode that made generation lose).
         graph_require_full_sink_coverage=True,

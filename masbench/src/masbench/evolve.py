@@ -81,11 +81,13 @@ from masbench.engine import _build_llm_client, _plan_graph_generate
 from masbench.task_classify import (
     classification_bucket,
     classification_kind,
+    classification_lossless_slot,
     classify_task,
 )
 from masbench.transfer import (
     deployment_view,
     inject_transfer_evidence,
+    merge_structural_duplicates,
     namespace_motif_keys,
     snapshot_transfer_evidence,
 )
@@ -207,6 +209,7 @@ def _run_one(
     )
     feature_bucket = classification_bucket(classification)
     feature_kind = classification_kind(classification)
+    feature_slot = classification_lossless_slot(classification)
     transfer_mode = (
         os.environ.get("MASBENCH_TRANSFER_GATE", "").strip()
         or getattr(cfg, "transfer_gate", "feature")
@@ -225,7 +228,7 @@ def _run_one(
         # representationally-uncovered cases.
         view_bank, view_motif, abstained = deployment_view(
             skill_bank, motif_stats, feature_bucket,
-            kind=feature_kind, mode=transfer_mode,
+            kind=feature_slot, mode=transfer_mode,
         )
         plan, _planner_extra = _plan_graph_generate(
             cfg,
@@ -248,6 +251,9 @@ def _run_one(
         "llm_provider": cfg.llm_provider,
         "model_name": cfg.model_name,
         "temperature": cfg.temperature,
+        # M9: permit learned per-step role guidance to reach merge prompts
+        # (only fires when the executed spec actually carries instructions).
+        "enable_step_instructions": bool(getattr(cfg, "replay_rewrite", False)),
     }
     config_kwargs.update(plan.config_overrides)
     config = ProtocolRunnerConfig(**config_kwargs)
@@ -267,6 +273,7 @@ def _run_one(
     row["task_family"] = SILO_TASK_FAMILY
     row["task_features_key"] = feature_bucket
     row["task_agg_kind"] = feature_kind
+    row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
     # A2: carry the executed schedule so minister skills can store it
     # (organization_policy.protocol_spec) and the refine eval can replay it.
     row["protocol_spec"] = _executed_spec(plan, n_agents)
@@ -294,6 +301,7 @@ def _run_one(
             "bank_size": len(skill_bank),
             "transfer_bucket": feature_bucket,
             "transfer_kind": feature_kind,
+            "transfer_slot": feature_slot,
             "transfer_abstained": abstained,
             "topology": row.get("Topology"),
             "exact_match": row.get("ExactMatchRate"),
@@ -370,6 +378,7 @@ def _run_fixed_one(
     row["task_family"] = SILO_TASK_FAMILY
     row["task_features_key"] = classification_bucket(classification)
     row["task_agg_kind"] = classification_kind(classification)
+    row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
     try:
         steps = build_protocol_schedule(topology, n_agents)
     except Exception:
@@ -1216,6 +1225,9 @@ def run_evolution(
     # measured rows with the inherited ledger so deployment trust accumulates
     # across rounds instead of resetting.
     inject_transfer_evidence(skill_bank, train_rows, prior=pre_transfer_ledgers)
+    # M11/M13c: same-structure cards merge into one family member so trust
+    # evidence accumulates per STRUCTURE and the bank stops growing linearly.
+    n_merged_duplicates = merge_structural_duplicates(skill_bank)
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now
@@ -1303,6 +1315,7 @@ def run_evolution(
         "n_insight_patches": n_insight_patches,
         "n_explore_rows": n_explore_rows,
         "n_portfolio_rows": n_portfolio_rows,
+        "n_merged_duplicates": n_merged_duplicates,
         "gate": gate_info,
         "gate_mode": gate_mode,
         "selection_gate": selection_gate,

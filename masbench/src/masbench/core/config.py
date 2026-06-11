@@ -60,6 +60,11 @@ class RunConfig:
     # MASRuntimeConfig.motif_uncertainty_kappa). A 1-run lucky motif cannot
     # outrank a measured veteran. 0.0 = phase-2 behavior.
     motif_uncertainty_kappa: float = 0.5
+    # Phase-3 M9: replay candidates get per-step receiver instructions
+    # REWRITTEN for the current task (one emperor call per seeded candidate)
+    # and the protocol runner injects them into merge prompts. False =
+    # verbatim structure-only replay (pre-M9). Env: MASBENCH_REPLAY_REWRITE.
+    replay_rewrite: bool = True
     # Phase-3 M7 (generalizability): how task features (bucket + agg kind)
     # are derived from the task statement. "llm" (default): the run's own
     # LLM answers benchmark-agnostic questions (order-sensitivity, answer

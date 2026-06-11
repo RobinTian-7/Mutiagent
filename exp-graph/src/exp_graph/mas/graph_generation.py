@@ -42,6 +42,9 @@ class GeneratedGraphStep(BaseModel):
     description: str = ""
     edges: list[tuple[int, int]] = Field(default_factory=list)
     operator_hint: str = "llm_generated"
+    # M9: optional receiver-facing role guidance carried into the compiled
+    # spec (None everywhere unless the instruction-rewrite path sets it).
+    instruction: str | None = None
 
     @field_validator("edges", mode="before")
     @classmethod
@@ -386,6 +389,7 @@ def compile_generated_graph(
                 transmissions=step.edges,
                 description=step.description or f"{graph.name}: step {idx}",
                 operator=step.operator_hint or "llm_generated",
+                instruction=step.instruction,
             )
             for idx, step in enumerate(graph.steps)
         ],
@@ -587,6 +591,9 @@ def _generate_graph_candidates(
         request=request,
         skills=positive_skills,
     )
+    _rewrite_replay_instructions(
+        seeded, runtime=runtime, llm_client=llm_client, task_brief=task_brief
+    )
     remaining_count = max(0, count - len(seeded))
     emperor_llm = resolve_role_llm_config(runtime, "emperor")
     if emperor_llm.platform == "fake":
@@ -613,6 +620,71 @@ def _generate_graph_candidates(
         expected_count=remaining_count,
     )
     return [*seeded, *candidates], [response.text]
+
+
+_INSTRUCTION_REWRITE_PROMPT = """You proved this communication structure works for a related task. Adapt it to THIS task by writing one short instruction for the RECEIVING agents of each step.
+
+Task: {task_brief}
+
+Structure ({n_steps} steps; "k: src->dst" lists who sends to whom that round):
+{structure}
+
+Rules:
+- Exactly {n_steps} instructions, one per step, each <= 200 characters.
+- Tell receivers what to COMPUTE locally this step and what to FORWARD next.
+- Keep raw data lossless when the task needs it; never invent concrete data values.
+Reply ONLY JSON: {{"instructions": ["...", ...]}}"""
+
+
+def _rewrite_replay_instructions(
+    seeded: list[GeneratedGraphPlan],
+    *,
+    runtime: MASRuntimeConfig,
+    llm_client: LLMClient | None,
+    task_brief: str | None,
+) -> None:
+    """M9: adapt proven structures' per-step role guidance to the current task.
+
+    Verbatim replay carries instructions earned on a DIFFERENT task (or none
+    at all -- step descriptions never reach agents). One LLM call per seeded
+    candidate writes receiver-facing instructions from (task brief,
+    structure). Any failure leaves the candidate unchanged (do no harm).
+    Borrowed: SkillLens REWRITE route; AWM workflow adaptation.
+    """
+    if not runtime.replay_instruction_rewrite or not seeded or not task_brief:
+        return
+    emperor_llm = resolve_role_llm_config(runtime, "emperor")
+    if emperor_llm.platform == "fake":
+        return
+    client = llm_client or create_role_llm_client(runtime, "emperor")
+    for graph in seeded:
+        structure = "\n".join(
+            f"{idx}: " + ", ".join(f"{src}->{dst}" for src, dst in step.edges)
+            for idx, step in enumerate(graph.steps)
+        )
+        prompt = _INSTRUCTION_REWRITE_PROMPT.format(
+            task_brief=task_brief[:1500],
+            n_steps=len(graph.steps),
+            structure=structure,
+        )
+        try:
+            response = client.complete(
+                prompt,
+                model_name=emperor_llm.model_name,
+                temperature=emperor_llm.temperature,
+            )
+            raw = (getattr(response, "text", "") or "").strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[start:end + 1]) if 0 <= start < end else {}
+            instructions = data.get("instructions")
+            if not isinstance(instructions, list):
+                continue
+        except Exception:
+            continue
+        for step, instruction in zip(graph.steps, instructions):
+            text = str(instruction).strip()
+            if text:
+                step.instruction = text[:300]
 
 
 def _skill_seeded_graph_candidates(
@@ -659,6 +731,7 @@ def _graph_from_skill_protocol(
                 description=step.description,
                 edges=step.transmissions,
                 operator_hint=step.operator or "skill_replay",
+                instruction=step.instruction,
             )
             for step in spec.steps
         ],

@@ -76,6 +76,12 @@ class ProtocolRunnerConfig(BaseModel):
     run_id: str | None = None
     protocol_spec: ProtocolGraphSpec | None = None
     llm_role_summary: dict[str, object] = Field(default_factory=dict)
+    # M9: when True, a step's optional receiver-facing `instruction` is
+    # prepended to the LLM merge prompt for that step. Default False and no
+    # named topology carries instructions, so existing behavior (CF included)
+    # is byte-identical unless BOTH the flag and instruction-bearing specs
+    # are supplied.
+    enable_step_instructions: bool = False
 
     @classmethod
     def from_experiment_config(
@@ -800,6 +806,14 @@ class ProtocolRunner:
             inbox=state.inbox,
             deterministic_belief=verified_belief,
         )
+        # M9: learned per-step role guidance reaches the agent here. Only
+        # fires when the runner opts in AND the executed spec carries an
+        # instruction for this step -- otherwise the prompt is byte-identical.
+        step_instruction = getattr(step, "instruction", None)
+        if self.config.enable_step_instructions and step_instruction:
+            prompt = (
+                f"Step role for you this round: {step_instruction}\n\n{prompt}"
+            )
         current_prompt = prompt
         responses: list[LLMResponse] = []
         call_prompts: list[str] = []

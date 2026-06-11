@@ -53,12 +53,13 @@ Task statement (placeholders like {{agent_id}}/{{input_shard}} stand for per-age
 %s
 ---
 
-Answer three questions about WHAT THE TASK REQUIRES (not about any suggested protocol):
+Answer four questions about WHAT THE TASK REQUIRES (not about any suggested protocol):
 1. order_sensitive: Does computing the correct answer depend on the agents' POSITIONS in an ordering (consecutive segments of one sequence, neighbor exchange, pipeline stages)? true/false. Tasks where shards can be combined in any order (max, sums, counts over a multiset) are false.
 2. per_agent_output: Must EACH agent end up holding its OWN distinct part of the answer (per-segment results), rather than one shared global answer? true/false.
 3. agg_kind: Which ONE statistic family best describes the required answer? Choose exactly one of: %s. Use "seq" for order-dependent transforms over sequences (prefix sums, sliding windows, automata, chained hashes, substring/subsequence structure), "stats" for variance-like statistics, "other" if nothing fits.
+4. needs_lossless: Can each agent's shard be safely REDUCED to a small local summary (a max, a sum, one vote) before sharing, and the summaries combined into the correct answer? If yes -> false. If instead the raw data (or near-complete structure) must reach whoever computes the answer -- counting distinct/structured occurrences, cross-boundary patterns, reconstructing sequences -- then true.
 
-Reply with ONLY a JSON object: {"order_sensitive": bool, "per_agent_output": bool, "agg_kind": "<kind>"}"""
+Reply with ONLY a JSON object: {"order_sensitive": bool, "per_agent_output": bool, "agg_kind": "<kind>", "needs_lossless": bool}"""
 
 
 _LOCK = threading.Lock()
@@ -100,12 +101,19 @@ def _store_persistent(key: str, value: dict[str, Any]) -> None:
         path.write_text(json.dumps(data, indent=1, sort_keys=True))
 
 
+# Kinds whose correct answer cannot be computed from small local summaries
+# (offline-fallback mapping only; the method asks the LLM directly).
+_LOSSLESS_KINDS = frozenset({"count", "set", "topk", "sort", "seq", "stats"})
+
+
 def _heuristic_classification(task_text: str) -> dict[str, Any]:
     feats = _heuristic_features(task_text)
+    kind = _heuristic_agg_kind(task_text)
     return {
         "order_sensitive": bool(feats["order_sensitive"]),
         "per_agent_output": bool(feats["per_agent_output"]),
-        "agg_kind": _heuristic_agg_kind(task_text),
+        "agg_kind": kind,
+        "needs_lossless": kind in _LOSSLESS_KINDS,
         "source": "heuristic",
     }
 
@@ -130,6 +138,7 @@ def _parse_classification(text: str) -> dict[str, Any] | None:
         "order_sensitive": bool(data.get("order_sensitive", False)),
         "per_agent_output": bool(data.get("per_agent_output", False)),
         "agg_kind": kind,
+        "needs_lossless": bool(data.get("needs_lossless", kind in _LOSSLESS_KINDS)),
         "source": "llm",
     }
 
@@ -162,11 +171,17 @@ def classify_task(
             _MEMORY_CACHE[key] = dict(persistent)
         return persistent
     prompt = _PROMPT % (text[:4000], ", ".join(AGG_KINDS))
-    try:
-        response = llm_client.complete(prompt, model_name=model_name, temperature=0.0)
-        parsed = _parse_classification(getattr(response, "text", "") or "")
-    except Exception:
-        parsed = None
+    parsed = None
+    # One parse-retry: dev-5 saw unparseable replies fall back to heuristics,
+    # creating mixed-source labels within a single run.
+    for _ in range(2):
+        try:
+            response = llm_client.complete(prompt, model_name=model_name, temperature=0.0)
+            parsed = _parse_classification(getattr(response, "text", "") or "")
+        except Exception:
+            parsed = None
+        if parsed is not None:
+            break
     result = parsed if parsed is not None else {
         **_heuristic_classification(text), "source": "heuristic_fallback",
     }
@@ -182,3 +197,8 @@ def classification_bucket(classification: dict[str, Any]) -> str:
 
 def classification_kind(classification: dict[str, Any]) -> str:
     return str(classification.get("agg_kind", "other"))
+
+
+def classification_lossless_slot(classification: dict[str, Any]) -> str:
+    """M12 trust sub-slot name: 'lossless' | 'lossy'."""
+    return "lossless" if classification.get("needs_lossless") else "lossy"

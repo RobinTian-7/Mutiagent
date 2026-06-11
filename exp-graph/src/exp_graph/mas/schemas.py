@@ -161,6 +161,11 @@ class MASRuntimeConfig(BaseModel):
     # ``mean_loss + kappa/sqrt(n)`` so a 1-run lucky motif cannot outrank a
     # well-measured veteran. 0.0 (default) = historical behavior.
     motif_uncertainty_kappa: float = 0.0
+    # M9: when True, seeded replay candidates get their per-step receiver
+    # instructions REWRITTEN for the current task (one LLM call per seeded
+    # candidate, from the task brief + the proven structure). Default False
+    # -> generation byte-identical.
+    replay_instruction_rewrite: bool = False
     role_llm_profiles: RoleLLMProfiles | None = None
     role_llm_config_path: str | None = None
 

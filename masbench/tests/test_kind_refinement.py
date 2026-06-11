@@ -1,10 +1,12 @@
-"""M6: contradiction-triggered trust refinement to agg-kind granularity.
+"""M12: lossless-need trust slots + M8 breadth over them.
 
-Dev-1 gen evidence: `staged_aggregate_to_sink` scored 1.00 (n=5) on I-03
-(vote) and 0.17 (n=6) on I-05 (count) -- the bucket mean (0.55) earned it
-of-bucket trust and it then deterministically failed the count-kind val case
-every round, so the gate nuked the whole bank three times. Trust must live
-at the coarsest granularity CONSISTENT with the evidence.
+History: M6 used a 14-way agg-kind taxonomy as the trust key; dev-5 showed
+its boundaries fracture trust ("longest palindrome length" read as max while
+its target cases read seq -> 72/72 abstentions in both modes). M12 replaces
+the key with the mechanistic binary the taxonomy proxied: does correctness
+survive local summarization (lossy-safe) or must raw data reach the
+computing agent (lossless)? The dev-1 gen failure maps cleanly: vote
+successes = of#lossy passing, count failures = of#lossless failing.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import pytest
 
 from exp_graph.mas.schemas import SkillCard
 from exp_graph.mas.skill_bank import SkillBank
-from masbench.task_features import agg_kind
+from masbench.task_classify import classify_task
 from masbench.transfer import (
     build_transfer_ledger,
     deployment_view,
@@ -25,30 +27,31 @@ from masbench.transfer import (
 
 BENCH_DIR = Path(__file__).resolve().parents[1] / "third_party" / "acl26-silo-bench" / "benchmarks"
 
-# Hand-checked from the task statements (text-derived, no benchmark labels).
-EXPECTED_KINDS = {
-    "I-01": "max", "I-02": "count", "I-03": "vote", "I-04": "any",
-    "I-05": "count", "I-06": "xor", "I-07": "mean", "I-08": "count",
-    "I-09": "topk", "I-10": "stats",
-    "II-11": "seq", "II-12": "seq", "II-13": "seq", "II-14": "seq",
-    "II-15": "seq", "II-16": "seq", "II-17": "seq", "II-18": "seq",
-    "II-19": "set", "II-20": "seq",
+# Hand-derived from the statements: can shards be reduced to small local
+# summaries (max/sum/vote compose) or must raw data reach the computer?
+EXPECTED_LOSSLESS = {
+    "I-01": False, "I-03": False, "I-04": False, "I-06": False, "I-07": False,
+    "I-02": True,   # word-frequency count needs full (word,count) info
+    "I-05": True, "I-08": True, "I-09": True, "I-10": True,
+    "II-13": True, "II-15": True, "II-16": True, "II-19": True,
 }
 
 
 @pytest.mark.skipif(not BENCH_DIR.exists(), reason="silo benchmark data not present")
-def test_agg_kind_extraction_on_real_cases():
-    for case_id, expected in EXPECTED_KINDS.items():
+def test_heuristic_fallback_lossless_bits():
+    for case_id, expected in EXPECTED_LOSSLESS.items():
         text = json.loads((BENCH_DIR / f"{case_id}_n5.json").read_text())["task_description"]
         if not isinstance(text, str):
             text = json.dumps(text)
-        assert agg_kind(text) == expected, (case_id, agg_kind(text))
+        out = classify_task(text, llm_client=None, model_name="fake", llm_provider="fake")
+        assert out["needs_lossless"] == expected, (case_id, out)
 
 
-def _row(topology: str, bucket: str, kind: str, em: float) -> dict:
+def _row(topology: str, bucket: str, lossless: bool, em: float) -> dict:
     return {
         "Topology": topology, "task_features_key": bucket,
-        "task_agg_kind": kind, "ExactMatchRate": em,
+        "task_needs_lossless": lossless, "task_agg_kind": "diag-only",
+        "ExactMatchRate": em,
     }
 
 
@@ -70,86 +73,76 @@ def _skill_with_ledger(ledger: dict) -> SkillCard:
     )
 
 
-def test_ledger_writes_kind_subslots():
+def test_ledger_writes_lossless_subslots():
     rows = [
-        _row("t", "of", "vote", 1.0), _row("t", "of", "vote", 1.0),
-        _row("t", "of", "count", 0.0), _row("t", "of", "count", 0.0),
+        _row("t", "of", False, 1.0), _row("t", "of", False, 1.0),
+        _row("t", "of", True, 0.0), _row("t", "of", True, 0.0),
     ]
     ledger = build_transfer_ledger(rows)["t"]
     assert ledger["of"] == {"n": 4, "em_sum": 2.0}
-    assert ledger["of#vote"] == {"n": 2, "em_sum": 2.0}
-    assert ledger["of#count"] == {"n": 2, "em_sum": 0.0}
+    assert ledger["of#lossy"] == {"n": 2, "em_sum": 2.0}
+    assert ledger["of#lossless"] == {"n": 2, "em_sum": 0.0}
 
 
-def test_contradiction_restricts_trust_to_winning_kinds():
-    # The dev-1 gen signature: vote perfect, count fatal, bucket mean passes.
+def test_lossy_safe_success_does_not_authorize_lossless_cases():
+    # dev-1 gen signature in M12 terms: vote (lossy) perfect, count
+    # (lossless) fatal; bucket mean passes.
     skill = _skill_with_ledger({
         "of": {"n": 11, "em_sum": 6.0},
-        "of#vote": {"n": 5, "em_sum": 5.0},
-        "of#count": {"n": 6, "em_sum": 1.0},
+        "of#lossy": {"n": 5, "em_sum": 5.0},
+        "of#lossless": {"n": 6, "em_sum": 1.0},
     })
-    assert skill_trusted_for(skill, "of", "vote") is True
-    assert skill_trusted_for(skill, "of", "count") is False
-    # A kind with no dedicated evidence inherits NOTHING once contradicted.
-    assert skill_trusted_for(skill, "of", "max") is False
+    assert skill_trusted_for(skill, "of", "lossy") is True
+    assert skill_trusted_for(skill, "of", "lossless") is False
 
 
-def test_kind_equality_carries_trust_without_breadth():
-    # one_peer_exponential's dev-1 profile: sparse but consistent os#seq
-    # success. M8: same-kind cases deploy via DIRECT kind evidence (this is
-    # what carried the II-13 -> II-15/16 wins); UNMEASURED kinds do NOT
-    # inherit from one narrow kind (dev-3: sparse one-kind generated orgs
-    # rode bucket trust onto foreign kinds and lost to cold, I-09 0.67 vs 0.88).
+def test_anchor_trust_reaches_same_slot_targets():
+    # dev-5's broken flow, repaired: II-13 (lossless) earned trust must be
+    # reachable from II-15/16/19 (lossless) -- same slot, direct evidence.
     skill = _skill_with_ledger({
-        "os": {"n": 3, "em_sum": 2.4},
-        "os#seq": {"n": 3, "em_sum": 2.4},
+        "os": {"n": 2, "em_sum": 1.0},
+        "os#lossless": {"n": 2, "em_sum": 1.0},
     })
-    assert skill_trusted_for(skill, "os", "seq") is True
-    assert skill_trusted_for(skill, "os", "set") is False
+    assert skill_trusted_for(skill, "os", "lossless") is True
+    # ...but a lossless anchor says nothing about the lossy slot alone;
+    # narrow evidence never extrapolates (M8).
+    assert skill_trusted_for(skill, "os", "lossy") is False
 
 
-def test_breadth_earns_extrapolation_to_unmeasured_kinds():
-    skill = _skill_with_ledger({
-        "of": {"n": 8, "em_sum": 7.0},
-        "of#max": {"n": 3, "em_sum": 3.0},
-        "of#vote": {"n": 3, "em_sum": 2.5},
-        "of#mean": {"n": 2, "em_sum": 1.5},
+def test_breadth_requires_both_bits():
+    both = _skill_with_ledger({
+        "of": {"n": 6, "em_sum": 5.0},
+        "of#lossy": {"n": 3, "em_sum": 3.0},
+        "of#lossless": {"n": 3, "em_sum": 2.0},
     })
-    # 3 kinds passing, none failing -> broad uniform competence extrapolates.
-    assert skill_trusted_for(skill, "of", "topk") is True
-    # ...but a well-measured failing kind blocks extrapolation entirely.
-    skill2 = _skill_with_ledger({
-        "of": {"n": 10, "em_sum": 7.0},
-        "of#max": {"n": 3, "em_sum": 3.0},
-        "of#vote": {"n": 3, "em_sum": 2.5},
-        "of#count": {"n": 4, "em_sum": 0.5},
-    })
-    assert skill_trusted_for(skill2, "of", "topk") is False
+    # both bits measured and passing -> trusted on either slot
+    assert skill_trusted_for(both, "of", "lossy") is True
+    assert skill_trusted_for(both, "of", "lossless") is True
 
 
-def test_single_lowstat_kind_means_no_extrapolation():
+def test_single_lowstat_slot_means_no_extrapolation():
     skill = _skill_with_ledger({
         "of": {"n": 3, "em_sum": 3.0},
-        "of#max": {"n": 2, "em_sum": 2.0},
-        "of#count": {"n": 1, "em_sum": 0.0},  # below MIN_TRUST_ROWS -> undecided
+        "of#lossy": {"n": 2, "em_sum": 2.0},
+        "of#lossless": {"n": 1, "em_sum": 0.0},  # below MIN_TRUST_ROWS
     })
-    assert skill_trusted_for(skill, "of", "max") is True  # direct evidence
-    assert skill_trusted_for(skill, "of", "count") is False  # narrow: no extrapolation
+    assert skill_trusted_for(skill, "of", "lossy") is True
+    assert skill_trusted_for(skill, "of", "lossless") is False
 
 
 def test_legacy_ledger_without_subslots_keeps_bucket_semantics():
     skill = _skill_with_ledger({"of": {"n": 4, "em_sum": 4.0}})
-    assert skill_trusted_for(skill, "of", "max") is True
+    assert skill_trusted_for(skill, "of", "lossy") is True
 
 
-def test_deployment_view_kind_aware():
+def test_deployment_view_slot_aware():
     contradicted = _skill_with_ledger({
         "of": {"n": 11, "em_sum": 6.0},
-        "of#vote": {"n": 5, "em_sum": 5.0},
-        "of#count": {"n": 6, "em_sum": 1.0},
+        "of#lossy": {"n": 5, "em_sum": 5.0},
+        "of#lossless": {"n": 6, "em_sum": 1.0},
     })
     bank = SkillBank(skills=[contradicted])
-    view, _, abstained = deployment_view(bank, None, "of", kind="count")
+    view, _, abstained = deployment_view(bank, None, "of", kind="lossless")
     assert abstained is True and len(view) == 0
-    view, _, abstained = deployment_view(bank, None, "of", kind="vote")
+    view, _, abstained = deployment_view(bank, None, "of", kind="lossy")
     assert abstained is False and len(view) == 1

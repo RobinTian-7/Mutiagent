@@ -40,13 +40,29 @@ def _evolve(**kw):
 
 def test_refine_evolution_explores_generated_designs():
     summary = _evolve()
+    assert summary["n_explore_rows"] > 0, "explore rows must be collected"
+    # The explored design reaches the minister as a generated:* card -- OR,
+    # post-M11, it is absorbed into a structurally-identical family veteran
+    # (offline fake generation often reproduces a named structure). Either
+    # way the mechanism ran; the structure survives with an executable spec.
     generated = [
         s for s in summary["evolved_skills"]
         if str((s.get("organization_policy") or {}).get("topology_name", "")).startswith("generated:")
     ]
-    assert generated, "explore rows must reach the minister as generated:* skills"
-    spec = (generated[0].get("organization_policy") or {}).get("protocol_spec")
-    assert isinstance(spec, dict) and spec.get("steps"), "explored design carries its executable spec"
+    absorbed = [
+        aid
+        for s in summary["evolved_skills"]
+        for aid in ((s.get("organization_policy") or {}).get("absorbed_skill_ids") or [])
+    ]
+    assert generated or any("generated" in a for a in absorbed), (
+        "explored design must persist as a card or be absorbed into a family"
+    )
+    holder = generated[0] if generated else next(
+        s for s in summary["evolved_skills"]
+        if any("generated" in a for a in ((s.get("organization_policy") or {}).get("absorbed_skill_ids") or []))
+    )
+    spec = (holder.get("organization_policy") or {}).get("protocol_spec")
+    assert isinstance(spec, dict) and spec.get("steps"), "family carries an executable spec"
     named = [
         s for s in summary["evolved_skills"]
         if not str((s.get("organization_policy") or {}).get("topology_name", "")).startswith("generated:")

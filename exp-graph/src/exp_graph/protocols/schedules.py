@@ -14,6 +14,9 @@ class CommunicationStep(BaseModel):
     step_idx: int
     transmissions: list[tuple[int, int]] = Field(default_factory=list)
     description: str = ""
+    # Optional receiver-facing role guidance (M9); None on all named
+    # topologies, so every existing schedule is unchanged.
+    instruction: str | None = None
 
     @property
     def active_senders(self) -> set[int]:

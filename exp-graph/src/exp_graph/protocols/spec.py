@@ -13,6 +13,10 @@ class ProtocolStepSpec(BaseModel):
     transmissions: list[tuple[int, int]] = Field(default_factory=list)
     description: str = ""
     operator: str = "custom"
+    # Optional receiver-facing role guidance for this step, injected into the
+    # merge prompt when the runner enables step instructions (M9). Default
+    # None -> no behavior change anywhere (CF specs never set it).
+    instruction: str | None = None
 
     @field_validator("transmissions")
     @classmethod
@@ -69,6 +73,7 @@ def build_protocol_schedule_from_spec(
             step_idx=step_idx,
             transmissions=step.transmissions,
             description=step.description or f"{spec.name}: step {step_idx}",
+            instruction=step.instruction,
         )
         for step_idx, step in enumerate(spec.steps)
     ]
