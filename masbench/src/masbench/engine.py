@@ -50,7 +50,9 @@ def _build_llm_client(cfg: RunConfig) -> LLMClient:
     # Bounded transient-connection retry OUTSIDE the wall-clock guard: each
     # attempt gets its own timeout budget, and a single network blip can no
     # longer kill a whole verify/bench eval pool (round-3C crashed at 32/72
-    # eval runs on one APIConnectionError).
+    # eval runs on one APIConnectionError). attempts=5/base 5s linear backoff
+    # rides out ~75s outages (phase-3 dev-5: a multi-blip burst beat the old
+    # 3x2s budget and crashed the refine run through the frozen eval pool).
     return RetryLLMClient(
         create_llm_client(
             cfg.llm_provider,
@@ -58,7 +60,9 @@ def _build_llm_client(cfg: RunConfig) -> LLMClient:
             api_key_env=cfg.api_key_env,
             thinking_enabled=cfg.thinking_enabled,
             timeout_s=cfg.request_timeout,
-        )
+        ),
+        attempts=5,
+        base_delay=5.0,
     )
 
 

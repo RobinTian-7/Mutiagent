@@ -85,6 +85,83 @@ Round-1 forensics (the -25pp is NOT a method regression):
    a winnable pool needs either k_II < n_test — mixed test, of-winnable —
    or a learnable os case in train).
 
+## Dev round 3 (10I+2II pilot, seeds 31-38) — both modes FAIL
+
+1. **M6 inverted epistemics** (fixed by M8): one-kind generated orgs kept
+   bucket trust ("no contradiction" out of ignorance) and deployed onto
+   foreign kinds (I-09 evo 0.67 vs cold 0.88) while only well-measured
+   veterans were contradiction-demoted.
+2. **Kind disjointness**: lexicographic level-I tails put topk/stats kinds
+   in TEST that never occur in TRAIN (max/count/vote/...) — of-side
+   exact-kind transfer is impossible by construction on this benchmark.
+   The demonstrated transfer carrier is seq-kind II→II (dev-1).
+3. **3rd and largest same-policy drift**: identical cold grid 21.9%
+   (02:56) → 0.0% (03:24).
+4. Hygiene: M7 landed mid-driver → the two modes ran different code (each
+   internally consistent). Rule since: no commits while a driver runs.
+
+## Dev round 4 (seq trust vs UNTUNED floors; TRAIN {I-01..06,II-13},
+TEST {II-17,II-18,II-20}, seeds 41-48, code 34da9ea) — the decision datum
+
+- Baseline (cold gen): 0.0% on all 24 pairs (floors confirmed).
+- Refine: banks built and deployed exactly as designed (11→15 skills,
+  gates accepted, gate j improved 0.111→0.0 on val), and scored **0.0%
+  in all 3 rounds — 0 wins in 72 evolved evaluations**.
+- Conclusion: organizational memory cannot create capability the executor
+  lacks. II-17/18/20 at n=5 are model-capability floors, not organization
+  floors. With kind-disjoint of-tails and floor-bound seq-tails, **no
+  untouched n=5 split is honestly winnable unless its test contains
+  headroom seq cases (II-15/16) — which are dev-burned.**
+- M7 classifier live validation: 10/10 cases classified by the LLM, ~80%
+  agreement with hand labels; disagreements push toward abstention (safe).
+- gen mode crashed at its baseline on one sporadic 120s timeout (no
+  isolation in the frozen eval pool) → retry layer now gives timeouts one
+  bounded retry.
+
+## n=10 dynamic-range scout — ALL ZERO
+
+Cold-gen AND one_peer_exponential scored 0.00 on II-13/14/17/18/20 at
+n=10 (3 seeds each; even II-13, winnable at n=5). n=10 deepens the
+capability floor; not a power lever.
+
+## Dev round 5 (method-final validation, dev-1 split, fresh seeds 51-58)
+
+Operator amendments in force: budget $60, explore-until-success, wins must
+flow evolved-skills→planner→organization (provenance audit below).
+
+- refine half: first attempt crashed on an APIConnectionError burst
+  (network outage ~04:46) through the frozen no-isolation eval pool →
+  connection retries deepened to 5×5s linear (~75s coverage); rerun in
+  progress at writing.
+- gen half (code 2ceb76f): FAIL — baseline 8.3%, rounds 12.5/8.3/8.3
+  (skills=8 deployed every round: **M5/M8 verifiably fixed dev-1's gate
+  triple-rejection**). Provenance audit: the evolved arm ABSTAINED on all
+  72 test evals — the round numbers are cold-policy drift, no
+  skills-driven wins to claim.
+
+Two further mechanism findings from the abstention forensics:
+
+4. **Trust starvation by name-splitting (→ M11)**: generated evidence orgs
+   carry per-run names, so the ledger (keyed by topology NAME) splits one
+   structure's successes into n=1 fragments that never reach the n≥2 trust
+   bar. Fix: ledger/minister identity = topology-equivalence structural
+   hash (mechanism already in the repo for retrieval dedupe).
+5. **Trust keys too brittle (→ M12)**: the LLM read II-13 "length of the
+   longest palindrome" as kind=max while II-15/16/19 read seq → chain's
+   II-13-earned trust (1/2 successes, exactly at the bar) sat in os#max,
+   unreachable from the seq test cases; II-15/16 additionally fell back to
+   heuristics on unparseable replies (mixed-source labels). The 14-way
+   statistic taxonomy is the wrong key. Replace with the mechanistic
+   binary it proxied: **needs_lossless** (can local data be safely
+   summarized before sharing, or must raw data reach the computing agent)
+   — robust to classify, benchmark-agnostic, and it cleanly separates both
+   measured failure modes (count-vs-vote bimodality; palindrome↔subsequence
+   trust flow).
+
+Queued method round: M9 (instruction-carrying replay) + M11 (structural
+identity) + M12 (lossless-need trust key), then floor screen + known-signal
+screen; M10 (train-time verified recipe search) behind them.
+
 ## Borrowed designs
 
 - SkillLens (arXiv:2605.08386): verifier SKIP route -> M1 abstention to the

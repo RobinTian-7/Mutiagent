@@ -60,8 +60,16 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   II-18 + II-20 -> TRAIN {I-01..06, II-13} TEST {II-17,II-18,II-20}; eval
   seeds 41-48; code = single version M7+M8 (no mid-driver commits -- dev-3
   hygiene lesson). Question piloted: do II-13-earned seq replays crack
-  UNTUNED seq floors? Yes -> confirmatory viable on unburned II cases;
-  no -> honest-boundary evidence.
+  UNTUNED seq floors? RESULT: NO -- 0 wins in 72 evolved evals; floors are
+  model-capability floors. n=10 scout: all-zero (both arms, 5 cases).
+- Dev round 5 (registered 2026-06-11, method-final validation): dev-1's
+  split (TRAIN {I-01..06,II-13} TEST {II-15,II-16,II-19}) with FRESH dev
+  seeds 51-58 and the full current method (M1-M8, code 2ceb76f), both
+  modes. Purpose: the positive half of the final report -- the dev-1 PASS
+  used round-1 code; M4-M8 were never validated on the known-signal
+  geometry (M5/M8 specifically target gen mode's dev-1 failure). Honest
+  labeling: this is a DEV split; the result is a method-validation
+  measurement, not a confirmatory attempt.
 
 ## Method-change ground rules (from the operator brief)
 
@@ -78,6 +86,13 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   for the feature extractor's tests.
 - Budget: cumulative real-LLM spend ≤ $40 (ledger `masbench/runs/COST_LEDGER.json`;
   $12.16 already spent by P1+P2). Reserve ≥ $9 for confirmatory attempts.
+  AMENDED 2026-06-11 (operator): cap raised to $60; directive = keep
+  exploring until SUCCESS (stable dominance, both modes) or budget
+  exhaustion; the honest-failure report is reserved for true exhaustion.
+  Mechanism-purity requirement (operator): every claimed win must flow
+  through evolved skills -> planner -> deployed organization; round reports
+  audit per-win provenance (deployed topology traced to a bank skill_id).
+  budget_guard invocations now pass --cap-usd 60.
 
 ## Method changelog (applied symmetrically; baseline arm never executes
 ## learner-internal paths)
