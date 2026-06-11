@@ -1,0 +1,107 @@
+{
+  "mode": "select_then_refine",
+  "n_agents": 5,
+  "train_cases": [
+    "I-01",
+    "I-02",
+    "I-03",
+    "I-04",
+    "I-05",
+    "I-06",
+    "II-13"
+  ],
+  "test_cases": [
+    "II-15",
+    "II-16",
+    "II-19"
+  ],
+  "train_seeds": [
+    1,
+    2
+  ],
+  "val_seeds": [
+    3
+  ],
+  "eval_seeds": [
+    71,
+    72,
+    73
+  ],
+  "n_pairs": 9,
+  "mean_empty": 0.0,
+  "mean_evolved": 0.3333333333333333,
+  "delta": 0.3333333333333333,
+  "evolved_only_wins": 3,
+  "empty_only_wins": 0,
+  "n_skills": 9,
+  "gate": {
+    "accepted": true,
+    "j_before": 0.1111111111111111,
+    "j_after": 0.0,
+    "epsilon": 0.1111111111111111,
+    "n_samples": 9,
+    "mode": "generation"
+  },
+  "machinery_ok": true,
+  "criteria": {
+    "delta_min": 0.05,
+    "win_margin": 2
+  },
+  "passed": true,
+  "pairs": [
+    {
+      "case_id": "II-15",
+      "seed": 71,
+      "empty": 0.0,
+      "evolved": 0.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 72,
+      "empty": 0.0,
+      "evolved": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 73,
+      "empty": 0.0,
+      "evolved": 1.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 71,
+      "empty": 0.0,
+      "evolved": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 72,
+      "empty": 0.0,
+      "evolved": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 73,
+      "empty": 0.0,
+      "evolved": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 71,
+      "empty": 0.0,
+      "evolved": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 72,
+      "empty": 0.0,
+      "evolved": 1.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 73,
+      "empty": 0.0,
+      "evolved": 0.0
+    }
+  ]
+}

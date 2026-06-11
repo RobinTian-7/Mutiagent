@@ -208,7 +208,15 @@ def recipe_skill_card(
         skill_id=f"{task_family}__recipe_{spec.name}__a{n_agents}",
         objective="balanced",
         task_family=task_family,
-        trigger={"task_family": task_family, "min_agents": 1, "max_agents": 999},
+        # Specificity parity with minister cards (round-9 screen: recipe cards
+        # at specificity ~2 were pushed out of the top-3 seeded candidates by
+        # condition-keyed minister cards at 12; the verified recipe never
+        # deployed). Same condition shape -> LCB loss decides the order.
+        trigger={
+            "task_family": task_family,
+            "agent_counts": [n_agents],
+            "condition_key": f"recipe::{bucket}#{lossless_slot}::a{n_agents}",
+        },
         organization_policy={
             "planner_mode": "graph_generate",
             "topology_name": topology,
