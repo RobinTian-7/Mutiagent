@@ -29,8 +29,11 @@ mean / cold start. Instrument: the FROZEN phase-2 judge
 `scripts/verify_beats_baselines.py` (4-arm paired; PASS needs >=5pp AND
 win-margin >=2 vs EACH of select / graphgen / fixed_best). Confirmatory now
 requires BOTH frozen judges to exit 0 on both modes (stable curve judge +
-beats-baselines judge). When gen and refine conflict in design trade-offs,
-refine has priority. Mechanical consequence registered: abstention is
+beats-baselines judge). Priority AMENDED by operator
+(2026-06-11, superseding the earlier refine-priority): when gen and
+refine conflict, GEN has priority, and gen gets a longer evolution
+runway (hypothesis: ~5 rounds needed for its advantage to emerge;
+testable now that round-12 gave gen per-round exploration). Mechanical consequence registered: abstention is
 neutral vs the cold baseline but LOSES vs fixed-best -> deployment gains a
 tiered fallback (kind-trusted replay -> strong-bucket-trusted best skill ->
 cold) so uncovered cases hold parity instead of bleeding pairs.
@@ -83,6 +86,12 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   {I-01,I-02,I-04,I-06,I-07,I-08,II-13} TEST {II-15,II-17,II-19}; eval
   seeds 81-88; both modes. Mixes a known-range case, a cracked floor, and
   a near-floor.
+- Dev round 8 (registered 2026-06-11, code 5928fcb round-12: tiered
+  fallback + gen exploration): dev-7's split, fresh seeds 101-108. Three
+  runs: (a) gen STABLE --rounds 5 --stable-rounds 2 (operator 5-round
+  hypothesis, now mechanistically meaningful); (b) 4-arm
+  verify_beats_baselines gen --rounds 5; (c) 4-arm refine --rounds 3.
+  First direct measurement of the fixed-best bar.
 - Dev round 7 (registered 2026-06-11, code 764bcb0 round-10 stability
   fixes): SAME split as dev-6, fresh seeds 91-98, both modes -- the direct
   A/B for replay-first + sticky margin + instruction-keeping dedupe

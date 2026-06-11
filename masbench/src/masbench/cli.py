@@ -21,6 +21,10 @@ from masbench.evolve import (
 
 
 def _adapter(benchmark: str, benchmarks_dir: str) -> SiloBenchAdapter:
+    if benchmark == "jssp":
+        from masbench.adapters.jssp_bench import JSSPBenchAdapter
+
+        return JSSPBenchAdapter(benchmarks_dir)
     if benchmark != "silo_bench":
         raise SystemExit(f"unknown benchmark '{benchmark}' (Plan 1 supports silo_bench)")
     return SiloBenchAdapter(benchmarks_dir)

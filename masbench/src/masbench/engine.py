@@ -35,6 +35,20 @@ from masbench.core.task_bridge import BenchmarkTaskAdapter, canonical_answer
 from masbench.llm.fake import BenchmarkFakeLLMClient
 
 
+def _protocol_adapter(instance: BenchmarkInstance):
+    """Protocol adapter for one instance: JSSP instances get the JSSP adapter.
+
+    Default stays :class:`SiloProtocolAdapter` (silo behavior unchanged); only
+    ``benchmark == "jssp"`` routes to :class:`JSSPProtocolAdapter`. Imported
+    lazily so the silo-only path is byte-identical to before.
+    """
+    if instance.benchmark == "jssp":
+        from masbench.adapters.jssp_protocol import JSSPProtocolAdapter
+
+        return JSSPProtocolAdapter(instance)
+    return SiloProtocolAdapter(instance)
+
+
 def _build_llm_client(cfg: RunConfig) -> LLMClient:
     if cfg.llm_provider == "fake":
         # The fake client is instant and deterministic; no timeout guard needed.
@@ -89,6 +103,15 @@ def _partial_score(final_answer: Any, global_task: dict) -> float:
     fills ``ScoreResult.partial`` with the graded value. ``final_answer`` may be a
     live value or a canonical-key string; ``silo_partial_score`` coerces either.
     """
+    # Benchmark-routed scoring: the silo scorer is meaningless for a JSSP
+    # schedule (real-LLM smoke: a VALID makespan-7 schedule scored partial 0.0
+    # through the hardwired silo path). Default stays silo, byte-identical.
+    if global_task.get("benchmark") == "jssp":
+        from masbench.adapters.jssp_protocol import (
+            score_protocol_answer as jssp_score,
+        )
+
+        return float(jssp_score(final_answer, global_task)["partial"])
     return float(score_protocol_answer(final_answer, global_task)["partial"])
 
 
@@ -216,7 +239,7 @@ def run_fixed_protocol(
     apples-to-apples (one runner, one scorer) while letting the fixed arm sweep
     the same named topologies the planner can pick.
     """
-    task_adapter = SiloProtocolAdapter(instance)
+    task_adapter = _protocol_adapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
     client = llm_client or _build_llm_client(cfg)
@@ -275,7 +298,7 @@ def _run_planner(
     accumulated motif evidence that activates the structural-motif credit prior
     when ranking generated candidates (see ``_plan_graph_generate``).
     """
-    task_adapter = SiloProtocolAdapter(instance)
+    task_adapter = _protocol_adapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
     client = llm_client or _build_llm_client(cfg)
@@ -516,7 +539,7 @@ def run_instance(
         # belief model matches the protocol one, so the Silo protocol adapter's
         # extract_protocol_answer reads each agent's answer the same way.
         success, partial, per_agent_correct = _score_segmented(
-            result, instance, SiloProtocolAdapter(instance), global_task
+            result, instance, _protocol_adapter(instance), global_task
         )
         extra["segmented"] = True
         extra["per_agent_correct"] = per_agent_correct
