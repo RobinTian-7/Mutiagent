@@ -1,0 +1,12 @@
+{
+  "case_id": "ORD-50",
+  "case_name": "Boundary Join",
+  "paradigm": "Paradigm II",
+  "metadata": {"num_agents": 2, "output_type": "distributed", "is_segmented": false,
+               "theoretical_complexity": "O(N) - sequential"},
+  "task_description": "Count adjacent equal pairs across the whole array, including pairs spanning agent boundaries. Agent Ordering: agents hold CONSECUTIVE segments: 0 -> 1. You are Agent {agent_id} (Position {agent_id}) and hold: {input_shard}",
+  "agent_configs": [
+    {"agent_id": 0, "input_shard": [1, 2, 2], "expected_output": 2},
+    {"agent_id": 1, "input_shard": [2, 5, 5], "expected_output": 2}
+  ]
+}

@@ -78,6 +78,13 @@ from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.engine import _build_llm_client, _plan_graph_generate
+from masbench.task_features import instance_feature_key
+from masbench.transfer import (
+    deployment_view,
+    inject_transfer_evidence,
+    namespace_motif_keys,
+    snapshot_transfer_evidence,
+)
 
 # Task family the Silo planner/evolution operate in. The ResultAnalyst minister
 # accepts a ``task_family`` argument and stamps every emitted skill card, its
@@ -182,19 +189,36 @@ def _run_one(
         n_agents=n_agents,
         objective=objective,
     )
+    # M1: the case's task-feature bucket (from the statement text only). Rows
+    # carry it so the transfer ledger can attribute success per bucket, and
+    # deployment is gated on it below.
+    feature_bucket = instance_feature_key(instance)
+    transfer_mode = (
+        os.environ.get("MASBENCH_TRANSFER_GATE", "").strip()
+        or getattr(cfg, "transfer_gate", "feature")
+        or "feature"
+    ).lower()
+    abstained = False
     _planner_extra: dict[str, Any] = {}
     if cfg.planner_mode == "graph_generate":
         # Self-design evidence: GENERATE a DAG (cold, diverse via candidates) so the
         # minister + motif loop learn from real generated structures, not topology
         # picks. skill_bank is the fresh per-row bank; the motif prior is OFF here
         # (we are MEASURING which structures win, not yet biasing toward them).
+        # M1 transfer gate: only skills with measured success in THIS case's
+        # feature bucket may seed replay candidates; nothing trusted -> the
+        # exact cold path (empty bank, no motif prior) -- do no harm on
+        # representationally-uncovered cases.
+        view_bank, view_motif, abstained = deployment_view(
+            skill_bank, motif_stats, feature_bucket, mode=transfer_mode
+        )
         plan, _planner_extra = _plan_graph_generate(
             cfg,
             n_agents=n_agents,
             task_adapter=task_adapter,
             client=llm_client,
-            skill_bank=skill_bank,
-            motif_stats=motif_stats,
+            skill_bank=view_bank,
+            motif_stats=view_motif,
         )
     else:
         plan = EmperorPlanner(skill_bank).plan(request)
@@ -226,6 +250,7 @@ def _run_one(
     row["case_id"] = instance.case_id
     row["seed"] = seed
     row["task_family"] = SILO_TASK_FAMILY
+    row["task_features_key"] = feature_bucket
     # A2: carry the executed schedule so minister skills can store it
     # (organization_policy.protocol_spec) and the refine eval can replay it.
     row["protocol_spec"] = _executed_spec(plan, n_agents)
@@ -233,7 +258,14 @@ def _run_one(
         # Structural-motif evidence so the motif-credit loop can learn which
         # GENERATED structures (fan-in, depth, sink pattern) correlate with low
         # loss. Lower-is-better loss; offline this is topology-invariant.
-        row["motif_keys"] = spec_motif_keys(plan.protocol_spec)
+        # M1: motif keys are bucket-namespaced so structural credit earned on
+        # one task paradigm cannot bias generation on another.
+        raw_motif_keys = spec_motif_keys(plan.protocol_spec)
+        row["motif_keys"] = (
+            namespace_motif_keys(raw_motif_keys, feature_bucket)
+            if transfer_mode != "off"
+            else raw_motif_keys
+        )
         row["mean_primary_loss"] = 1.0 - float(row.get("ExactMatchRate", 0.0))
     if diag.enabled():
         record: dict[str, Any] = {
@@ -244,6 +276,8 @@ def _run_one(
             "evolved_mode": cfg.evolved_mode,
             "n_agents": n_agents,
             "bank_size": len(skill_bank),
+            "transfer_bucket": feature_bucket,
+            "transfer_abstained": abstained,
             "topology": row.get("Topology"),
             "exact_match": row.get("ExactMatchRate"),
             "messages": row.get("MeanTotalMessages"),
@@ -268,6 +302,177 @@ def _run_one(
     return row
 
 
+def _run_fixed_one(
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    *,
+    topology: str,
+    seed: int,
+    llm_client: LLMClient,
+    diag_phase: str = "",
+) -> dict[str, Any]:
+    """Run one instance on a FIXED named topology (no planner).
+
+    M3 portfolio evidence: the objective-variant detour only ever measures the
+    planner-default topologies (peer-exponential/tree/mesh-star -- all
+    aggregation organizations), so the minister could never learn a champion
+    for sequential tasks. This measures explicitly-named portfolio topologies
+    (e.g. ``chain``) on the same train grid so order-sensitive evidence exists
+    when train contains level-II cases.
+    """
+    task_adapter = SiloProtocolAdapter(instance)
+    global_task = task_adapter.build_global_task()
+    n_agents = cfg.n_agents or instance.n_agents
+    config = ProtocolRunnerConfig(
+        topology_name=topology,
+        n_agents=n_agents,
+        seed=seed,
+        merge_mode=cfg.merge_mode,
+        init_mode=cfg.init_mode,
+        llm_provider=cfg.llm_provider,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+    )
+    result = ProtocolRunner(
+        config=config,
+        task_adapter=task_adapter,
+        global_task=global_task,
+        llm_client=llm_client,
+    ).run()
+    summary = result.to_summary_dict()
+    row = summary_to_aggregate_row(summary)
+    row["case_id"] = instance.case_id
+    row["seed"] = seed
+    row["task_family"] = SILO_TASK_FAMILY
+    row["task_features_key"] = instance_feature_key(instance)
+    try:
+        steps = build_protocol_schedule(topology, n_agents)
+    except Exception:
+        steps = []
+    if steps:
+        last_receivers = {dst for _, dst in steps[-1].transmissions}
+        metadata: dict[str, Any] = {
+            "source": "named_topology",
+            "graph_type": "temporal_dag",
+        }
+        if len(last_receivers) == 1:
+            metadata["selected_primary"] = last_receivers.pop()
+        row["protocol_spec"] = ProtocolGraphSpec(
+            name=topology,
+            n_agents=n_agents,
+            steps=[
+                ProtocolStepSpec(
+                    transmissions=step.transmissions,
+                    description=step.description,
+                    operator="replay",
+                )
+                for step in steps
+            ],
+            metadata=metadata,
+        ).model_dump(mode="json")
+    if diag.enabled():
+        diag.dump_eval_run(
+            {
+                "case_id": instance.case_id,
+                "seed": seed,
+                "phase": diag_phase,
+                "planner_mode": f"fixed:{topology}",
+                "evolved_mode": cfg.evolved_mode,
+                "n_agents": n_agents,
+                "bank_size": 0,
+                "transfer_bucket": row["task_features_key"],
+                "topology": row.get("Topology"),
+                "exact_match": row.get("ExactMatchRate"),
+                "messages": row.get("MeanTotalMessages"),
+                "model_calls": row.get("MeanTotalModelCalls"),
+                "tokens": row.get("MeanTokenCost"),
+                "spec": row.get("protocol_spec"),
+            }
+        )
+    return row
+
+
+def _portfolio_topologies(cfg: RunConfig) -> list[str]:
+    raw = (
+        os.environ.get("MASBENCH_EVIDENCE_PORTFOLIO")
+        if os.environ.get("MASBENCH_EVIDENCE_PORTFOLIO") is not None
+        else getattr(cfg, "evidence_portfolio", "chain")
+    )
+    return [item.strip() for item in str(raw or "").split(",") if item.strip()]
+
+
+def _collect_portfolio_rows(
+    instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    topologies: list[str],
+    seeds: list[int],
+    llm_client: LLMClient,
+    workers: int = 1,
+    progress: bool = False,
+    phase: str = "",
+) -> list[dict[str, Any]]:
+    """Fixed-topology evidence rows (bank-independent -> cacheable)."""
+    tasks = [
+        (inst, topology, seed)
+        for inst in instances
+        for topology in topologies
+        for seed in (seeds or [0])
+    ]
+    if not tasks:
+        return []
+    results: list[dict[str, Any] | None] = [None] * len(tasks)
+    prog = _EvolveProgress(phase, len(tasks)) if progress else None
+    cache = open_cache()
+
+    def _do(index: int) -> tuple[int, dict[str, Any] | None]:
+        inst, topology, seed = tasks[index]
+        cache_key = (
+            EvidenceCache.key(
+                case_id=inst.case_id, n_agents=cfg.n_agents or inst.n_agents,
+                planner_mode=f"fixed:{topology}", objective=cfg.objective,
+                seed=seed, cfg=cfg,
+            )
+            if cache is not None
+            else None
+        )
+        if cache is not None and cache_key is not None:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return index, cached
+        try:
+            row = _run_fixed_one(
+                inst, cfg, topology=topology, seed=seed, llm_client=llm_client,
+                diag_phase=f"evidence:{phase}" if phase else "evidence",
+            )
+            if cache is not None and cache_key is not None:
+                cache.put(cache_key, row)
+            return index, row
+        except Exception as exc:  # noqa: BLE001 - one bad run must not abort evolution
+            print(
+                f"  [evolve {phase}] portfolio {topology} run FAILED:"
+                f" {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return index, None
+
+    if workers and workers > 1 and len(tasks) > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as executor:
+            futures = [executor.submit(_do, i) for i in range(len(tasks))]
+            for future in as_completed(futures):
+                index, row = future.result()
+                results[index] = row
+                if prog is not None:
+                    prog.tick(ok=row is not None)
+    else:
+        for i in range(len(tasks)):
+            index, row = _do(i)
+            results[index] = row
+            if prog is not None:
+                prog.tick(ok=row is not None)
+    return [row for row in results if row is not None]
+
+
 def _generation_gate(
     val_instances: list[BenchmarkInstance],
     cfg: RunConfig,
@@ -278,6 +483,7 @@ def _generation_gate(
     motif_stats: dict[str, dict] | None,
     epsilon: float,
     objective: ObjectiveSpec,
+    incumbent_bank: SkillBank | None = None,
 ) -> dict[str, Any]:
     """C: accept the learned state only if it improves held-out GENERATION.
 
@@ -337,14 +543,25 @@ def _generation_gate(
                 losses.append(loss)
         return sum(losses) / len(losses) if losses else 1.0
 
-    j_before = _mean_loss(SkillBank(), None, "gate:before")
+    # M2 ratchet: when this round inherited a bank, the bar is the INCUMBENT
+    # state's held-out generation loss, not the empty-bank cold loss -- a
+    # round update must beat what we would deploy by rejecting it. (Round 1
+    # has no incumbent, so the bar stays the cold loss, as before.) The
+    # incumbent is measured without the motif prior (the prior is merged
+    # outside run_evolution); documented approximation.
+    if incumbent_bank is not None and len(incumbent_bank) > 0:
+        j_before = _mean_loss(incumbent_bank, None, "gate:incumbent")
+        gate_mode_label = "generation_ratchet"
+    else:
+        j_before = _mean_loss(SkillBank(), None, "gate:before")
+        gate_mode_label = "generation"
     j_after = _mean_loss(evolved_bank, motif_stats, "gate:after")
     return {
         "accepted": bool(j_after <= j_before + epsilon),
         "j_before": j_before,
         "j_after": j_after,
         "epsilon": epsilon,
-        "mode": "generation",
+        "mode": gate_mode_label,
     }
 
 
@@ -757,6 +974,24 @@ def run_evolution(
         progress=progress,
         phase=f"n={cfg.n_agents} train",
     )
+    # M3 portfolio: explicitly-named topologies the objective-variant detour
+    # never measures (chain by default), so sequential-paradigm champions can
+    # be learned when train contains order-sensitive cases.
+    portfolio = _portfolio_topologies(cfg)
+    n_portfolio_rows = 0
+    if portfolio:
+        portfolio_rows = _collect_portfolio_rows(
+            train_instances,
+            cfg,
+            topologies=portfolio,
+            seeds=train_seeds,
+            llm_client=client,
+            workers=workers,
+            progress=progress,
+            phase=f"n={cfg.n_agents} portfolio",
+        )
+        n_portfolio_rows = len(portfolio_rows)
+        train_rows = [*train_rows, *portfolio_rows]
     # Phase-2 anti-saturation EXPLORATION: in refine mode, also generate
     # designs WITH the current bank (the deployed path) so self-generated
     # organizations enter the minister with executable specs and can join the
@@ -833,6 +1068,23 @@ def run_evolution(
         if needs_val_rows
         else []
     )
+    if needs_val_rows and portfolio:
+        # The selection gate scores the planner's pick on val rows; a portfolio
+        # topology the minister advertises must be MEASURED there too, or the
+        # unmeasured-topology penalty auto-rejects every batch containing it.
+        val_rows_real = [
+            *val_rows_real,
+            *_collect_portfolio_rows(
+                val_instances,
+                cfg,
+                topologies=portfolio,
+                seeds=val_seeds,
+                llm_client=client,
+                workers=workers,
+                progress=progress,
+                phase=f"n={cfg.n_agents} val portfolio",
+            ),
+        ]
 
     # Held-out validation rows the gate scores against: real Silo VAL rows plus
     # any caller-supplied synthetic multi-topology rows (see module docstring).
@@ -857,6 +1109,17 @@ def run_evolution(
         os.environ.get("MASBENCH_GATE_MODE", "").strip() or cfg.gate_mode or "auto"
     ).lower()
     pre_skills = [skill.model_dump(mode="json") for skill in skill_bank]
+    # M1: the inherited per-bucket ledgers, snapshotted BEFORE patches (merge
+    # patches overwrite organization_policy keys; accumulation happens at
+    # inject time). M2: the incumbent the ratchet gate must beat is the bank
+    # INHERITED from the previous round (initial_skills) -- not the synthetic
+    # seeded incumbent, which exists only for selection-gate measurement.
+    pre_transfer_ledgers = snapshot_transfer_evidence(skill_bank)
+    incumbent_bank = (
+        SkillBank(skills=[SkillCard.model_validate(s) for s in initial_skills])
+        if initial_skills
+        else None
+    )
 
     # ONE gate per deployed objective: modes that GENERATE at eval are vetted by
     # the held-out GENERATION gate below; gating their patch application on
@@ -886,6 +1149,10 @@ def run_evolution(
         n_insight_patches = _llm_insight_patches(
             train_rows, val_rows, skill_bank, cfg, client, batch_id
         )
+    # M1: per-(skill, feature-bucket) success ledger -- combines this round's
+    # measured rows with the inherited ledger so deployment trust accumulates
+    # across rounds instead of resetting.
+    inject_transfer_evidence(skill_bank, train_rows, prior=pre_transfer_ledgers)
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now
@@ -933,7 +1200,7 @@ def run_evolution(
             val_instances, replace(cfg, planner_mode="graph_generate"),
             val_seeds=val_seeds, llm_client=client,
             evolved_bank=skill_bank, motif_stats=motif_stats, epsilon=epsilon,
-            objective=objective,
+            objective=objective, incumbent_bank=incumbent_bank,
         )
     else:
         gate_info = selection_gate
@@ -972,6 +1239,7 @@ def run_evolution(
         "n_patches": len(patches),
         "n_insight_patches": n_insight_patches,
         "n_explore_rows": n_explore_rows,
+        "n_portfolio_rows": n_portfolio_rows,
         "gate": gate_info,
         "gate_mode": gate_mode,
         "selection_gate": selection_gate,
@@ -1028,9 +1296,12 @@ def _selection_probe(
 # and does not depend on which of the three the gate's planner happens to pick.
 INCUMBENT_BASELINE_TOPOLOGY = "incumbent_baseline"
 
-# The three topologies the ResultAnalyst minister advertises from runs across the
-# default objective variants (accuracy_first/budget_first/balanced).
-_TRAIN_TOPOLOGIES = ("one_peer_exponential_dag_star", "tree", "mesh_star")
+# The topologies the ResultAnalyst minister advertises from runs across the
+# default objective variants (accuracy_first/budget_first/balanced) plus the
+# M3 evidence portfolio (chain). Synthetic held-out rows must cover ALL of
+# them so the gate's planner choice is decided by the incumbent-vs-train
+# contrast, not by an unmeasured-topology penalty on a portfolio skill.
+_TRAIN_TOPOLOGIES = ("one_peer_exponential_dag_star", "tree", "mesh_star", "chain")
 
 
 def accepting_held_out_rows() -> list[dict[str, Any]]:

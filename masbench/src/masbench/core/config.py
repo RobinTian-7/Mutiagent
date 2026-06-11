@@ -45,6 +45,17 @@ class RunConfig:
     # Exploration sets this hot (0.7) so successive rounds propose DIFFERENT
     # designs at deterministic protocol execution; deployment stays cold.
     graph_gen_temperature: float | None = None
+    # Phase-3 M1: evidence-conditioned transfer gate on deployment. "feature"
+    # (default): a skill's executable spec is replayable on a case only when
+    # the skill's ledger shows measured success in the case's task-feature
+    # bucket; nothing trusted -> the exact cold path (empty bank, no motif).
+    # "off": phase-2 behavior (case-blind replay). Env override:
+    # MASBENCH_TRANSFER_GATE (lets frozen verify scripts run the ablation).
+    transfer_gate: str = "feature"
+    # Phase-3 M3: comma-separated named topologies measured as EXTRA evidence
+    # each round (the objective-variant detour only measures aggregation
+    # defaults). "" disables. Env override: MASBENCH_EVIDENCE_PORTFOLIO.
+    evidence_portfolio: str = "chain"
     # Held-out acceptance gate for run_evolution. ``auto`` (default): gate on the
     # DEPLOYED objective -- generation loss when the evolved state will generate
     # at eval (graph_generate / select_then_refine), topology-selection J
