@@ -92,6 +92,7 @@ from masbench.transfer import (
     namespace_motif_keys,
     skill_trusted_for,
     snapshot_transfer_evidence,
+    stamp_rule_actions,
 )
 
 # Task family the Silo planner/evolution operate in. The ResultAnalyst minister
@@ -1348,6 +1349,8 @@ def run_evolution(
     # M11/M13c: same-structure cards merge into one family member so trust
     # evidence accumulates per STRUCTURE and the bank stops growing linearly.
     n_merged_duplicates = merge_structural_duplicates(skill_bank)
+    # M13: explicit Preserve/Modify/Avoid design-rule action on every card.
+    stamp_rule_actions(skill_bank)
     # M10: for train cases whose bucket#slot has NO trusted skill, search a
     # verified recipe (structure + per-step instructions) against the train
     # signal; verified recipes enter the bank trusted (their ledger rows are

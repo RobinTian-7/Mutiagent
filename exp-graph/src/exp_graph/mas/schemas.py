@@ -166,6 +166,15 @@ class MASRuntimeConfig(BaseModel):
     # candidate, from the task brief + the proven structure). Default False
     # -> generation byte-identical.
     replay_instruction_rewrite: bool = False
+    # Round-10 deployment stability. replay_first: when any valid SEEDED
+    # (skill-replay) candidate exists, fresh generations do not compete for
+    # selection -- per-run plan variance collapses to the deterministic
+    # retrieval order. motif_displacement_margin: the motif prior may only
+    # displace the incumbent first-ranked candidate when its predicted loss
+    # is better by MORE than this margin (near-ties stop reshuffling between
+    # rounds). Defaults preserve historical behavior exactly.
+    replay_first: bool = False
+    motif_displacement_margin: float = 0.0
     role_llm_profiles: RoleLLMProfiles | None = None
     role_llm_config_path: str | None = None
 

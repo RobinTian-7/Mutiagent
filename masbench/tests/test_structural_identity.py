@@ -104,3 +104,25 @@ def test_merge_structural_duplicates_keeps_veteran_and_combines():
     assert merged["os"] == {"n": 5, "em_sum": 4.0}
     assert veteran.organization_policy["absorbed_skill_ids"] == ["new"]
     assert skill_identity(veteran) == spec_struct_hash(_SPEC)
+
+
+def test_rule_actions_stamped():
+    from masbench.transfer import stamp_rule_actions
+    from exp_graph.mas.schemas import SkillCard
+
+    avoid = SkillCard(
+        skill_id="cf_avoid_x", objective="balanced", task_family="silo",
+        trigger={"task_family": "silo"}, organization_policy={"topology_name": "x"},
+        tags=["counterexample"],
+    )
+    spec_card = _skill("s_spec", "t", _spec("t"))
+    prose = SkillCard(
+        skill_id="prose", objective="balanced", task_family="silo",
+        trigger={"task_family": "silo"}, organization_policy={"topology_name": "y"},
+        tags=["mas"],
+    )
+    bank = SkillBank(skills=[avoid, spec_card, prose])
+    stamp_rule_actions(bank)
+    assert avoid.organization_policy["rule_action"] == "avoid"
+    assert spec_card.organization_policy["rule_action"] == "preserve"
+    assert prose.organization_policy["rule_action"] == "context"

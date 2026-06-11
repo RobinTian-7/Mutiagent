@@ -410,6 +410,11 @@ def _plan_graph_generate(
         motif_uncertainty_kappa=getattr(cfg, "motif_uncertainty_kappa", 0.0),
         # M9: adapt replayed structures' per-step role guidance to THIS task.
         replay_instruction_rewrite=_replay_rewrite_enabled(cfg),
+        # Round-10 deployment stability: trusted replays out-compete fresh
+        # same-run generations; motif prior displaces the deterministic head
+        # only with a real predicted-loss margin.
+        replay_first=bool(getattr(cfg, "replay_first", False)),
+        motif_displacement_margin=float(getattr(cfg, "motif_displacement_margin", 0.0)),
         # D2: reject/repair generated DAGs whose sink isn't reachable from ALL
         # agents (the lossy-reduction failure mode that made generation lose).
         graph_require_full_sink_coverage=True,

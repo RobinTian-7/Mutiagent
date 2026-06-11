@@ -60,6 +60,10 @@ class RunConfig:
     # MASRuntimeConfig.motif_uncertainty_kappa). A 1-run lucky motif cannot
     # outrank a measured veteran. 0.0 = phase-2 behavior.
     motif_uncertainty_kappa: float = 0.5
+    # Round-10 deployment stability (dev-6 r3 reshuffle): replay-first
+    # selection + sticky motif displacement margin.
+    replay_first: bool = True
+    motif_displacement_margin: float = 0.1
     # Phase-3 M10: run budget (protocol executions per evolution round) for
     # train-time VERIFIED recipe search on unanchored bucket#slots. 0 = off.
     # Env: MASBENCH_RECIPE_BUDGET.

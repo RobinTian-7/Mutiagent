@@ -667,19 +667,26 @@ def _rewrite_replay_instructions(
             n_steps=len(graph.steps),
             structure=structure,
         )
-        try:
-            response = client.complete(
-                prompt,
-                model_name=emperor_llm.model_name,
-                temperature=emperor_llm.temperature,
-            )
-            raw = (getattr(response, "text", "") or "").strip()
-            start, end = raw.find("{"), raw.rfind("}")
-            data = json.loads(raw[start:end + 1]) if 0 <= start < end else {}
-            instructions = data.get("instructions")
-            if not isinstance(instructions, list):
-                continue
-        except Exception:
+        instructions = None
+        # One retry: silent parse failures left replays instruction-less in
+        # whole dev rounds (instr=0/8 on every deployed row).
+        for _ in range(2):
+            try:
+                response = client.complete(
+                    prompt,
+                    model_name=emperor_llm.model_name,
+                    temperature=emperor_llm.temperature,
+                )
+                raw = (getattr(response, "text", "") or "").strip()
+                start, end = raw.find("{"), raw.rfind("}")
+                data = json.loads(raw[start:end + 1]) if 0 <= start < end else {}
+                candidate = data.get("instructions")
+                if isinstance(candidate, list) and candidate:
+                    instructions = candidate
+                    break
+            except Exception:
+                instructions = None
+        if instructions is None:
             continue
         for step, instruction in zip(graph.steps, instructions):
             text = str(instruction).strip()
@@ -900,9 +907,21 @@ def _dedupe_equivalent_candidates(
     return representatives
 
 
-def _candidate_dedup_sort_key(state: _CandidateState) -> tuple[int, int, int, str, int]:
+def _candidate_dedup_sort_key(state: _CandidateState) -> tuple[int, int, int, int, str, int]:
+    # Equivalence hashing is structural (correctly ignores per-step
+    # instructions), so an instruction-bearing replay and a bare structural
+    # twin collapse into one group; the representative must keep the richer
+    # design artifact or learned role guidance silently evaporates (phase-3
+    # dev-6: a verified recipe deployed with instr stripped because the bare
+    # twin's candidate_id sorted first). Instruction-less candidates (all of
+    # CF) tie at 0 -> ordering byte-identical there.
+    has_instructions = bool(
+        state.spec is not None
+        and any((step.instruction or "").strip() for step in state.spec.steps)
+    )
     return (
         0 if state.record.status == "valid" else 1,
+        0 if has_instructions else 1,
         state.record.protocol_messages,
         state.record.protocol_steps,
         state.record.candidate_id,
@@ -938,6 +957,17 @@ def _select_candidate(
     sentinel and therefore never displace a candidate with real motif evidence;
     if *no* candidate has a known motif (all +inf), the order is unchanged.
     """
+    # Round-10 replay-first: seeded replays carry measured trust; when any
+    # exist, fresh same-run generations stop competing (their per-run variance
+    # was reshuffling deployments between rounds; phase-3 dev-6 r3 lost r2's
+    # +20.8pp winner to exactly this). Default off.
+    if runtime.replay_first:
+        seeded_states = [
+            state for state in valid_states
+            if str(state.record.candidate_id).startswith("skill_")
+        ]
+        if seeded_states:
+            valid_states = seeded_states
     if not runtime.use_motif_prior or not runtime.motif_stats:
         return valid_states[0]
     motif_stats = runtime.motif_stats
@@ -955,7 +985,17 @@ def _select_candidate(
         # probe-sorted / generation order on equal (or +inf) motif scores.
         scored.append((predicted, rank, state))
     scored.sort(key=lambda item: (item[0], item[1]))
-    return scored[0][2]
+    best = scored[0]
+    if runtime.motif_displacement_margin > 0.0 and best[2] is not valid_states[0]:
+        incumbent_predicted = next(
+            pred for pred, rank, state in scored if state is valid_states[0]
+        )
+        # Sticky incumbent: a challenger must beat the head of the
+        # deterministic order by a real margin, not a hair (near-tie
+        # reshuffles between rounds were the dev-6 r3 failure mode).
+        if not (best[0] < incumbent_predicted - runtime.motif_displacement_margin):
+            return valid_states[0]
+    return best[2]
 
 
 def _evaluate_candidates(

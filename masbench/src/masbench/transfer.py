@@ -211,6 +211,28 @@ def merge_structural_duplicates(bank: SkillBank) -> int:
     return removed
 
 
+def stamp_rule_actions(bank: SkillBank) -> None:
+    """M13: make the design-rule ACTION explicit on every card.
+
+    Paper vocabulary (operator thesis): each rule carries Preserve / Modify
+    / Avoid. Avoid cards -> "avoid"; executable-spec cards -> "preserve"
+    (deployment may upgrade to Modify by rewriting per-step instructions for
+    the live task -- M9); prose-only cards -> "context".
+    """
+    for skill in bank:
+        policy = skill.organization_policy
+        if policy is None:
+            continue
+        if is_avoid_skill(skill):
+            policy["rule_action"] = "avoid"
+        elif isinstance(policy.get("protocol_spec"), dict) and (
+            policy["protocol_spec"] or {}
+        ).get("steps"):
+            policy["rule_action"] = "preserve"
+        else:
+            policy["rule_action"] = "context"
+
+
 def snapshot_transfer_evidence(
     bank: SkillBank,
 ) -> dict[str, dict[str, dict[str, float]]]:
