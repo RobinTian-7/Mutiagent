@@ -94,7 +94,7 @@ def test_inject_combines_with_prior_across_rounds():
 def test_deployment_view_abstains_to_exact_cold_inputs():
     bank = SkillBank(skills=[_skill("s", "tree", {"of": {"n": 4, "em_sum": 4.0}})])
     motif = {"of|fan_in:2": {"mean_loss": 0.1, "n": 4}}
-    view, vmotif, abstained = deployment_view(bank, motif, "os")
+    view, vmotif, abstained, _tier = deployment_view(bank, motif, "os")
     assert abstained is True
     assert len(view) == 0
     assert vmotif is None
@@ -108,7 +108,7 @@ def test_deployment_view_keeps_only_trusted_and_projects_motif():
         "os|fan_in:2": {"mean_loss": 0.1, "n": 4},
         "of|fan_in:9": {"mean_loss": 0.9, "n": 2},
     }
-    view, vmotif, abstained = deployment_view(bank, motif, "os")
+    view, vmotif, abstained, _tier = deployment_view(bank, motif, "os")
     assert abstained is False
     assert [s.skill_id for s in view] == ["ok"]
     assert vmotif == {"fan_in:2": {"mean_loss": 0.1, "n": 4}}
@@ -117,7 +117,7 @@ def test_deployment_view_keeps_only_trusted_and_projects_motif():
 def test_deployment_view_off_mode_passthrough():
     bank = SkillBank(skills=[_skill("s", "tree", {"of": {"n": 1, "em_sum": 1.0}})])
     motif = {"raw_key": {"mean_loss": 0.5, "n": 1}}
-    view, vmotif, abstained = deployment_view(bank, motif, "os", mode="off")
+    view, vmotif, abstained, _tier = deployment_view(bank, motif, "os", mode="off")
     assert abstained is False
     assert view is bank
     assert vmotif is motif
@@ -130,3 +130,50 @@ def test_motif_namespacing_roundtrip():
     assert motif_view(stats, "os") == {"a": {"mean_loss": 0.0, "n": 1}}
     assert motif_view(stats, "os-seg") is None  # nothing for the bucket
     assert motif_view(None, "os") is None
+
+
+def test_fallback_tier_deploys_bucket_generalist_before_cold():
+    """Operator bar raise: vs fixed-best, abstention bleeds pairs. With no
+    slot-trusted skill, a broad-uniform bucket generalist (M8 breadth)
+    deploys at tier 'bucket'; with nothing trusted at all, tier 'cold'."""
+    generalist = _skill("gen", "tree", {
+        "of": {"n": 6, "em_sum": 5.0},
+        "of#lossy": {"n": 3, "em_sum": 3.0},
+        "of#lossless": {"n": 3, "em_sum": 2.0},
+    })
+    narrow = _skill("narrow", "mesh_star", {
+        "of": {"n": 2, "em_sum": 2.0},
+        "of#lossy": {"n": 2, "em_sum": 2.0},
+    })
+    bank = SkillBank(skills=[generalist, narrow])
+    # 'lossless' slot: narrow has no direct evidence; generalist has breadth.
+    view, _, abstained, tier = deployment_view(
+        bank, None, "of", kind="lossless", fallback_tier=True,
+    )
+    # generalist qualifies DIRECTLY (its lossless slot passes); narrow only
+    # via... nothing. Force the bucket tier by asking an os case instead:
+    assert abstained is False and tier == "kind"
+    view, _, abstained, tier = deployment_view(
+        bank, None, "os", kind="lossless", fallback_tier=True,
+    )
+    assert abstained is True and tier == "cold"  # no os evidence at all
+    # Remove direct lossless evidence -> generalist reachable only via breadth.
+    g2 = _skill("g2", "tree", {
+        "of": {"n": 6, "em_sum": 5.0},
+        "of#lossy": {"n": 3, "em_sum": 3.0},
+        "of#lossless": {"n": 3, "em_sum": 2.0},
+    })
+    n2 = _skill("n2", "mesh_star", {
+        "of": {"n": 2, "em_sum": 2.0},
+        "of#lossy": {"n": 2, "em_sum": 2.0},
+    })
+    bank2 = SkillBank(skills=[n2])
+    view, _, abstained, tier = deployment_view(
+        bank2, None, "of", kind="lossless", fallback_tier=True,
+    )
+    assert abstained is True and tier == "cold"  # narrow-only: no fallback
+    bank3 = SkillBank(skills=[n2, g2])
+    view, _, abstained, tier = deployment_view(
+        bank3, None, "of", kind="lossless", fallback_tier=False,
+    )
+    assert tier == "kind" and [s.skill_id for s in view] == ["g2"]

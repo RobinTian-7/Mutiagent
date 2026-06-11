@@ -64,6 +64,10 @@ class RunConfig:
     # selection + sticky motif displacement margin.
     replay_first: bool = True
     motif_displacement_margin: float = 0.1
+    # Operator bar raise (vs fixed-best, abstention bleeds pairs): when a
+    # case's slot has no trusted skill, deploy a broad-uniform bucket
+    # generalist (M8 breadth) before going cold. Env: MASBENCH_FALLBACK_TIER.
+    fallback_tier: bool = True
     # Phase-3 M10: run budget (protocol executions per evolution round) for
     # train-time VERIFIED recipe search on unanchored bucket#slots. 0 = off.
     # Env: MASBENCH_RECIPE_BUDGET.

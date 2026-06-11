@@ -307,23 +307,37 @@ def deployment_view(
     *,
     kind: str | None = None,
     mode: str = "feature",
-) -> tuple[SkillBank, dict[str, dict] | None, bool]:
-    """The per-case (bank, motif, abstained) actually handed to generation.
+    fallback_tier: bool = False,
+) -> tuple[SkillBank, dict[str, dict] | None, bool, str]:
+    """The per-case (bank, motif, abstained, tier) handed to generation.
 
+    Tiers (operator bar raise: vs fixed-best, abstention BLEEDS pairs):
+    ``kind``   -- skills with direct evidence for the case's slot (replay);
+    ``bucket`` -- no slot evidence, but broad-uniform bucket generalists
+                  exist (M8 breadth) and ``fallback_tier`` is on: deploy the
+                  bank's own best general organization instead of going cold
+                  (parity with a strong fixed topology on uncovered cases);
+    ``cold``   -- nothing trusted: EMPTY bank + None motif, byte-equal to
+                  the cold baseline path (abstained=True).
     ``mode="off"`` reproduces phase-2 behavior (full bank, full motif).
-    Abstention returns an EMPTY bank and ``None`` motif -- byte-equal inputs
-    to the cold baseline path.
     """
     if mode == "off" or len(bank) == 0:
-        return bank, motif_stats, False
+        return bank, motif_stats, False, "off"
     trusted = [
         skill for skill in bank
         if not is_avoid_skill(skill) and skill_trusted_for(skill, bucket, kind)
     ]
+    tier = "kind"
+    if not trusted and fallback_tier:
+        trusted = [
+            skill for skill in bank
+            if not is_avoid_skill(skill) and skill_trusted_for(skill, bucket, None)
+        ]
+        tier = "bucket"
     if not trusted:
-        return SkillBank(), None, True
+        return SkillBank(), None, True, "cold"
     view = SkillBank(skills=[skill.model_copy(deep=True) for skill in trusted])
-    return view, motif_view(motif_stats, bucket), False
+    return view, motif_view(motif_stats, bucket), False, tier
 
 
 def namespace_motif_keys(keys: list[str], bucket: str) -> list[str]:

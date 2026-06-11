@@ -142,7 +142,7 @@ def test_deployment_view_slot_aware():
         "of#lossless": {"n": 6, "em_sum": 1.0},
     })
     bank = SkillBank(skills=[contradicted])
-    view, _, abstained = deployment_view(bank, None, "of", kind="lossless")
+    view, _, abstained, _tier = deployment_view(bank, None, "of", kind="lossless")
     assert abstained is True and len(view) == 0
-    view, _, abstained = deployment_view(bank, None, "of", kind="lossy")
+    view, _, abstained, _tier = deployment_view(bank, None, "of", kind="lossy")
     assert abstained is False and len(view) == 1

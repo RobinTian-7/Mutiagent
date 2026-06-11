@@ -219,6 +219,7 @@ def _run_one(
         or "feature"
     ).lower()
     abstained = False
+    transfer_tier = "n/a"
     _planner_extra: dict[str, Any] = {}
     if cfg.planner_mode == "graph_generate":
         # Self-design evidence: GENERATE a DAG (cold, diverse via candidates) so the
@@ -229,9 +230,15 @@ def _run_one(
         # feature bucket may seed replay candidates; nothing trusted -> the
         # exact cold path (empty bank, no motif prior) -- do no harm on
         # representationally-uncovered cases.
-        view_bank, view_motif, abstained = deployment_view(
+        _ft_raw = os.environ.get("MASBENCH_FALLBACK_TIER", "").strip().lower()
+        _ft = (
+            _ft_raw not in {"0", "false", "off"}
+            if _ft_raw
+            else bool(getattr(cfg, "fallback_tier", False))
+        )
+        view_bank, view_motif, abstained, transfer_tier = deployment_view(
             skill_bank, motif_stats, feature_bucket,
-            kind=feature_slot, mode=transfer_mode,
+            kind=feature_slot, mode=transfer_mode, fallback_tier=_ft,
         )
         plan, _planner_extra = _plan_graph_generate(
             cfg,
@@ -306,6 +313,7 @@ def _run_one(
             "transfer_kind": feature_kind,
             "transfer_slot": feature_slot,
             "transfer_abstained": abstained,
+            "transfer_tier": transfer_tier,
             "topology": row.get("Topology"),
             "exact_match": row.get("ExactMatchRate"),
             "messages": row.get("MeanTotalMessages"),
@@ -1194,7 +1202,11 @@ def run_evolution(
     explore_raw = os.environ.get("MASBENCH_EVOLVE_EXPLORE", "").strip()
     explore_n = int(explore_raw) if explore_raw else int(cfg.evolve_explore)
     n_explore_rows = 0
-    if cfg.evolved_mode == "select_then_refine" and explore_n > 0:
+    # Round-12: exploration was refine-only; gen mode's per-round inputs were
+    # therefore STATIC (cold evidence cache-hits every round, recipes only on
+    # unanchored slots) and its rounds-curve provably flat (dev-7: 25.0 x3,
+    # bank 10->10->10). Both generation-deploying modes now explore.
+    if cfg.evolved_mode in ("select_then_refine", "graph_generate") and explore_n > 0:
         explore_cfg = replace(
             cfg, planner_mode="graph_generate", graph_gen_temperature=0.7
         )
