@@ -92,6 +92,10 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   hypothesis, now mechanistically meaningful); (b) 4-arm
   verify_beats_baselines gen --rounds 5; (c) 4-arm refine --rounds 3.
   First direct measurement of the fixed-best bar.
+- Dev round 9 (registered 2026-06-11, code c78be6e round-15: M14
+  Preserve/Modify + M15 gen portfolio parity): dev-8's split, fresh seeds
+  111-118, THREE PARALLEL runs (stable gen 5r; 4-arm gen 5r; 4-arm refine
+  3r). Operator priorities: stable gen evolution; beat fixed-best.
 - Dev round 7 (registered 2026-06-11, code 764bcb0 round-10 stability
   fixes): SAME split as dev-6, fresh seeds 91-98, both modes -- the direct
   A/B for replay-first + sticky margin + instruction-keeping dedupe
