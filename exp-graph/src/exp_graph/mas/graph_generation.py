@@ -972,12 +972,25 @@ def _request_needs_soldier_llm(request: PlannerRequest) -> bool:
 
 
 def _probe_row(result: ProtocolExperimentResult, objective: str) -> dict[str, object]:
+    from exp_graph.mas.objective_metrics import primary_loss
+
     summary = result.to_summary_dict()
+    # CF carries FinalRMSE (already a loss; byte-identical path). Generic
+    # protocol tasks carry PrimaryMetric, which may be HIGHER-is-better (Silo:
+    # success rate) -- bridge it through primary_loss. Stuffing raw success
+    # into mean_rmse made _objective_score's success terms cancel (exact -
+    # "rmse") and probe selection degenerate to cheapest-wins (the P2
+    # bundle-screen regression).
+    if "FinalRMSE" in summary:
+        rmse = float(summary["FinalRMSE"])
+    else:
+        rmse = primary_loss(
+            str(summary.get("PrimaryMetricName", "primary")),
+            float(summary.get("PrimaryMetric", 0.0)),
+        )
     return {
         "objective": objective,
-        # CF carries FinalRMSE; generic protocol tasks (Silo) carry PrimaryMetric.
-        # FinalRMSE first keeps CF byte-identical; PrimaryMetric is the Silo loss.
-        "mean_rmse": float(summary.get("FinalRMSE", summary.get("PrimaryMetric", 0.0))),
+        "mean_rmse": rmse,
         "exact_match_rate": 1.0 if summary.get("FinalExactMatch") else 0.0,
         "mean_messages": float(summary.get("TotalMessages", 0)),
         "mean_model_calls": float(summary.get("TotalModelCalls", 0)),

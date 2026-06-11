@@ -17,6 +17,9 @@ offline tests pin.
 """
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any
 
@@ -28,6 +31,33 @@ from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.core.config import RunConfig
 from masbench.engine import _build_llm_client
 from masbench.evolve import _run_one, evolution_objective_spec, run_evolution
+
+
+class _BoundedLLMClient:
+    """Wrap an LLMClient so at most ``max_inflight`` ``complete`` calls run at once.
+
+    ``--workers`` fans out at several nesting levels (the eval grid, the per-run
+    agent pool inside each ``_run_one``, and probe-eval), and they ALL share one
+    client. Sizing each thread pool independently cannot bound the product;
+    wrapping the *client* does, regardless of how the pools nest. The permit is
+    held only around the call itself -- never while a parent thread waits on its
+    children -- so there is no hold-and-wait deadlock.
+    """
+
+    def __init__(self, inner: LLMClient, max_inflight: int) -> None:
+        self._inner = inner
+        self._gate = threading.BoundedSemaphore(max(1, int(max_inflight)))
+
+    def complete(self, *args, **kwargs):
+        with self._gate:
+            return self._inner.complete(*args, **kwargs)
+
+
+def _bounded(client: LLMClient, workers: int) -> LLMClient:
+    """Cap total concurrent LLM calls at ``workers`` (idempotent, no double-gate)."""
+    if workers <= 1 or isinstance(client, _BoundedLLMClient):
+        return client
+    return _BoundedLLMClient(client, workers)
 
 
 def _split_cases(cases: list[str], holdout_frac: float) -> tuple[list[str], list[str]]:
@@ -54,17 +84,41 @@ def _eval_score(
     objective,
     *,
     generate: bool,
+    workers: int = 1,
 ) -> float:
-    """Mean held-out success of a policy (generate-from-bank, or select)."""
+    """Mean held-out success of a policy (generate-from-bank, or select).
+
+    The (instance, seed) evals are independent -> fan out across ``workers``.
+    """
     ecfg = replace(cfg, planner_mode="graph_generate" if generate else "topology_select")
-    scores: list[float] = []
-    for inst in instances:
-        for seed in seeds:
+    tasks = [(inst, seed) for inst in instances for seed in seeds]
+    if not tasks:
+        return float("nan")
+    # GLOBAL cap: every LLM call this grid makes -- across the outer (instance,
+    # seed) pool AND the agent/probe fan-out inside each _run_one -- shares one
+    # bounded client, so total in-flight never exceeds `workers`.
+    client = _bounded(client, workers)
+
+    def _one(task) -> float:
+        inst, seed = task
+        try:
             row = _run_one(
                 inst, ecfg, objective=objective, skill_bank=bank, seed=seed,
                 llm_client=client, motif_stats=motif_stats,
             )
-            scores.append(float(row.get("ExactMatchRate", 0.0)))
+        except Exception as exc:  # noqa: BLE001 - one wedged run must not kill the curve
+            # A run that cannot complete IS a failure for its arm (score 0);
+            # P2 confirmatory-2's curve died whole on one 120s timeout.
+            print(f"  [curve eval] {inst.case_id} seed={seed} FAILED: "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+            return 0.0
+        return float(row.get("ExactMatchRate", 0.0))
+
+    if workers and workers > 1 and len(tasks) > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as ex:
+            scores = list(ex.map(_one, tasks))
+    else:
+        scores = [_one(t) for t in tasks]
     return sum(scores) / len(scores) if scores else float("nan")
 
 
@@ -99,10 +153,22 @@ def run_curves(
     holdout_frac: float = 0.3,
     data_points: int = 4,
     rounds: int = 4,
+    workers: int = 1,
+    progress: bool = False,
     llm_client: LLMClient | None = None,
 ) -> dict[str, Any]:
-    """Produce the data + rounds learning curves on a disjoint held-out set."""
+    """Produce the data + rounds learning curves on a disjoint held-out set.
+
+    ``workers`` fans out both the per-round evidence collection
+    (``run_evolution``) and the independent held-out (instance, seed) evals.
+    ``progress`` prints a live phase line per baseline / data point / round (and
+    enables ``run_evolution``'s per-unit ticks) so a long real-LLM run is not silent.
+    """
     client = llm_client or _build_llm_client(cfg)
+    # One global concurrency cap for the whole curve: shared by the evidence
+    # collection (run_evolution) and the held-out evals so `--workers` bounds the
+    # TRUE number of concurrent LLM calls, not the per-stage pool widths.
+    client = _bounded(client, workers)
     objective = evolution_objective_spec(cfg)
     instances = list(adapter.iter_instances(levels=levels, agent_counts=[n_agents], cases=cases))
     all_cases = sorted({i.case_id for i in instances})
@@ -114,27 +180,49 @@ def run_curves(
     val_seeds = [seeds[-1]] if seeds else [0]
     evo_cfg = replace(cfg, planner_mode=_evolved_planner_mode(cfg.evolved_mode))
 
-    def eval_held_out(bank, motif, gen):
-        return _eval_score(bank, motif, cfg, test_instances, seeds, client, objective, generate=gen)
+    t0 = time.monotonic()
 
-    baselines = {
-        "select": eval_held_out(SkillBank(), None, False),
-        "graphgen": eval_held_out(SkillBank(), None, True),
-    }
+    def _say(msg: str) -> None:
+        if progress:
+            el = int(time.monotonic() - t0)
+            print(f"[curve {cfg.evolved_mode}] {el // 60}:{el % 60:02d} {msg}", flush=True)
+
+    def eval_held_out(bank, motif, gen):
+        return _eval_score(
+            bank, motif, cfg, test_instances, seeds, client, objective,
+            generate=gen, workers=workers,
+        )
+
+    _say(
+        f"train={len(train_cases)} test={len(test_cases)} cases | "
+        f"data_points={data_points} rounds={rounds} | workers={workers} (global cap)"
+    )
+
+    # Baselines (no evolution) on the held-out set -- printed one at a time so the
+    # initial, evolution-free phase is not silent.
+    _say(f"baselines: select on {len(test_instances)} test cases x {len(seeds)} seeds ...")
+    select_base = eval_held_out(SkillBank(), None, False)
+    _say(f"baselines: select={select_base * 100:.1f}% | graphgen ...")
+    graphgen_base = eval_held_out(SkillBank(), None, True)
+    _say(f"baselines: graphgen={graphgen_base * 100:.1f}%")
+    baselines = {"select": select_base, "graphgen": graphgen_base}
     empty = eval_held_out(SkillBank(), None, generate)
 
     # DATA curve: evolve on the first k train cases (k grows), score held-out.
     ks = sorted({max(1, round(len(train_cases) * i / data_points)) for i in range(1, data_points + 1)})
     data_curve = [{"k_cases": 0, "score": empty, "n_skills": 0}]
-    for k in ks:
+    for idx, k in enumerate(ks, 1):
+        _say(f"DATA {idx}/{len(ks)}: evolving on {k} train cases ...")
         summ = run_evolution(
             adapter, cases=train_cases[:k], agent_counts=[n_agents],
             train_seeds=train_seeds, val_seeds=val_seeds, cfg=evo_cfg, levels=levels,
-            llm_client=client,
+            llm_client=client, workers=workers, progress=progress,
         )
         bank, motif = _bank_and_motif(summ)
+        score = eval_held_out(bank, motif, generate)
+        _say(f"DATA {idx}/{len(ks)}: k={k} held-out={score * 100:.1f}% (skills={len(bank)})")
         data_curve.append({
-            "k_cases": k, "score": eval_held_out(bank, motif, generate),
+            "k_cases": k, "score": score,
             "n_skills": len(bank), "gate": summ.get("gate"),
         })
 
@@ -142,16 +230,19 @@ def run_curves(
     rounds_curve = [{"round": 0, "score": empty, "n_skills": 0}]
     bank, motif = SkillBank(), {}
     for r in range(1, rounds + 1):
+        _say(f"ROUNDS {r}/{rounds}: evolving (bank={len(bank)} skills) ...")
         summ = run_evolution(
             adapter, cases=train_cases, agent_counts=[n_agents],
             train_seeds=train_seeds, val_seeds=val_seeds, cfg=evo_cfg, levels=levels,
-            llm_client=client,
+            llm_client=client, workers=workers, progress=progress,
             initial_skills=[s.model_dump(mode="json") for s in bank],
         )
         new_bank, new_motif = _bank_and_motif(summ)
         bank, motif = new_bank, _merge_motif(motif, new_motif)
+        score = eval_held_out(bank, motif, generate)
+        _say(f"ROUNDS {r}/{rounds}: held-out={score * 100:.1f}% (skills={len(bank)})")
         rounds_curve.append({
-            "round": r, "score": eval_held_out(bank, motif, generate),
+            "round": r, "score": score,
             "n_skills": len(bank), "gate": summ.get("gate"),
         })
 

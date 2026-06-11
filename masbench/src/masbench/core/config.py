@@ -34,6 +34,24 @@ class RunConfig:
     # the emperor refines from those references (anchor on what works, then
     # economize) -- best-of-both vs from-scratch graph_generate.
     evolved_mode: str = "topology_select"
+    # Phase-2 anti-saturation: in select_then_refine evolution, each round ALSO
+    # runs this many graph_generate evidence runs per train instance USING THE
+    # CURRENT BANK (the deployed refine path), so self-generated designs enter
+    # the minister with their executable specs and compete with named
+    # topologies in later rounds. 0 disables (phase-1 behaviour). Env override:
+    # MASBENCH_EVOLVE_EXPLORE (lets the frozen verify scripts control it).
+    evolve_explore: int = 1
+    # Temperature for the graph-GENERATION call only (None = use `temperature`).
+    # Exploration sets this hot (0.7) so successive rounds propose DIFFERENT
+    # designs at deterministic protocol execution; deployment stays cold.
+    graph_gen_temperature: float | None = None
+    # Held-out acceptance gate for run_evolution. ``auto`` (default): gate on the
+    # DEPLOYED objective -- generation loss when the evolved state will generate
+    # at eval (graph_generate / select_then_refine), topology-selection J
+    # otherwise. ``off``: no held-out gate at all (the drift-ablation arm; also
+    # settable per-run via the MASBENCH_GATE_MODE env var so frozen drivers like
+    # scripts/verify_evolve.py can run the ablation without growing flags).
+    gate_mode: str = "auto"
     # How many trailing seeds the evolved arm holds out for EVAL (and the gate's
     # val): train = seeds[:-K], test = seeds[-K:]. Default 1 (current behaviour);
     # K>1 evaluates evolved on more held-out seeds -> far less per-condition

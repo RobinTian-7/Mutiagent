@@ -164,3 +164,117 @@ def test_score_skill_cf_only_mean_rmse_still_works():
     # Lower rmse = better accuracy = higher score.
     assert low_score > high_score
     assert low_breakdown["accuracy"] == 1.0
+
+
+def test_aggregate_row_passes_through_protocol_spec():
+    # A2 (Silo select_then_refine): rows that carry the EXECUTED schedule keep it
+    # through evidence conversion so _best_protocol_spec can store it on skills.
+    spec = {"name": "tree", "n_agents": 2, "steps": [{"transmissions": [[1, 0]]}]}
+    with_spec = aggregate_rows_to_evidence([_cf_row(protocol_spec=spec)])
+    assert with_spec[0]["protocol_spec"] == spec
+    # CF rows without a spec stay byte-identical (no new key).
+    without = aggregate_rows_to_evidence([_cf_row()])
+    assert "protocol_spec" not in without[0]
+
+
+def _silo_skill(skill_id: str, success: float, n_evidence: int = 1) -> SkillCard:
+    """A generic-benchmark skill: bridged evidence puts SUCCESS into mean_rmse
+    (higher better) and the converted loss into mean_primary_loss."""
+    return SkillCard(
+        skill_id=skill_id,
+        objective="accuracy_first",
+        task_family="silo",
+        trigger={"task_family": "silo", "min_agents": 1, "max_agents": 999,
+                 "condition_key": "a10__arr0"},
+        organization_policy={"topology_name": skill_id},
+        expected_tradeoff={
+            "mean_rmse": success,                  # bridged success (higher better)
+            "mean_primary_loss": 1.0 - success,    # uniform loss (lower better)
+            "active_evidence_count": n_evidence,
+        },
+        tags=["mas", "emperor-skill"],
+    )
+
+
+def test_retrieval_orders_generic_skills_by_loss_not_raw_rmse():
+    """P2 confirmatory-1 root cause: the retrieval sort key read raw
+    ``mean_rmse`` ascending (CF semantics) -- on generic benchmarks that field
+    holds bridged SUCCESS, so retrieval returned WORST-first and deployment
+    replayed a train-loss-1.0 design. Skills carrying ``mean_primary_loss``
+    must rank by THAT (ascending)."""
+    from exp_graph.mas.schemas import PlannerRequest
+    from exp_graph.mas.skill_bank import SkillBank
+
+    bank = SkillBank(skills=[
+        _silo_skill("always_fails", success=0.0),
+        _silo_skill("always_wins", success=1.0),
+        _silo_skill("middling", success=0.5),
+    ])
+    request = PlannerRequest(
+        task_family="silo", n_agents=10,
+        objective=ObjectiveSpec.from_name("accuracy_first"),
+    )
+    order = [s.skill_id for s in bank.retrieve(request)]
+    assert order == ["always_wins", "middling", "always_fails"], order
+
+
+def test_retrieval_cf_ordering_unchanged():
+    """CF skills carry no mean_primary_loss -> raw mean_rmse ascending (the
+    historical key) must be byte-identical."""
+    from exp_graph.mas.schemas import PlannerRequest
+    from exp_graph.mas.skill_bank import SkillBank
+
+    def cf_skill(skill_id: str, rmse: float) -> SkillCard:
+        return SkillCard(
+            skill_id=skill_id, objective="accuracy_first",
+            task_family="count_frequency",
+            trigger={"task_family": "count_frequency", "min_agents": 1, "max_agents": 999},
+            organization_policy={"topology_name": skill_id},
+            expected_tradeoff={"mean_rmse": rmse},
+            tags=["mas", "emperor-skill"],
+        )
+
+    bank = SkillBank(skills=[cf_skill("bad", 0.9), cf_skill("good", 0.1)])
+    request = PlannerRequest(
+        task_family="count_frequency", n_agents=2,
+        objective=ObjectiveSpec.from_name("accuracy_first"),
+    )
+    assert [s.skill_id for s in bank.retrieve(request)] == ["good", "bad"]
+
+
+def test_probe_row_converts_generic_primary_metric_to_loss():
+    """P2 bundle-screen root cause: ``_probe_row`` stuffed Silo's PrimaryMetric
+    (SUCCESS, higher=better) into ``mean_rmse`` (lower=better), so under
+    ``_objective_score`` (``exact - rmse``) the success signal cancelled itself
+    and probe selection degenerated to cheapest-wins. Generic summaries must
+    bridge through ``primary_loss``; CF (FinalRMSE present) stays byte-identical."""
+    from exp_graph.mas.graph_generation import _objective_score, _probe_row
+
+    class _Result:
+        def __init__(self, summary):
+            self._summary = summary
+
+        def to_summary_dict(self):
+            return self._summary
+
+    def generic(success: float, messages: float):
+        return _Result({
+            "PrimaryMetric": success, "PrimaryMetricName": "primary",
+            "FinalExactMatch": success >= 1.0, "TotalMessages": messages,
+            "TotalModelCalls": 5, "TotalPromptTokens": 1000,
+            "TotalCompletionTokens": 200,
+        })
+
+    win = _probe_row(generic(1.0, 30.0), "accuracy_first")
+    fail_cheap = _probe_row(generic(0.0, 2.0), "accuracy_first")
+    assert win["mean_rmse"] == 0.0, "success must convert to loss 0"
+    assert fail_cheap["mean_rmse"] == 1.0, "failure must convert to loss 1"
+    assert _objective_score(win) > _objective_score(fail_cheap), (
+        "a succeeding candidate must outrank a failing-but-cheaper one"
+    )
+
+    cf = _Result({
+        "FinalRMSE": 0.25, "FinalExactMatch": False, "TotalMessages": 4,
+        "TotalModelCalls": 2, "TotalPromptTokens": 10, "TotalCompletionTokens": 2,
+    })
+    assert _probe_row(cf, "accuracy_first")["mean_rmse"] == 0.25, "CF unchanged"

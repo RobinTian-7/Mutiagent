@@ -1,0 +1,282 @@
+{
+  "mode": "select_then_refine",
+  "n_agents": 5,
+  "rounds": 3,
+  "train_cases": [
+    "I-01",
+    "I-02",
+    "I-03",
+    "I-04",
+    "I-05",
+    "I-06"
+  ],
+  "test_cases": [
+    "I-09",
+    "II-16"
+  ],
+  "train_seeds": [
+    1,
+    2
+  ],
+  "val_seeds": [
+    3,
+    4
+  ],
+  "eval_seeds": [
+    520,
+    1170,
+    2789,
+    3028,
+    3129,
+    3197,
+    8697,
+    8797
+  ],
+  "fixed_topologies": [
+    "tree",
+    "mesh_star",
+    "one_peer_exponential_dag_star",
+    "chain"
+  ],
+  "fixed_best_topology": "one_peer_exponential_dag_star",
+  "fixed_train_means": {
+    "tree": 0.5,
+    "mesh_star": 0.6666666666666666,
+    "one_peer_exponential_dag_star": 0.8333333333333334,
+    "chain": 0.6666666666666666
+  },
+  "n_pairs": 16,
+  "dropped_pairs": 0,
+  "arm_means": {
+    "evolved": 0.375,
+    "select": 0.1875,
+    "graphgen": 0.1875,
+    "fixed": 0.1875
+  },
+  "per_baseline": {
+    "select": {
+      "delta": 0.1875,
+      "evolved_only_wins": 4,
+      "baseline_only_wins": 1,
+      "passed": true
+    },
+    "graphgen": {
+      "delta": 0.1875,
+      "evolved_only_wins": 4,
+      "baseline_only_wins": 1,
+      "passed": true
+    },
+    "fixed": {
+      "delta": 0.1875,
+      "evolved_only_wins": 4,
+      "baseline_only_wins": 1,
+      "passed": true
+    }
+  },
+  "rounds_log": [
+    {
+      "round": 1,
+      "n_skills": 7,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.0,
+        "j_after": 0.0,
+        "epsilon": 0.0,
+        "mode": "generation"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_generated:balanced_tree_aggregate__a5__arr0",
+        "silo__cf_topology_generated:staged_fan_in_merge__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_sink__a5__arr0"
+      ],
+      "rejected_skill_ids": []
+    },
+    {
+      "round": 2,
+      "n_skills": 8,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.0,
+        "j_after": 0.0,
+        "epsilon": 0.0,
+        "mode": "generation"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_generated:balanced_tree_aggregate__a5__arr0",
+        "silo__cf_topology_generated:staged_fan_in_merge__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_sink__a5__arr0",
+        "silo__cf_topology_generated:tree_reduce_to_sink__a5__arr0"
+      ],
+      "rejected_skill_ids": []
+    },
+    {
+      "round": 3,
+      "n_skills": 9,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.0,
+        "j_after": 0.0,
+        "epsilon": 0.0,
+        "mode": "generation"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_generated:balanced_tree_aggregate__a5__arr0",
+        "silo__cf_topology_generated:staged_fan_in_merge__a5__arr0",
+        "silo__cf_topology_generated:staged_hierarchical_reduce__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_sink__a5__arr0",
+        "silo__cf_topology_generated:tree_reduce_to_sink__a5__arr0"
+      ],
+      "rejected_skill_ids": []
+    }
+  ],
+  "n_skills": 9,
+  "machinery_ok": true,
+  "stable_rounds_ok": null,
+  "criteria": {
+    "delta_min": 0.05,
+    "win_margin": 2
+  },
+  "passed": true,
+  "pairs": [
+    {
+      "case_id": "I-09",
+      "seed": 520,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 1170,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 2789,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 3028,
+      "evolved": 0.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 3129,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 1.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 3197,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 8697,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "I-09",
+      "seed": 8797,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 1.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 520,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 1170,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 2789,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 3028,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 3129,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 3197,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 1.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 8697,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-16",
+      "seed": 8797,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    }
+  ]
+}

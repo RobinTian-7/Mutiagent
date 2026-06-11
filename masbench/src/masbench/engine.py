@@ -30,6 +30,7 @@ from masbench.adapters.silo_scoring import silo_partial_score
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
+from masbench.llm.retry import RetryLLMClient
 from masbench.core.task_bridge import BenchmarkTaskAdapter, canonical_answer
 from masbench.llm.fake import BenchmarkFakeLLMClient
 
@@ -46,12 +47,18 @@ def _build_llm_client(cfg: RunConfig) -> LLMClient:
     # freezes the whole run (this was the real root cause of the evolved/graphgen
     # "no progress" stall).
     os.environ[WALLCLOCK_TIMEOUT_ENV] = str(cfg.request_timeout)
-    return create_llm_client(
-        cfg.llm_provider,
-        base_url=cfg.base_url,
-        api_key_env=cfg.api_key_env,
-        thinking_enabled=cfg.thinking_enabled,
-        timeout_s=cfg.request_timeout,
+    # Bounded transient-connection retry OUTSIDE the wall-clock guard: each
+    # attempt gets its own timeout budget, and a single network blip can no
+    # longer kill a whole verify/bench eval pool (round-3C crashed at 32/72
+    # eval runs on one APIConnectionError).
+    return RetryLLMClient(
+        create_llm_client(
+            cfg.llm_provider,
+            base_url=cfg.base_url,
+            api_key_env=cfg.api_key_env,
+            thinking_enabled=cfg.thinking_enabled,
+            timeout_s=cfg.request_timeout,
+        )
     )
 
 
@@ -328,6 +335,20 @@ def _plan_topology_select(cfg: RunConfig, *, n_agents: int):
     return plan, {"planner_mode": "topology_select"}
 
 
+def _effective_graph_max_steps(cfg: RunConfig, n_agents: int) -> int:
+    """Step cap for GENERATED organizations, scaling with n.
+
+    The historical fixed cap (4) made linear-depth schedules inexpressible at
+    n=10 -- a chain pass needs ~n-1 steps -- while named-topology compilation
+    has no cap, so generation-based arms were structurally barred from the
+    organizations sequential tasks need (P2 confirmatory-2 failure analysis).
+    An explicitly configured non-default cap is honored unchanged.
+    """
+    if cfg.graph_max_steps != 4:
+        return cfg.graph_max_steps
+    return max(4, n_agents + 2)
+
+
 def _plan_graph_generate(
     cfg: RunConfig,
     *,
@@ -360,9 +381,16 @@ def _plan_graph_generate(
     runtime = MASRuntimeConfig(
         llm_provider=cfg.llm_provider,
         model_name=cfg.model_name,
-        temperature=cfg.temperature,
+        # Generation-only temperature override: exploration proposes designs HOT
+        # (diversity across rounds) while protocol execution stays at
+        # cfg.temperature; None -> no split (deployment path).
+        temperature=(
+            cfg.graph_gen_temperature
+            if getattr(cfg, "graph_gen_temperature", None) is not None
+            else cfg.temperature
+        ),
         num_graph_candidates=cfg.num_graph_candidates,
-        graph_max_steps=cfg.graph_max_steps,
+        graph_max_steps=_effective_graph_max_steps(cfg, n_agents),
         graph_max_messages=cfg.graph_max_messages,
         graph_max_receiver_fan_in=cfg.graph_max_receiver_fan_in,
         use_motif_prior=True,

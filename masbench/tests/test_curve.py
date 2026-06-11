@@ -44,3 +44,25 @@ def test_run_curves_structure():
     assert res["rounds_curve"][0]["round"] == 0 and len(res["rounds_curve"]) == 3
     for pt in res["data_curve"] + res["rounds_curve"]:
         assert isinstance(pt["score"], float)
+
+
+@pytest.mark.skipif(not BENCH.exists(), reason="silo benchmarks submodule not present")
+def test_run_curves_workers_match_sequential():
+    """workers>1 only fans out independent units -> identical curves offline."""
+    kw = dict(
+        n_agents=2, seeds=[1, 2], levels=["I"],
+        cases=["I-01", "I-02", "I-03", "I-04"], holdout_frac=0.5,
+        data_points=2, rounds=2,
+    )
+
+    def _curve(workers):
+        cfg = RunConfig(
+            llm_provider="fake", merge_mode="deterministic", init_mode="deterministic",
+            objective="accuracy_first", evolved_mode="graph_generate", num_graph_candidates=2,
+        )
+        return curve.run_curves(SiloBenchAdapter(str(BENCH)), cfg, workers=workers, **kw)
+
+    seq, par = _curve(1), _curve(4)
+    assert seq["baselines"] == par["baselines"]
+    assert [p["score"] for p in seq["data_curve"]] == [p["score"] for p in par["data_curve"]]
+    assert [p["score"] for p in seq["rounds_curve"]] == [p["score"] for p in par["rounds_curve"]]

@@ -237,6 +237,8 @@ def _cmd_curve(args: argparse.Namespace) -> int:
         adapter, cfg, n_agents=args.agent_count,
         seeds=[int(s) for s in args.seeds], levels=args.levels, cases=args.cases,
         holdout_frac=args.holdout_frac, data_points=args.data_points, rounds=args.rounds,
+        workers=getattr(args, "workers", 1),
+        progress=not getattr(args, "quiet", False),
     )
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -477,6 +479,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_curve.add_argument(
         "--rounds", dest="rounds", type=int, default=4,
         help="number of self-evolution rounds on the rounds curve",
+    )
+    p_curve.add_argument(
+        "--workers", type=int, default=1,
+        help="parallel worker threads for evidence collection + held-out evals "
+             "(default 1 = sequential). LLM calls are I/O-bound, so >1 gives "
+             "near-linear speedup; match it to your provider's concurrency. This "
+             "is a GLOBAL cap on concurrent LLM calls, not a per-stage pool width.",
+    )
+    p_curve.add_argument(
+        "--quiet", action="store_true",
+        help="suppress the live per-phase progress lines (printed by default)",
     )
     p_curve.add_argument("--out", required=True)
     p_curve.set_defaults(func=_cmd_curve)

@@ -72,6 +72,11 @@ def aggregate_rows_to_evidence(rows: list[dict[str, Any]]) -> list[dict[str, Any
         if mean_primary_loss is not None:
             item["mean_primary_loss"] = mean_primary_loss
             item["primary_metric_name"] = primary_metric_name
+        # Rows that carry the EXECUTED schedule keep it through conversion so
+        # ``_best_protocol_spec`` can store it on skill cards (the
+        # select_then_refine replay anchor). CF rows never carry it -> no new key.
+        if row.get("protocol_spec") is not None:
+            item["protocol_spec"] = row["protocol_spec"]
         evidence.append(item)
     return evidence
 

@@ -537,6 +537,19 @@ def _condition_specificity(skill: SkillCard, request: PlannerRequest) -> int:
 
 
 def _skill_mean_rmse(skill: SkillCard) -> float:
+    # Generic-benchmark skills bridge their primary metric into ``mean_rmse``
+    # (which may be HIGHER-is-better, e.g. a success rate) and carry the
+    # uniform lower-is-better ``mean_primary_loss`` alongside. Rank by the
+    # loss when present -- sorting raw success ascending returned WORST-first
+    # retrieval (P2 confirmatory-1 root cause: a train-loss-1.0 design was
+    # replayed 20/20 on held-out conditions). CF skills never carry the loss
+    # key, so their historical raw-RMSE-ascending order is byte-identical.
+    loss = skill.expected_tradeoff.get("mean_primary_loss")
+    if loss is not None:
+        try:
+            return float(loss)
+        except (TypeError, ValueError):
+            pass
     value = skill.expected_tradeoff.get("mean_rmse")
     if value is None:
         return float("inf")

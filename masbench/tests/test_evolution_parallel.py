@@ -6,7 +6,7 @@ import masbench.evolve as evolve
 from masbench.core.config import RunConfig
 
 
-def _echo(inst, cfg, *, objective, skill_bank, seed, llm_client):
+def _echo(inst, cfg, *, objective, skill_bank, seed, llm_client, **kwargs):
     return {"inst": inst, "obj": objective, "seed": seed}
 
 
@@ -31,7 +31,7 @@ def test_parallel_collect_rows_matches_serial(monkeypatch):
 
 
 def test_failed_run_is_dropped_not_aborted(monkeypatch):
-    def flaky(inst, cfg, *, objective, skill_bank, seed, llm_client):
+    def flaky(inst, cfg, *, objective, skill_bank, seed, llm_client, **kwargs):
         if inst == "b":
             raise RuntimeError("wedged provider call")
         return {"inst": inst, "seed": seed}

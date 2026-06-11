@@ -38,10 +38,11 @@ synthetic rows are unnecessary and ``held_out_rows`` can be left ``None``.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 import masbench  # noqa: F401  (bootstraps exp_graph path)
@@ -66,8 +67,12 @@ from exp_graph.mas.schemas import (
     SkillPatch,
 )
 from exp_graph.mas.skill_bank import SkillBank
+from exp_graph.protocols.schedules import build_protocol_schedule
+from exp_graph.protocols.spec import ProtocolGraphSpec, ProtocolStepSpec
 from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
 
+from masbench import diag
+from masbench.cache import EvidenceCache, open_cache
 from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
@@ -111,6 +116,46 @@ def evolution_objective_spec(
     )
 
 
+def _executed_spec(plan: Any, n_agents: int) -> dict[str, Any] | None:
+    """The executable schedule this run actually executed, as a spec dict.
+
+    Generated plans already carry their spec. Named-topology (select) plans
+    compile their schedule inside ProtocolRunner; rebuild it here with the SAME
+    builder so the minister can store the schedule that actually ran. This is
+    what makes select_then_refine real: skills carry executable reference
+    schedules, and ``_skill_seeded_graph_candidates`` can replay/refine them at
+    eval instead of receiving prompt context only.
+    """
+    if plan.protocol_spec is not None:
+        return diag.serialize_spec(plan.protocol_spec)
+    try:
+        steps = build_protocol_schedule(plan.topology_name, n_agents)
+    except Exception:
+        return None
+    if not steps:
+        return None
+    last_receivers = {dst for _, dst in steps[-1].transmissions}
+    metadata: dict[str, Any] = {
+        "source": "named_topology",
+        "graph_type": "temporal_dag",
+    }
+    if len(last_receivers) == 1:
+        metadata["selected_primary"] = last_receivers.pop()
+    return ProtocolGraphSpec(
+        name=plan.topology_name,
+        n_agents=n_agents,
+        steps=[
+            ProtocolStepSpec(
+                transmissions=step.transmissions,
+                description=step.description,
+                operator="replay",
+            )
+            for step in steps
+        ],
+        metadata=metadata,
+    ).model_dump(mode="json")
+
+
 def _run_one(
     instance: BenchmarkInstance,
     cfg: RunConfig,
@@ -120,6 +165,7 @@ def _run_one(
     seed: int,
     llm_client: LLMClient,
     motif_stats: dict[str, dict] | None = None,
+    diag_phase: str = "",
 ) -> dict[str, Any]:
     """Run one instance through the QueenBee planner path and return its row.
 
@@ -136,6 +182,7 @@ def _run_one(
         n_agents=n_agents,
         objective=objective,
     )
+    _planner_extra: dict[str, Any] = {}
     if cfg.planner_mode == "graph_generate":
         # Self-design evidence: GENERATE a DAG (cold, diverse via candidates) so the
         # minister + motif loop learn from real generated structures, not topology
@@ -179,12 +226,45 @@ def _run_one(
     row["case_id"] = instance.case_id
     row["seed"] = seed
     row["task_family"] = SILO_TASK_FAMILY
+    # A2: carry the executed schedule so minister skills can store it
+    # (organization_policy.protocol_spec) and the refine eval can replay it.
+    row["protocol_spec"] = _executed_spec(plan, n_agents)
     if cfg.planner_mode == "graph_generate" and plan.protocol_spec is not None:
         # Structural-motif evidence so the motif-credit loop can learn which
         # GENERATED structures (fan-in, depth, sink pattern) correlate with low
         # loss. Lower-is-better loss; offline this is topology-invariant.
         row["motif_keys"] = spec_motif_keys(plan.protocol_spec)
         row["mean_primary_loss"] = 1.0 - float(row.get("ExactMatchRate", 0.0))
+    if diag.enabled():
+        record: dict[str, Any] = {
+            "case_id": instance.case_id,
+            "seed": seed,
+            "phase": diag_phase,
+            "planner_mode": cfg.planner_mode,
+            "evolved_mode": cfg.evolved_mode,
+            "n_agents": n_agents,
+            "bank_size": len(skill_bank),
+            "topology": row.get("Topology"),
+            "exact_match": row.get("ExactMatchRate"),
+            "messages": row.get("MeanTotalMessages"),
+            "model_calls": row.get("MeanTotalModelCalls"),
+            "tokens": row.get("MeanTokenCost"),
+            "motif_keys": row.get("motif_keys"),
+            "spec": diag.serialize_spec(plan.protocol_spec),
+            "fallback_reason": _planner_extra.get("graph_fallback_reason"),
+        }
+        if cfg.planner_mode == "graph_generate":
+            record["retrieved_skills"] = [
+                {
+                    "skill_id": s.skill_id,
+                    "topology": (s.organization_policy or {}).get("topology_name"),
+                    "has_executable_spec": isinstance(
+                        (s.organization_policy or {}).get("protocol_spec"), dict
+                    ),
+                }
+                for s in skill_bank.retrieve(request)
+            ]
+        diag.dump_eval_run(record)
     return row
 
 
@@ -208,21 +288,57 @@ def _generation_gate(
     gate, it can actually move because generation quality varies with the learned
     state. Offline Silo is topology-invariant so ``j_before == j_after`` (accept).
     """
-    def _mean_loss(bank: SkillBank, stats: dict[str, dict] | None) -> float:
+    cache = open_cache()
+
+    def _mean_loss(
+        bank: SkillBank, stats: dict[str, dict] | None, phase_label: str
+    ) -> float:
         losses: list[float] = []
         for inst in val_instances:
             for seed in val_seeds or [0]:
-                row = _run_one(
-                    inst, cfg, objective=objective, skill_bank=bank, seed=seed,
-                    llm_client=llm_client, motif_stats=stats,
+                # j_before (empty bank, no prior, cold generation) is round-
+                # invariant -> cacheable; j_after depends on the bank -> never.
+                cache_key = (
+                    EvidenceCache.key(
+                        case_id=inst.case_id, n_agents=cfg.n_agents or inst.n_agents,
+                        planner_mode="gate:before", objective=objective.name,
+                        seed=seed, cfg=cfg,
+                    )
+                    if cache is not None and phase_label == "gate:before"
+                    else None
                 )
-                losses.append(
-                    float(row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0))))
+                if cache is not None and cache_key is not None:
+                    cached = cache.get(cache_key)
+                    if cached is not None:
+                        losses.append(float(cached["loss"]))
+                        continue
+                try:
+                    row = _run_one(
+                        inst, cfg, objective=objective, skill_bank=bank, seed=seed,
+                        llm_client=llm_client, motif_stats=stats,
+                        diag_phase=phase_label,
+                    )
+                except Exception as exc:  # noqa: BLE001 - one wedged call must not abort evolution
+                    # A run that cannot complete IS a deployment failure for its
+                    # arm: charge max loss and keep gating (per-run isolation,
+                    # mirroring _collect_rows).
+                    print(
+                        f"  [evolve {phase_label}] {inst.case_id} seed={seed} FAILED:"
+                        f" {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    losses.append(1.0)
+                    continue
+                loss = float(
+                    row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0)))
                 )
+                if cache is not None and cache_key is not None:
+                    cache.put(cache_key, {"loss": loss})
+                losses.append(loss)
         return sum(losses) / len(losses) if losses else 1.0
 
-    j_before = _mean_loss(SkillBank(), None)
-    j_after = _mean_loss(evolved_bank, motif_stats)
+    j_before = _mean_loss(SkillBank(), None, "gate:before")
+    j_after = _mean_loss(evolved_bank, motif_stats, "gate:after")
     return {
         "accepted": bool(j_after <= j_before + epsilon),
         "j_before": j_before,
@@ -307,6 +423,68 @@ def _llm_insight_patches(
     if patches:
         skill_bank.apply_patches(patches)
     return len(patches)
+
+
+# An avoid/counterexample rule must be earned by a real aggregate gap: the
+# topology's MEAN primary loss must exceed the best topology's mean by this
+# absolute margin. The engine's ratio rule (loss > best * 1.75) was designed for
+# continuous CF RMSE; on per-(case,seed) BINARY Silo rows best is usually 0.0,
+# so every topology with any miss got an avoid skill (round 1: avoid_{tree,
+# mesh_star,peer_star} ALL advertised at once -> contradictory context, held-out
+# generation dropped 54.2% -> 37.5%). With ~6 binary rows per topology the
+# per-mean SE is ~0.19, so 0.25 demands a >1-SE real gap.
+AVOID_MEAN_LOSS_GAP = 0.25
+
+# The dominance CHAMPION (best mean loss) must itself be measured on at least
+# this many rows to anchor avoid decisions. P2 round-1 bug: one lucky explored
+# run (n=1, loss 0.0) became the anchor and every named topology -- including
+# the deployed winner -- earned an avoid skill, polluting the generation prompt.
+AVOID_CHAMPION_MIN_ROWS = 3
+
+
+def _row_loss(row: dict[str, Any]) -> float:
+    return float(row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0))))
+
+
+def _is_avoid_patch(patch: SkillPatch) -> bool:
+    if str(patch.patch_id).startswith("counterexample"):
+        return True
+    skill = patch.candidate_skill
+    return bool(skill and "cf_avoid_" in str(skill.skill_id))
+
+
+def _filter_misfired_avoids(
+    patches: list[SkillPatch],
+    train_rows: list[dict[str, Any]],
+) -> list[SkillPatch]:
+    """Drop avoid patches whose topology is not genuinely dominated on means."""
+    by_topology: dict[str, list[float]] = {}
+    for row in train_rows:
+        by_topology.setdefault(str(row.get("Topology", "")), []).append(_row_loss(row))
+    means = {t: sum(v) / len(v) for t, v in by_topology.items() if v}
+    if not means:
+        return patches
+    anchored = {
+        t: m for t, m in means.items()
+        if len(by_topology[t]) >= AVOID_CHAMPION_MIN_ROWS
+    }
+    if not anchored:
+        # No well-measured champion -> no avoid decision can be earned.
+        return [patch for patch in patches if not _is_avoid_patch(patch)]
+    best = min(anchored.values())
+
+    def keep(patch: SkillPatch) -> bool:
+        if not _is_avoid_patch(patch):
+            return True
+        topology = str(
+            (patch.candidate_skill.organization_policy or {}).get("topology_name", "")
+            if patch.candidate_skill
+            else ""
+        )
+        mean = means.get(topology)
+        return mean is not None and (mean - best) >= AVOID_MEAN_LOSS_GAP
+
+    return [patch for patch in patches if keep(patch)]
 
 
 def _split_train_val(
@@ -440,8 +618,25 @@ def _collect_rows(
     results: list[dict[str, Any] | None] = [None] * total
     prog = _EvolveProgress(phase, total) if progress else None
 
+    cache = open_cache()
+
     def _do(index: int) -> tuple[int, dict[str, Any] | None]:
         inst, objective, seed = tasks[index]
+        # Named evidence rows use a FRESH EMPTY bank by construction (bank-
+        # independent); at temp 0 a cached row is the same measurement.
+        cache_key = (
+            EvidenceCache.key(
+                case_id=inst.case_id, n_agents=cfg.n_agents or inst.n_agents,
+                planner_mode=cfg.planner_mode, objective=objective.name,
+                seed=seed, cfg=cfg,
+            )
+            if cache is not None
+            else None
+        )
+        if cache is not None and cache_key is not None:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return index, cached
         try:
             row = _run_one(
                 inst,
@@ -450,7 +645,10 @@ def _collect_rows(
                 skill_bank=SkillBank(),
                 seed=seed,
                 llm_client=llm_client,
+                diag_phase=f"evidence:{phase}" if phase else "evidence",
             )
+            if cache is not None and cache_key is not None:
+                cache.put(cache_key, row)
             return index, row
         except Exception as exc:  # noqa: BLE001 - one bad run must not abort evolution
             print(
@@ -559,15 +757,81 @@ def run_evolution(
         progress=progress,
         phase=f"n={cfg.n_agents} train",
     )
-    val_rows_real = _collect_rows(
-        val_instances,
-        cfg,
-        objective_variants=variant_specs,
-        seeds=val_seeds,
-        llm_client=client,
-        workers=workers,
-        progress=progress,
-        phase=f"n={cfg.n_agents} val",
+    # Phase-2 anti-saturation EXPLORATION: in refine mode, also generate
+    # designs WITH the current bank (the deployed path) so self-generated
+    # organizations enter the minister with executable specs and can join the
+    # bank when they win. This is what lets round r+1 know more than round r --
+    # without it, the named-topology evidence re-derives the same skills every
+    # round and the rounds-curve saturates (phase-1 finding).
+    explore_raw = os.environ.get("MASBENCH_EVOLVE_EXPLORE", "").strip()
+    explore_n = int(explore_raw) if explore_raw else int(cfg.evolve_explore)
+    n_explore_rows = 0
+    if cfg.evolved_mode == "select_then_refine" and explore_n > 0:
+        explore_cfg = replace(
+            cfg, planner_mode="graph_generate", graph_gen_temperature=0.7
+        )
+        # Exploration must produce NEW designs: with executable specs in the
+        # bank, seeded replay candidates fill every generation slot and
+        # exploration degenerates into re-measuring known organizations. Strip
+        # the specs from a COPY -- prose context (lessons/tradeoffs) still
+        # informs the generation, deployment keeps the full bank. Bad explored
+        # designs are filtered by evidence + the held-out gate.
+        explore_bank = SkillBank(
+            skills=[skill.model_copy(deep=True) for skill in skill_bank]
+        )
+        for skill in explore_bank:
+            if isinstance((skill.organization_policy or {}).get("protocol_spec"), dict):
+                skill.organization_policy["protocol_spec"] = None
+        explore_tasks = [
+            (inst, seed)
+            for inst in train_instances
+            for seed in (train_seeds or [0])[:explore_n]
+        ]
+
+        def _explore(task: tuple[BenchmarkInstance, int]) -> dict[str, Any] | None:
+            inst, seed = task
+            try:
+                return _run_one(
+                    inst, explore_cfg, objective=objective, skill_bank=explore_bank,
+                    seed=seed, llm_client=client, diag_phase="explore",
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad explore run is dropped
+                print(
+                    f"  [evolve explore] {inst.case_id} seed={seed} FAILED:"
+                    f" {type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                return None
+
+        if workers and workers > 1 and len(explore_tasks) > 1:
+            with ThreadPoolExecutor(max_workers=min(workers, len(explore_tasks))) as ex:
+                explore_rows = [r for r in ex.map(_explore, explore_tasks) if r is not None]
+        else:
+            explore_rows = [r for t in explore_tasks if (r := _explore(t)) is not None]
+        n_explore_rows = len(explore_rows)
+        train_rows = [*train_rows, *explore_rows]
+    # Single-gate architecture: modes that deploy GENERATION are vetted by the
+    # generation gate (its own runs below); the selection gate -- the only
+    # consumer of val evidence rows besides optional insight falsification --
+    # is inactive there, so collecting val evidence would be pure spend.
+    deploys_generation_mode = (
+        cfg.planner_mode == "graph_generate"
+        or cfg.evolved_mode == "select_then_refine"
+    )
+    needs_val_rows = (not deploys_generation_mode) or cfg.use_llm_insights
+    val_rows_real = (
+        _collect_rows(
+            val_instances,
+            cfg,
+            objective_variants=variant_specs,
+            seeds=val_seeds,
+            llm_client=client,
+            workers=workers,
+            progress=progress,
+            phase=f"n={cfg.n_agents} val",
+        )
+        if needs_val_rows
+        else []
     )
 
     # Held-out validation rows the gate scores against: real Silo VAL rows plus
@@ -580,7 +844,32 @@ def run_evolution(
     patches = ResultAnalystMinister().analyze(
         train_rows, task_family=SILO_TASK_FAMILY
     )
+    # Round-1 root cause: the engine's ratio dominance rule misfires on binary
+    # per-case rows (best=0 -> everything "dominated") and advertises avoid
+    # skills for EVERY topology. Require a real mean-loss gap instead.
+    patches = _filter_misfired_avoids(patches, train_rows)
 
+    # Held-out gate mode: "auto" gates on the DEPLOYED objective (generation loss
+    # when the evolved state will GENERATE at eval, selection J otherwise);
+    # "off" disables held-out gating entirely (the drift-ablation arm). The env
+    # var lets frozen drivers (scripts/verify_evolve.py) run the ablation.
+    gate_mode = (
+        os.environ.get("MASBENCH_GATE_MODE", "").strip() or cfg.gate_mode or "auto"
+    ).lower()
+    pre_skills = [skill.model_dump(mode="json") for skill in skill_bank]
+
+    # ONE gate per deployed objective: modes that GENERATE at eval are vetted by
+    # the held-out GENERATION gate below; gating their patch application on
+    # topology-SELECTION J as well both double-gates and mis-scores -- the
+    # selection objective charges generated:* skills an unmeasured-topology
+    # penalty on named-evidence val rows, rejecting legitimate exploration
+    # (phase-2 explore rows made this bind). Selection-deploying mode keeps the
+    # selection gate.
+    deploys_generation = (
+        cfg.planner_mode == "graph_generate"
+        or cfg.evolved_mode == "select_then_refine"
+    )
+    selection_gate_active = gate_mode != "off" and not deploys_generation
     size_before = len(skill_bank)
     _bank, result = consolidate_skill_updates(
         bank=skill_bank,
@@ -589,7 +878,7 @@ def run_evolution(
         batch_id=batch_id,
         validation_rows=val_rows,
         epsilon=epsilon,
-        gate=True,
+        gate=selection_gate_active,
     )
     # B2: fold VERIFIED LLM design insights into the bank so they drive generation.
     n_insight_patches = 0
@@ -606,28 +895,62 @@ def run_evolution(
     # on real skills, so the improvement knobs are exercised, not merely set.
     final_selection = _selection_probe(skill_bank, cfg.n_agents or 2, objective)
 
-    accepted = bool(result.gate_accepted)
+    accepted = bool(result.gate_accepted) if selection_gate_active else True
     # B1: in self-design mode, aggregate the GENERATED evidence into a structural-
     # motif credit map (which fan-in/depth/sink patterns correlate with low loss).
     # Carried in the summary so the eval can bias generation toward winning motifs.
     motif_stats = (
         aggregate_motif_losses(train_rows)
-        if cfg.planner_mode == "graph_generate"
+        if any("motif_keys" in row for row in train_rows)
         else {}
     )
-    # C: in self-design mode, gate on held-out GENERATION quality (generating with
-    # vs without the learned bank+motif prior) rather than topology selection --
-    # this is the objective that can actually improve for generation.
-    gen_gate = (
-        _generation_gate(
-            val_instances, cfg, val_seeds=val_seeds, llm_client=client,
+    # C: when the evolved state will GENERATE at eval (graph_generate evidence, or
+    # select_then_refine whose deployed eval is refine-generation), gate on
+    # held-out GENERATION quality (generating with vs without the learned state)
+    # rather than topology selection -- selection J is vacuously tied on small
+    # held-out sets while generation is the objective that actually deploys.
+    selection_gate: dict[str, Any] = {
+        "accepted": accepted,
+        "j_before": float(result.gate_j_before)
+        if result.gate_j_before is not None
+        else 0.0,
+        "j_after": float(result.gate_j_after)
+        if result.gate_j_after is not None
+        else 0.0,
+        "epsilon": epsilon,
+        "counts": dict(result.counts),
+        "warnings": list(result.warnings),
+    }
+    if gate_mode == "off":
+        gate_info: dict[str, Any] = (
+            {"accepted": True, "j_before": None, "j_after": None,
+             "epsilon": epsilon, "mode": "off"}
+            if deploys_generation
+            else {**selection_gate, "accepted": True, "mode": "off"}
+        )
+    elif deploys_generation:
+        gate_info = _generation_gate(
+            val_instances, replace(cfg, planner_mode="graph_generate"),
+            val_seeds=val_seeds, llm_client=client,
             evolved_bank=skill_bank, motif_stats=motif_stats, epsilon=epsilon,
             objective=objective,
         )
-        if cfg.planner_mode == "graph_generate"
-        else None
-    )
-    return {
+    else:
+        gate_info = selection_gate
+
+    # Every consumer of the summary (the frozen verify_evolve.py, curve, bench)
+    # rebuilds its eval bank from ``evolved_skills`` unconditionally, so a
+    # REJECTED state must be withheld HERE: export the pre-evolution state and
+    # keep the rejected ids for diagnostics.
+    gate_accepted = bool(gate_info.get("accepted"))
+    exported_skills = [skill.model_dump(mode="json") for skill in skill_bank]
+    exported_motif = motif_stats
+    rejected_skill_ids: list[str] = []
+    if not gate_accepted:
+        rejected_skill_ids = sorted(skill.skill_id for skill in skill_bank)
+        exported_skills = pre_skills
+        exported_motif = {}
+    summary = {
         "benchmark": cfg.benchmark,
         "objective": cfg.objective,
         "config": asdict(cfg),
@@ -648,29 +971,25 @@ def run_evolution(
         "val_success_rate": _success_rate(val_rows_real),
         "n_patches": len(patches),
         "n_insight_patches": n_insight_patches,
-        "gate": gen_gate if gen_gate is not None else {
-            "accepted": accepted,
-            "j_before": float(result.gate_j_before)
-            if result.gate_j_before is not None
-            else 0.0,
-            "j_after": float(result.gate_j_after)
-            if result.gate_j_after is not None
-            else 0.0,
-            "epsilon": epsilon,
-            "counts": dict(result.counts),
-            "warnings": list(result.warnings),
-        },
+        "n_explore_rows": n_explore_rows,
+        "gate": gate_info,
+        "gate_mode": gate_mode,
+        "selection_gate": selection_gate,
         "skill_bank_size_before": size_before,
         "skill_bank_size_after": size_after,
-        "skill_bank_mutated": accepted,
+        "skill_bank_mutated": gate_accepted,
         "skill_ids_after": sorted(skill.skill_id for skill in skill_bank),
+        "rejected_skill_ids": rejected_skill_ids,
         # Serialized evolved skills so the eval can rebuild the bank across the
         # cache/parallel boundary and feed it to graph generation (evolved_mode=
-        # graph_generate -> the emperor designs a DAG from these skills).
-        "evolved_skills": [skill.model_dump(mode="json") for skill in skill_bank],
-        "evolved_motif_stats": motif_stats,
+        # graph_generate -> the emperor designs a DAG from these skills). On a
+        # rejected gate this is the PRE state -- rejected updates never deploy.
+        "evolved_skills": exported_skills,
+        "evolved_motif_stats": exported_motif,
         "final_selection": final_selection,
     }
+    diag.dump_evolution_summary(summary)
+    return summary
 
 
 def _selection_probe(
