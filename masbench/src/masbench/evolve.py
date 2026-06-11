@@ -484,6 +484,7 @@ def _generation_gate(
     epsilon: float,
     objective: ObjectiveSpec,
     incumbent_bank: SkillBank | None = None,
+    workers: int = 1,
 ) -> dict[str, Any]:
     """C: accept the learned state only if it improves held-out GENERATION.
 
@@ -496,52 +497,73 @@ def _generation_gate(
     """
     cache = open_cache()
 
+    def _one_loss(
+        task: tuple[BenchmarkInstance, int],
+        bank: SkillBank,
+        stats: dict[str, dict] | None,
+        phase_label: str,
+    ) -> float:
+        inst, seed = task
+        # j_before (empty bank, no prior, cold generation) is round-
+        # invariant -> cacheable; j_after depends on the bank -> never.
+        cache_key = (
+            EvidenceCache.key(
+                case_id=inst.case_id, n_agents=cfg.n_agents or inst.n_agents,
+                planner_mode="gate:before", objective=objective.name,
+                seed=seed, cfg=cfg,
+            )
+            if cache is not None and phase_label == "gate:before"
+            else None
+        )
+        if cache is not None and cache_key is not None:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return float(cached["loss"])
+        try:
+            row = _run_one(
+                inst, cfg, objective=objective, skill_bank=bank, seed=seed,
+                llm_client=llm_client, motif_stats=stats,
+                diag_phase=phase_label,
+            )
+        except Exception as exc:  # noqa: BLE001 - one wedged call must not abort evolution
+            # A run that cannot complete IS a deployment failure for its
+            # arm: charge max loss and keep gating (per-run isolation,
+            # mirroring _collect_rows).
+            print(
+                f"  [evolve {phase_label}] {inst.case_id} seed={seed} FAILED:"
+                f" {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return 1.0
+        loss = float(
+            row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0)))
+        )
+        if cache is not None and cache_key is not None:
+            cache.put(cache_key, {"loss": loss})
+        return loss
+
     def _mean_loss(
         bank: SkillBank, stats: dict[str, dict] | None, phase_label: str
     ) -> float:
-        losses: list[float] = []
-        for inst in val_instances:
-            for seed in val_seeds or [0]:
-                # j_before (empty bank, no prior, cold generation) is round-
-                # invariant -> cacheable; j_after depends on the bank -> never.
-                cache_key = (
-                    EvidenceCache.key(
-                        case_id=inst.case_id, n_agents=cfg.n_agents or inst.n_agents,
-                        planner_mode="gate:before", objective=objective.name,
-                        seed=seed, cfg=cfg,
-                    )
-                    if cache is not None and phase_label == "gate:before"
-                    else None
+        tasks = [
+            (inst, seed)
+            for inst in val_instances
+            for seed in (val_seeds or [0])
+        ]
+        if not tasks:
+            return 1.0
+        # The (instance, seed) gate runs are independent; replayed organizations
+        # are message-heavy (many serial merge calls), so a serial gate loop was
+        # the longest pole of a round. Mean is order-independent -> parallel
+        # fan-out is measurement-identical.
+        if workers and workers > 1 and len(tasks) > 1:
+            with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as ex:
+                losses = list(
+                    ex.map(lambda t: _one_loss(t, bank, stats, phase_label), tasks)
                 )
-                if cache is not None and cache_key is not None:
-                    cached = cache.get(cache_key)
-                    if cached is not None:
-                        losses.append(float(cached["loss"]))
-                        continue
-                try:
-                    row = _run_one(
-                        inst, cfg, objective=objective, skill_bank=bank, seed=seed,
-                        llm_client=llm_client, motif_stats=stats,
-                        diag_phase=phase_label,
-                    )
-                except Exception as exc:  # noqa: BLE001 - one wedged call must not abort evolution
-                    # A run that cannot complete IS a deployment failure for its
-                    # arm: charge max loss and keep gating (per-run isolation,
-                    # mirroring _collect_rows).
-                    print(
-                        f"  [evolve {phase_label}] {inst.case_id} seed={seed} FAILED:"
-                        f" {type(exc).__name__}: {exc}",
-                        flush=True,
-                    )
-                    losses.append(1.0)
-                    continue
-                loss = float(
-                    row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0)))
-                )
-                if cache is not None and cache_key is not None:
-                    cache.put(cache_key, {"loss": loss})
-                losses.append(loss)
-        return sum(losses) / len(losses) if losses else 1.0
+        else:
+            losses = [_one_loss(t, bank, stats, phase_label) for t in tasks]
+        return sum(losses) / len(losses)
 
     # M2 ratchet: when this round inherited a bank, the bar is the INCUMBENT
     # state's held-out generation loss, not the empty-bank cold loss -- a
@@ -1200,7 +1222,7 @@ def run_evolution(
             val_instances, replace(cfg, planner_mode="graph_generate"),
             val_seeds=val_seeds, llm_client=client,
             evolved_bank=skill_bank, motif_stats=motif_stats, epsilon=epsilon,
-            objective=objective, incumbent_bank=incumbent_bank,
+            objective=objective, incumbent_bank=incumbent_bank, workers=workers,
         )
     else:
         gate_info = selection_gate
