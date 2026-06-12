@@ -348,6 +348,15 @@ Offline fake = all-zero FAIL by construction (verified).
   (dev-15 behavior). Suites 296 green.
 - Dev round 17 (registered): supremacy draw 4, FRESH seeds 181-188,
   round-29 code (slot-exact anchors + all prior fixes).
+- Supremacy judge v3 (operator direction, registered 2026-06-12,
+  applies from dev-18; dev-17 runs v2 mid-flight): deploy the evolved
+  arm's VAL-SELECTED checkpoint instead of blindly the last round.
+  Evolution curves wobble; the final round is an endpoint lottery. The
+  gate already measures held-out-VAL generation loss (j_after) per
+  accepted round; the arm deploys the accepted checkpoint with minimum
+  val loss (ties -> later round). Selection signal is train/val ONLY --
+  eval-based checkpoint selection remains red-lined. Applies equally to
+  gen and refine arms (no arm is privileged).
 
 ## Method-change ground rules (from the operator brief)
 

@@ -140,6 +140,14 @@ def main() -> int:
         )
         bank, motif = SkillBank(), {}
         log = []
+        # v3 (operator: deploy the evolved BEST point, legitimately): the
+        # gate measures held-out-VAL generation loss (j_after) every
+        # accepted round. Deploy the accepted checkpoint with the lowest
+        # VAL loss (ties -> later round, more accumulated trust) instead of
+        # blindly the last round -- evolution curves wobble and the final
+        # round is an endpoint lottery. Selection uses train/val signal
+        # ONLY (eval-based checkpoint selection is red-lined).
+        best: tuple[float, int, SkillBank, dict] | None = None
         for r in range(1, rounds + 1):
             summ = run_evolution(
                 adapter, cases=train_cases, agent_counts=[args.n_agents],
@@ -148,22 +156,34 @@ def main() -> int:
                 workers=args.workers, progress=True,
                 initial_skills=[s.model_dump(mode="json") for s in bank],
             )
-            accepted = bool((summ.get("gate") or {}).get("accepted"))
+            gate = summ.get("gate") or {}
+            accepted = bool(gate.get("accepted"))
             new_bank, new_motif = _bank_and_motif(summ)
-            # v2 (dev-15): INCUMBENT-PRESERVING chain. run_evolution exports
-            # an empty state on a rejected gate; chaining that empties the
-            # arm (dev-15's refine deployed a 0-skill bank = not a fair
-            # full-strength arm). Per the M2 ratchet philosophy a rejected
-            # UPDATE never deploys, but the previously-accepted incumbent
-            # persists.
+            # v2 (dev-15): INCUMBENT-PRESERVING chain. A rejected UPDATE
+            # never deploys, but the previously-accepted incumbent persists.
             if accepted or len(new_bank) > 0:
                 bank, motif = new_bank, _merge_motif(motif, new_motif)
+            if accepted and len(bank) > 0:
+                j_after = gate.get("j_after")
+                j_val = float(j_after) if j_after is not None else 1.0
+                if best is None or j_val <= best[0]:
+                    best = (j_val, r,
+                            SkillBank(skills=[s.model_copy(deep=True) for s in bank]),
+                            dict(motif))
             log.append({"round": r, "n_skills": len(bank), "accepted": accepted,
                         "gate": summ.get("gate")})
             el = int(time.monotonic() - t0)
             print(f"[{mode}] round {r}/{rounds}: skills={len(bank)} "
                   f"gate_acc={accepted} "
                   f"[{el // 60}:{el % 60:02d}]", flush=True)
+        if best is not None:
+            j_val, sel_round, sel_bank, sel_motif = best
+            log.append({"checkpoint_selected": sel_round, "val_j": j_val,
+                        "n_skills": len(sel_bank)})
+            print(f"[{mode}] deploying VAL-selected checkpoint: round "
+                  f"{sel_round} (val j={j_val:.3f}, skills={len(sel_bank)})",
+                  flush=True)
+            return sel_bank, sel_motif, log
         return bank, motif, log
 
     print("== evolving GEN bank ==")
