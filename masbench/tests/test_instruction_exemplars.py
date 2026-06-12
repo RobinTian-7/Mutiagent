@@ -46,7 +46,8 @@ def _card(with_exemplar: bool, with_active: bool = False) -> SkillCard:
     }
     if with_exemplar:
         policy["instruction_exemplars"] = {
-            "os": {"steps": ["compute X", "forward Y"], "case": "II-13", "em": 1.0, "n": 2}
+            "os": {"steps": ["compute X", "forward Y"], "case": "II-13",
+                   "slot": "lossless-composite", "em": 1.0, "n": 2}
         }
     if with_active:
         policy["active_instruction_exemplar"] = ["compute X", "forward Y"]
@@ -73,6 +74,18 @@ def test_deployment_view_stamps_active_exemplar():
     # original bank card is NOT mutated (view is a deep copy)
     original = next(iter(bank))
     assert "active_instruction_exemplar" not in original.organization_policy
+
+
+def test_cross_slot_exemplar_does_not_anchor():
+    # M20b (dev-16): a scalar-slot exemplar must not anchor a composite-slot
+    # rewrite -- the anchor collapsed variance onto a stably-bad point
+    bank = SkillBank(skills=[_card(with_exemplar=True)])  # exemplar slot = composite
+    view, _m, _a, _t = deployment_view(
+        bank, None, "os", kind="lossless-scalar", mode="feature",
+        fallback_tier=True,
+    )
+    skill = next(iter(view))
+    assert "active_instruction_exemplar" not in skill.organization_policy
 
 
 def test_graph_plan_carries_exemplar_and_prompt_anchors_on_it():

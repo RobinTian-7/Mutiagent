@@ -323,6 +323,31 @@ Offline fake = all-zero FAIL by construction (verified).
   mirroring gen's 5-round hypothesis), round-28 code. Success shape:
   trust earned -> deployed rows show tier!=cold -> quality dominance
   with skills-driven provenance.
+  RESULT: judge PASS exit 0 (quality 0/0/+28.3*/+11.2*/+11.2*) but
+  DISCARDED by the provenance audit -- all rows abstained again. The
+  ledger proves M22 works AND abstention is correct: pool mean 0.075,
+  best org (mesh_star) 0.125 < pool+0.15; at 4x3 the executor's
+  schedule validity sits on the noise floor, no org can demonstrate an
+  organizational margin. Do-no-harm verified live a third time.
+- JSSP v5 (registered): one more difficulty step down -- 3 jobs x 2
+  machines x 2 ops (gen_jssp_instances seed 13; smoke at this scale had
+  shown ~71% quality), n_agents=3, 5 rounds, FRESH eval seeds 51-54,
+  round-28 code. The executor can actually schedule here; organizations
+  have room to differentiate above the +0.15 comparative margin.
+- Round 29 (M20b, from dev-16 forensics; registered before dev-17):
+  SLOT-EXACT exemplar anchoring. dev-16 was the first all-parts-
+  functional supremacy draw (M18b+incumbent chain fixed the refine arm:
+  3/3 gates accepted, bank 15 deployed; exemplars verified live r1).
+  The M20 A/B answered: anchoring DID collapse instruction variance
+  (II-19: 6-7 distinct sets -> 3, one dominant on 6/8 seeds) but onto a
+  BAD point (dominant set 1/6; gen II-19 0.75 unanchored -> 0.125
+  anchored) because II-13's SCALAR exemplar anchored II-19's COMPOSITE
+  rewrite. Fix: exemplars store their verification slot; the deployment
+  view stamps an anchor ONLY when exemplar slot == case slot (anchors
+  honor the M16 slot granularity); cross-slot cases rewrite freely
+  (dev-15 behavior). Suites 296 green.
+- Dev round 17 (registered): supremacy draw 4, FRESH seeds 181-188,
+  round-29 code (slot-exact anchors + all prior fixes).
 
 ## Method-change ground rules (from the operator brief)
 

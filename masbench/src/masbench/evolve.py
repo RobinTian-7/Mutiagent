@@ -869,6 +869,10 @@ def _exemplar_phase(
             store[bucket] = {
                 "steps": instructions[: len(spec.steps)],
                 "case": inst.case_id,
+                # M20b: anchors are SLOT-exact. dev-16: II-13's scalar
+                # exemplar anchored II-19's composite rewrite -- variance
+                # collapsed onto a BAD point (dominant set 1/6).
+                "slot": slot,
                 "em": sum(ems) / len(ems),
                 "n": len(ems),
             }

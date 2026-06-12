@@ -548,10 +548,19 @@ def deployment_view(
         # the card carries one) so the deploy-time Modify rewrite is anchored
         # by a VERIFIED style instead of re-rolling from scratch (dev-12b/13:
         # 6-7 distinct instruction sets per 8 seeds; EM tracked the draw).
+        # M20b: SLOT-exact only -- dev-16 measured a scalar-slot exemplar
+        # anchoring a composite-slot rewrite onto a stably-bad point
+        # (variance collapsed, mean collapsed with it). Cross-slot cases
+        # rewrite freely.
         exemplars = policy.get("instruction_exemplars")
         if isinstance(exemplars, dict):
             ex = exemplars.get(bucket)
-            if isinstance(ex, dict) and isinstance(ex.get("steps"), list):
+            if (
+                isinstance(ex, dict)
+                and isinstance(ex.get("steps"), list)
+                and kind is not None
+                and ex.get("slot") == kind
+            ):
                 policy["active_instruction_exemplar"] = [
                     str(s)[:300] for s in ex["steps"]
                 ]
