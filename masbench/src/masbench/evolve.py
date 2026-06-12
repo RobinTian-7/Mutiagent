@@ -38,6 +38,7 @@ synthetic rows are unnecessary and ``held_out_rows`` can be left ``None``.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -213,7 +214,13 @@ def _run_one(
     # CONTENT, motif) determines the measurement; with MASBENCH_EVAL_CACHE
     # set, finished rows replay across relaunches so an interrupted frozen-
     # judge run resumes instead of repurchasing its pairs. Env unset: no-op.
-    eval_cache = open_eval_cache()
+    # M18b (dev-15 forensics): DEPLOYMENT rows only (diag_phase == "").
+    # Evolution-internal rows (evidence/explore/gate) must stay fresh: a
+    # rejected round resets the chain to an empty bank, and cached internal
+    # rows then make every subsequent round a byte-identical replay of the
+    # rejected one -- the refine chain stayed frozen at j 0.44->0.67 for
+    # three "rounds" that were one cached computation.
+    eval_cache = open_eval_cache() if not diag_phase else None
     eval_key: str | None = None
     if eval_cache is not None:
         state_hash = bank_state_hash(skill_bank, motif_stats)

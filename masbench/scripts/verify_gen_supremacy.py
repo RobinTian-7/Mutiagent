@@ -148,12 +148,21 @@ def main() -> int:
                 workers=args.workers, progress=True,
                 initial_skills=[s.model_dump(mode="json") for s in bank],
             )
+            accepted = bool((summ.get("gate") or {}).get("accepted"))
             new_bank, new_motif = _bank_and_motif(summ)
-            bank, motif = new_bank, _merge_motif(motif, new_motif)
-            log.append({"round": r, "n_skills": len(bank), "gate": summ.get("gate")})
+            # v2 (dev-15): INCUMBENT-PRESERVING chain. run_evolution exports
+            # an empty state on a rejected gate; chaining that empties the
+            # arm (dev-15's refine deployed a 0-skill bank = not a fair
+            # full-strength arm). Per the M2 ratchet philosophy a rejected
+            # UPDATE never deploys, but the previously-accepted incumbent
+            # persists.
+            if accepted or len(new_bank) > 0:
+                bank, motif = new_bank, _merge_motif(motif, new_motif)
+            log.append({"round": r, "n_skills": len(bank), "accepted": accepted,
+                        "gate": summ.get("gate")})
             el = int(time.monotonic() - t0)
             print(f"[{mode}] round {r}/{rounds}: skills={len(bank)} "
-                  f"gate_acc={bool((summ.get('gate') or {}).get('accepted'))} "
+                  f"gate_acc={accepted} "
                   f"[{el // 60}:{el % 60:02d}]", flush=True)
         return bank, motif, log
 

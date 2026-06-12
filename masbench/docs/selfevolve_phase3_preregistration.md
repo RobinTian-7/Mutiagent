@@ -281,6 +281,25 @@ Offline fake = all-zero FAIL by construction (verified).
 - JSSP v3 run (registered): same easy grid, FRESH eval seeds 31-34,
   round-26 code. Question: with graded trust, does the learner earn
   deployment on JSSP and dominate cold under the v2 pairing?
+- Round 27 (from dev-15 forensics; registered before dev-16): dev-15's
+  gating stack PASSED at strength (gen 54.2 vs cold 20.8 / select 37.5 /
+  STRONG-pick oracle 41.7) but the run honestly FAILED machinery_ok: the
+  refine arm collapsed to an empty bank. Triple fix: (a) evolve.py was
+  missing `import json` -- every live M20 exemplar rewrite died with a
+  swallowed NameError ("rewrite_failed" x32; the prior test had
+  monkeypatched the function under test -- de-mocked regression test
+  added); (b) **M18b eval-cache scope**: deployment rows only
+  (diag_phase == ""); cached evolution-internal rows froze the refine
+  chain (reject -> reset-to-empty -> identical inputs -> cached replay
+  -> trapped at j 0.44->0.67 for all rounds); (c) supremacy judge v2:
+  INCUMBENT-PRESERVING chain (a rejected update never deploys, but the
+  previously accepted bank persists -- M2 ratchet philosophy applied to
+  the arm chain). Logged for offline repro: empty-bank
+  select_then_refine eval path deploys degenerate 2-step orgs (0/24 vs
+  interleaved coldgen 20.8) -- unreachable once incumbents persist.
+- Dev round 16 (registered): supremacy draw 3, FRESH seeds 171-178,
+  round-27 code (functioning M20 + M18b + incumbent chain). Stability
+  target: gating stack 3/3 draws with a non-degenerate refine arm.
 
 ## Method-change ground rules (from the operator brief)
 

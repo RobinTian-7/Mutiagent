@@ -192,6 +192,46 @@ def test_exemplar_phase_stores_on_verified_success(monkeypatch):
     assert stored[bucket]["em"] == 1.0
 
 
+def test_rewrite_helper_parses_real_response_shape():
+    # dev-15 lesson: the earlier test monkeypatched the function under test
+    # and missed a missing module import (every live rewrite died with a
+    # swallowed NameError). This exercises the REAL helper end to end.
+    from exp_graph.mas.graph_generation import ProtocolGraphSpec
+    from masbench.evolve import _rewrite_instructions_for_case
+
+    spec = ProtocolGraphSpec.model_validate({
+        "name": "t", "n_agents": 2,
+        "steps": [
+            {"transmissions": [[0, 1]], "description": "d", "operator": "x"},
+            {"transmissions": [[1, 0]], "description": "d", "operator": "x"},
+        ],
+        "operators": ["llm_generate_dag"], "metadata": {},
+    })
+
+    class _Client:
+        def complete(self, prompt, **kw):
+            class R:
+                text = '{"instructions": ["step one", "step two"]}'
+
+            return R()
+
+    from pathlib import Path
+    from masbench.adapters.silo_bench import SiloBenchAdapter
+
+    inst = next(
+        SiloBenchAdapter(Path(__file__).parent / "data").iter_instances(
+            levels=["I"], agent_counts=[2], cases=["I-01"]
+        )
+    )
+    cfg = RunConfig(
+        llm_provider="fake", planner_mode="graph_generate",
+        merge_mode="deterministic", init_mode="deterministic",
+        objective="accuracy_first", evolved_mode="graph_generate", n_agents=2,
+    )
+    out = _rewrite_instructions_for_case(spec, inst, cfg, _Client())
+    assert out == ["step one", "step two"]
+
+
 def test_exemplar_phase_rejects_failed_verification(monkeypatch):
     from pathlib import Path
     from masbench.adapters.silo_bench import SiloBenchAdapter
