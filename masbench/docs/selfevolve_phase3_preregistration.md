@@ -366,6 +366,20 @@ Offline fake = all-zero FAIL by construction (verified).
   4x2 grid, workers gpt-4o-mini, --planner-model gpt-4o, 5 rounds, fresh
   eval seeds 71-74. Question: can a stronger architect's instructions
   lift frozen mini workers where mini-architect designs could not?
+- JSSP v6/v7 RESULTS: v6 (4x2, mini architect) = TRUST FLOWED ON JSSP
+  FOR THE FIRST TIME (all eval rows kind-tier deployed, zero
+  abstentions; M22 unlocked) with r1/r2 QUALITY DOMINANCE (+14.0pp,
+  3:1) then late-round decay -> curve rule FAIL. v7 (gpt-4o architect,
+  same grid) = clean negative control: all-abstain (same-grid cold
+  quality swung 6.7 <-> 20.7 between draws; the drift band exceeds the
+  trust margin; architect intelligence is NOT the binding constraint).
+- jssp_evolve_check v3 (registered before v8): VAL-selected checkpoint
+  final deployment (same mechanism as supremacy v3; gate j_after on
+  accepted rounds, train/val signal only) evaluated beats-style against
+  the same baseline rows under v2 pairing; exit 0 if curve OR
+  checkpoint verdict passes. v8 = final JSSP run (4x2, mini architect,
+  fresh seeds 81-84), then JSSP FREEZES regardless of outcome to
+  protect the Silo confirmatory reserve (~$25).
 - Supremacy judge v3 (operator direction, registered 2026-06-12,
   applies from dev-18; dev-17 runs v2 mid-flight): deploy the evolved
   arm's VAL-SELECTED checkpoint instead of blindly the last round.
