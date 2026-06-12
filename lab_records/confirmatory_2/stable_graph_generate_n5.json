@@ -1,0 +1,132 @@
+{
+  "mode": "graph_generate",
+  "n_agents": 5,
+  "train_cases": [
+    "I-01",
+    "I-02",
+    "I-03",
+    "I-05",
+    "I-06",
+    "I-07",
+    "I-08",
+    "II-13"
+  ],
+  "test_cases": [
+    "II-15",
+    "II-17",
+    "II-19"
+  ],
+  "train_seeds": [
+    1,
+    2
+  ],
+  "val_seeds": [
+    3
+  ],
+  "eval_seeds": [
+    25235,
+    31370,
+    39748,
+    63371,
+    73922,
+    89336,
+    93220,
+    98239
+  ],
+  "n_pairs": 24,
+  "baseline_mean": 0.08333333333333333,
+  "rounds": [
+    {
+      "round": 1,
+      "mean": 0.4166666666666667,
+      "delta": 0.33333333333333337,
+      "wins": 8,
+      "losses": 0,
+      "dominates": true,
+      "n_skills": 15,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.6666666666666666,
+        "j_after": 0.5833333333333334,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation"
+      }
+    },
+    {
+      "round": 2,
+      "mean": 0.4166666666666667,
+      "delta": 0.33333333333333337,
+      "wins": 8,
+      "losses": 0,
+      "dominates": true,
+      "n_skills": 17,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.5833333333333334,
+        "j_after": 0.5833333333333334,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      }
+    },
+    {
+      "round": 3,
+      "mean": 0.4166666666666667,
+      "delta": 0.33333333333333337,
+      "wins": 8,
+      "losses": 0,
+      "dominates": true,
+      "n_skills": 19,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.5833333333333334,
+        "j_after": 0.5833333333333334,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      }
+    },
+    {
+      "round": 4,
+      "mean": 0.5,
+      "delta": 0.4166666666666667,
+      "wins": 10,
+      "losses": 0,
+      "dominates": true,
+      "n_skills": 21,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.6666666666666666,
+        "j_after": 0.5833333333333334,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      }
+    },
+    {
+      "round": 5,
+      "mean": 0.5416666666666666,
+      "delta": 0.4583333333333333,
+      "wins": 11,
+      "losses": 0,
+      "dominates": true,
+      "n_skills": 22,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.75,
+        "j_after": 0.6666666666666666,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      }
+    }
+  ],
+  "criteria": {
+    "delta_min": 0.05,
+    "win_margin": 2,
+    "stable_rounds": 2
+  },
+  "machinery_ok": true,
+  "passed": true
+}
