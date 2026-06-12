@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>把"谁跟谁说话"学出来:本仓库的多智能体自进化方法(完整讲解)</title>
+<style>
+  :root {
+    --ink: #1a1d23; --muted: #5b6472; --bg: #ffffff; --soft: #f5f7fa;
+    --line: #dfe5ec; --accent: #0b62a4; --good: #1a7f4b; --bad: #b3372b;
+    --warn: #9a6700; --code-bg: #f0f3f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: var(--bg);
+    font: 16px/1.75 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+  h1 { font-size: 30px; line-height: 1.35; margin: 0 0 8px; }
+  .subtitle { color: var(--muted); margin-bottom: 32px; font-size: 15px; }
+  h2 { font-size: 23px; margin: 56px 0 12px; padding-top: 16px; border-top: 2px solid var(--line); }
+  h3 { font-size: 18px; margin: 32px 0 8px; }
+  p { margin: 12px 0; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 14px; }
+  pre {
+    background: var(--code-bg); padding: 14px 16px; border-radius: 8px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--soft); }
+  .box {
+    background: var(--soft); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+    border-radius: 8px; padding: 14px 18px; margin: 18px 0;
+  }
+  .box.good { border-left-color: var(--good); }
+  .box.bad { border-left-color: var(--bad); }
+  .box.warn { border-left-color: var(--warn); }
+  .box .tag { font-weight: 700; font-size: 13px; letter-spacing: .04em; }
+  .box.good .tag { color: var(--good); } .box.bad .tag { color: var(--bad); }
+  .box.warn .tag { color: var(--warn); } .box .tag { color: var(--accent); }
+  .toc { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 18px 26px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc li { margin: 4px 0; }
+  .flow { margin: 20px 0; }
+  .flow .step {
+    border: 1.5px solid var(--accent); border-radius: 8px; background: #eef5fb;
+    padding: 10px 14px; margin: 0 0 6px; font-size: 14.5px;
+  }
+  .flow .arrow { text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 6px; }
+  .small { font-size: 13.5px; color: var(--muted); }
+  .kbd { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .pass { color: var(--good); font-weight: 700; }
+  .fail { color: var(--bad); font-weight: 700; }
+  dt { font-weight: 700; margin-top: 12px; }
+  dd { margin: 2px 0 0 0; padding-left: 0; color: var(--ink); }
+  blockquote { margin: 14px 0; padding: 8px 18px; border-left: 3px solid var(--line); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>把"谁跟谁说话"学出来:<br>本仓库的多智能体自进化方法</h1>
+<p class="subtitle">
+仓库:<span class="kbd">Agent-Expretional-Graph</span>(exp-graph 执行内核 + masbench 进化与验证层)·
+分支 <span class="kbd">selfevolve-lab</span> · 文档生成于 2026-06-12,对应 round-22 代码状态(M1–M19 全部落地)。
+本文力求两件事同时成立:<b>外行能读懂,内行能复核</b>。所有数字都来自仓库内归档的验证 JSON(<span class="kbd">lab_records/round_NN/</span>),可逐条对账。
+</p>
+
+<div class="toc">
+<b>目录</b>
+<ol>
+  <li><a href="#five-min">五分钟版本:这件事到底在干什么</a></li>
+  <li><a href="#problem">任务与赛场:Silo-Bench 和 JSSP</a></li>
+  <li><a href="#thesis">核心论点:通信拓扑是一种可以自我改进的"设计技能"</a></li>
+  <li><a href="#arch">系统四层:执行、设计、记忆、学习</a></li>
+  <li><a href="#deploy">方法的心脏:一次部署决策的完整链路</a></li>
+  <li><a href="#recipe">配方搜索与"验证什么就部署什么"</a></li>
+  <li><a href="#judge">防自欺机器:两个冻结判官与预注册协议</a></li>
+  <li><a href="#history">编年史:那些把方法逼出来的失败</a></li>
+  <li><a href="#results">当前战绩与剩余步骤</a></li>
+  <li><a href="#limits">诚实的边界声明</a></li>
+  <li><a href="#glossary">词汇表</a></li>
+</ol>
+</div>
+
+<h2 id="five-min">1. 五分钟版本:这件事到底在干什么</h2>
+
+<p>想象一支被关在不同房间的解题小队。每个人手里只有<b>一部分</b>题目材料,谁也看不到全貌;他们不能开会,只能按一张事先画好的"传纸条路线图"通信:第 1 轮谁传给谁、第 2 轮谁传给谁、最后由谁交卷。</p>
+
+<p>这张<b>路线图(通信拓扑)的好坏,直接决定这队人能不能做对题</b>。链式传递适合"按顺序拼接"的题;星型汇聚适合"投票汇总"的题;画错了图,再聪明的队员也会把关键信息在中途弄丢。</p>
+
+<p>本仓库做的事:<b>让一个"架构师 AI"通过反复实验,自己学会给不同类型的题画对路线图</b>——并且用一套相当苛刻的法庭程序证明:它画的图,稳定优于(a)不学习的冷启动画图、(b)直接照搬历史最优经验、(c)人类预设的四种固定路线图里在训练集上表现最好的那一种。</p>
+
+<div class="box">
+<span class="tag">关键设定</span><br>
+队员(worker agents)的提示词<b>全程冻结</b>,从不训练、从不改动。所有的"学习"只发生在架构师一侧:它积累的是<b>设计规则</b>(什么结构在什么任务上灵/不灵的带证据的卡片),不是队员的解题能力。这样一来,成绩的提升只能来自"组织方式变好了"这一条因果路径——这正是我们要证明的论点。
+</div>
+
+<p>整个项目的另一半是<b>防自欺</b>:判分脚本被冻结(谁也不许改)、实验方案先注册后执行、每一笔 API 开销记账、失败必须根因分析后才能再试。下文 §7 会展开。</p>
+
+<h2 id="problem">2. 任务与赛场:Silo-Bench 和 JSSP</h2>
+
+<h3>2.1 主赛场:Silo-Bench(信息孤岛协作)</h3>
+<p>每个任务把一份数据切成 N 片(shard),发给 N 个 agent。题目类型包括:统计全局词频、找跨片最长回文、按片顺序拼接序列、输出组合结构的答案等。Agent 之间只能按给定的拓扑在给定轮次发消息,最后指定一人交卷,按<b>精确匹配率(Exact-Match)</b>判分。</p>
+<p>难点在于:不同题型需要的信息流形状完全不同——</p>
+<ul>
+  <li><b>顺序敏感型</b>(如跨片回文/拼接):必须让<b>相邻片</b>的边界信息互通,且不能有损压缩;</li>
+  <li><b>聚合型</b>(如词频/最值):需要树状或星状汇聚,中途可以摘要;</li>
+  <li><b>组合答案型</b>(答案是个数组/结构):末端还得有"组装"步骤,否则各自报数凑不成完整答案。</li>
+</ul>
+
+<h3>2.2 佐证赛场:JSSP 作业车间调度(M-APPLE-OS / REALM-Bench,arXiv:2502.18836)</h3>
+<p>每个 agent 持有一个作业(job)的工序表(机器、耗时),机器互斥,团队要协商出一张全局调度表,最小化总完工时间(makespan)。这是与 Silo 完全不同的任务族——用来回答"这套学习方法是否只对 Silo 有效"。接入是<b>纯增量</b>的:确定性的调度验证器逐条检查工序顺序与机器互斥,答案有效才按质量(已知上界 ÷ 实际 makespan)计分。</p>
+
+<h2 id="thesis">3. 核心论点:通信拓扑是一种可以自我改进的"设计技能"</h2>
+
+<p>用一句话陈述论文级主张:</p>
+<blockquote>
+我们把 agent 间的通信拓扑重新表述为一种<b>自我改进的设计技能</b>:一个 LLM 架构师在"带证据条件的设计规则记忆"约束下,为每个任务设计时序有向无环图(temporal DAG:第 k 轮谁→谁、最终谁持有答案),可执行的动作词汇为 <b>Preserve(原样重放被信任的结构)/ Modify(保留结构、改写每步角色指令)/ Avoid(规避被证伪的结构)</b>;工人侧完全冻结,学习只发生在架构师侧。
+</blockquote>
+
+<p>三个动作不是修辞,分别对应代码里三条可审计的路径:</p>
+<table>
+<tr><th>动作</th><th>触发条件(简化)</th><th>执行时发生什么</th></tr>
+<tr><td><b>Preserve</b></td><td>该结构在<b>当前任务的精确槽位</b>上有直接成功证据</td><td>存档的 DAG 原样重放(连步骤指令一起)</td></tr>
+<tr><td><b>Modify</b></td><td>结构可信,但证据来自<b>邻近槽位</b>(如答案形状不同)</td><td>结构保留;架构师按当前任务<b>重写每一步的接收方指令</b>后部署</td></tr>
+<tr><td><b>Avoid</b></td><td>结构有"明显劣于同袍"的成败记录</td><td>进入负面卡片,生成新图时作为反例约束</td></tr>
+</table>
+
+<h2 id="arch">4. 系统四层:执行、设计、记忆、学习</h2>
+
+<h3>4.1 执行层(exp-graph:ProtocolRunner)</h3>
+<p>给定一张时序 DAG 和任务分片,逐轮执行:每条边是一次"发件人摘要 → 收件人合并"的 LLM 调用(温度 0),最后由 <code>selected_primary</code> 指定的 agent 产出最终答案。若步骤带指令(M9),会以"本轮你的步骤角色:…"的形式注入收件人的合并提示词。执行层不学习,是公共的、确定性的舞台。</p>
+
+<h3>4.2 设计层(graph generation:架构师)</h3>
+<p>架构师为每个任务生成多个候选 DAG:一部分由 LLM 现场设计(受 max_steps / max_messages / fan-in 预算约束、自动修复显式错误),一部分由<b>技能库中被信任的结构播种</b>(skill-seeded replay)。候选去重(结构等价哈希,保留带指令的代表)、按 motif 先验与不确定性下界打分、再按"重放优先 + 粘性在位者"规则选出冠军(见 §5)。</p>
+
+<h3>4.3 记忆层(SkillBank 技能卡 + motif 统计)</h3>
+<p>记忆的最小单元是<b>技能卡(SkillCard)</b>,核心字段:</p>
+<pre>
+skill_id            身份(含结构等价哈希做的家族归并,防"同结构different名字"碎片化)
+organization_policy
+  ├ protocol_spec   可执行的 DAG 存档(含每步指令)——"技能"是可运行的工件,不是一句口号
+  ├ transfer_evidence  信任账本:每个 任务桶#槽位 的 {n, em_sum, cases[]}
+  └ deploy_action   部署期标记 preserve / modify
+trigger             适用条件(任务族、agent 数、条件键)
+expected_tradeoff   均值损失、样本数、evidence_case_count(去重案例数)等检索统计
+</pre>
+<p>另有 <b>motif 统计</b>:把每张图分解成结构特征(扇入档位、是否有汇聚点、归约深度、消息总量……),按任务桶记账各特征与损失的关联,作为生成新图时的先验。motif 键带任务桶前缀,一个范式上挣的结构学分<b>不会</b>泄漏到另一个范式。</p>
+
+<h3>4.4 学习层(masbench:进化轮)</h3>
+<p>每一轮进化在<b>训练案例</b>上做四件事(全部不触碰测试案例):</p>
+<div class="flow">
+  <div class="step">① <b>证据收集</b>:跑一组命名拓扑组合(M3/M15 组合证据:聚合系 + 链式 + 网状,训练与验证种子)+ 热温探索的自生成结构,得到带任务分类标签的逐行成绩。</div>
+  <div class="arrow">↓</div>
+  <div class="step">② <b>蒸馏</b>:ResultAnalyst minister 把行打成技能卡补丁(冠军卡、avoid 卡);误触发的 avoid 被过滤(需要真实的平均损失差距,而非二值行上的比例规则误火)。</div>
+  <div class="arrow">↓</div>
+  <div class="step">③ <b>门控</b>:把"接受补丁后的库"放到保留验证集上试做(M5 种子×3 + 允许一次失手的 ε 容差;M2 棘轮:与<b>在位库</b>比,不是与空库比)。变差的更新整批拒绝——坏经验进不了库。</div>
+  <div class="arrow">↓</div>
+  <div class="step">④ <b>信任记账</b>:把本轮所有行折进每张卡的 transfer_evidence(按结构身份归并重复),盖 deploy_action 标记,更新 motif 学分。库跨轮累积(initial_skills 续传)。</div>
+</div>
+
+<h2 id="deploy">5. 方法的心脏:一次部署决策的完整链路</h2>
+
+<p>测试时面对一个<b>没见过的任务</b>,系统按以下链路决定"用哪张图、以什么动作":</p>
+
+<h3>第 1 步:任务分类(M7 / M12 / M16)</h3>
+<p>用运行中的同一个 LLM 回答五个<b>与基准无关</b>的问题(温度 0,按题面文本哈希缓存):顺序敏感吗?答案在单个 agent 处还是全局?统计族是什么?<b>需要无损传递吗?答案是标量还是组合结构?</b>由此得出任务桶(of/os/os-seg)和槽位键:</p>
+<pre>槽位 = 任务桶 # (lossless|lossy)-(scalar|composite)
+例:跨片回文长度 → os#lossless-scalar;输出每片配对数组 → os#lossless-composite</pre>
+<p class="small">为什么是这两个机制位:它们分别对应被实测分离过的两种失败模式——"摘要会不会丢掉答案所需的信息"(dev-5 的 vote/count 双峰)与"答案要不要末端组装"(dev-9 的标量保护 vs 组合塌陷)。正则启发式只作为离线 fake 模式的后备,真实运行一律走 LLM 分类——这是"可泛化、不许针对 Silo 写死"的操作员条款的直接落实。</p>
+
+<h3>第 2 步:查信任账本(M1 / M6→M8 / M16b / M19b)</h3>
+<p>对库里每张卡问:"你在<b>这个槽位</b>上可信吗?"规则按证据精细度分层,且方向不对称:</p>
+<ol>
+  <li><b>直接证据优先</b>:该槽位有 ≥2 行记录且平均 EM ≥ 0.5 → 信任(动作 Preserve);记录在案的失败 → 不信任。一行幸运不构成信任。</li>
+  <li><b>形状外推(M16b)</b>:槽位没量过,但<b>同损失性、另一形状</b>的兄弟槽位通过了 → 可部署,动作自动转 <b>Modify</b>(结构可信,指令要按新答案形状重写)。<b>损失性维度永不外推</b>(有损证据不能授权无损任务)——那是能力边界,不是适配边界。</li>
+  <li><b>M19b 全局多样性门</b>:<b>正向</b>外推还要求这张卡在<b>全部证据里至少出现过 2 个不同案例</b>(防止"单案例配方"骑着外推横扫一切,dev-11 事故);<b>负向</b>(测得失败)在任何多样性下都拦截——失败比成功更可信。</li>
+  <li><b>广度外推(M8)</b>:完全没量过的维度,需要 ≥2 个子槽位通过且零失败才许外推。"没有反例"≠"一致好评",证据窄就只挣窄信任。</li>
+</ol>
+
+<h3>第 3 步:检索排序(M4 / M19a)</h3>
+<p>可信卡片按"悲观损失"排序:</p>
+<pre>排序损失 = 平均损失 + 0.5/√(行数) + 0.25/去重案例数</pre>
+<p>第二项是经典 LCB(样本少 → 先持怀疑);第三项是 dev-11 买来的教训:<b>同一案例的多个种子是相关样本,不是独立证据</b>。一张"1 个案例上 2 行满分"的新卡(罚 0.25)排不过"7 个案例上身经百战"的老将(罚 0.036)。</p>
+
+<h3>第 4 步:候选竞争与冠军选择(round-10 稳定性三件套)</h3>
+<ul>
+  <li><b>replay_first</b>:存在被信任的重放候选时,新鲜生成的候选不参与冠军竞选(它们只在探索期挣证据);</li>
+  <li><b>粘性在位者</b>:motif 先验要把在位冠军挤下台,优势必须超过 0.1 的边际——近似平手不换人(dev-6 的 r3 崩盘就是平手乱洗牌);</li>
+  <li><b>带指令优先的去重</b>:结构等价的候选合并时,保留带指令的那份(裸结构孪生卡曾把指令版顶掉)。</li>
+</ul>
+
+<h3>第 5 步:执行动作(M14 / M9)</h3>
+<p>Preserve → 原样重放(指令一起);Modify → 架构师读任务简报,为每一步写一条 ≤200 字符的接收方指令(解析失败重试一次),注入合并提示词。<b>实测这一步是地板破除器</b>:II-17/II-18 在逐字重放下 72 战 0 胜,加上按任务改写的指令后变成可赢(screen-B +22.2pp)。</p>
+
+<h3>第 6 步:分层兜底与弃权(round-12 / M1)</h3>
+<pre>槽位可信的重放  →  桶级可信的强通才(动作 Modify)  →  与冷启动完全一致的路径</pre>
+<p>没有任何可信卡时,系统<b>弃权</b>:跑出来的图与空库冷启动逐字节相同——"不知道时不装懂",这让弃权在 stable 判官下是中性的(不输给基线),也是 do-no-harm 条款的实现。</p>
+
+<h2 id="recipe">6. 配方搜索与"验证什么就部署什么"</h2>
+
+<h3>6.1 M10:训练期验证式配方搜索(Reflexion / STaR 思路)</h3>
+<p>有的训练案例上,所有现成结构都不及格——一锤子买卖式的证据收集永远造不出锚点。于是:让 LLM 针对该案例<b>提出带每步指令的完整程序</b>(配方),立刻在 2 个种子上执行验证;失败给程序性反馈再试(≤4 次);通过防泄漏扫描(配方文本不得含分片字面量)后,验证通过的配方才入库。<b>它的账本行就是它的验证行</b>——"先验证,后信任"。</p>
+
+<h3>6.2 dev-11 事故与 M19c:验证与部署必须是同一工件</h3>
+<div class="box bad">
+<span class="tag">事故复盘(2026-06-12 当天)</span><br>
+一张在 II-13 上验证 2/2 通过的配方卡(5 步、每步带回文专用指令、40 条消息),部署时被预算修复器(max_messages=32)<b>砍掉第 5 步(全局答案步)并丢光全部指令</b>——实际跑的是 4 步裸结构,与验证过的东西不是同一份工件;它还凭"2 行满分"赢下检索,部署到所有测试案例上,整条曲线归零(4.2/0.0/4.2 vs 基线 8.3)。
+</div>
+<p><b>修复(M19c)</b>:修复器重建步骤时保留指令字段;<code>skill_*</code> 重放候选按存档工件的实际尺寸放宽预算——<b>预算约束的是"现场生成",不是"重放已验证执行过的工件"</b>;新鲜候选仍受预算约束。加上 §5 的 M19a/M19b 双护栏后,同一格子翻成 45.8*/62.5*/45.8* 全程压制。</p>
+
+<h2 id="judge">7. 防自欺机器:两个冻结判官与预注册协议</h2>
+
+<p>方法再漂亮,没有可信的判分都是空话。本仓库的验证层有四道互锁:</p>
+
+<h3>7.1 判官一:stable(verify_evolve_stable.py,冻结)</h3>
+<p>问"进化有没有真实、持续的提升":同管线<b>冷启动</b>(空库、无 motif 先验)在保留网格(测试案例 × 评测种子)上测出基线;然后 R 轮累积进化,<b>每轮</b>结束都在同一网格上配对评测。</p>
+<pre>PASS ⇔ 最后 stable_rounds(=2)轮,每轮都满足:
+       均值 ≥ 基线 + 5pp  且  (赢的对数 − 输的对数) ≥ 2</pre>
+<p>一轮走运过不了;冲高回落过不了。</p>
+
+<h3>7.2 判官二:4-arm(verify_beats_baselines.py,冻结)</h3>
+<p>问"打不打得过最好的替代方案":完整进化后,最终库在同一网格上与三条基线臂逐对(同案例同种子)比:</p>
+<table>
+<tr><th>臂</th><th>是什么</th><th>控制什么</th></tr>
+<tr><td>select</td><td>同一库,纯检索重放最优技能</td><td>架构师的设计是否比"照抄最好经验"多赚了东西</td></tr>
+<tr><td>graphgen</td><td>冷启动现场画图(空库)</td><td>零经验下限</td></tr>
+<tr><td>fixed</td><td>{tree, mesh_star, one_peer_exp, chain} 中<b>训练集上最强者</b></td><td>最好的人类预设拓扑——操作员点名要"无条件干掉"的对象</td></tr>
+</table>
+<pre>PASS ⇔ 对【每一条】臂:均值差 ≥ 5pp 且 独胜数 − 独负数 ≥ 2</pre>
+
+<h3>7.3 程序正义</h3>
+<ul>
+  <li><b>判分脚本冻结</b>:红线明令不许改 <code>verify_evolve*</code>;修复永远进管线,不进法庭。</li>
+  <li><b>预注册</b>:每个开发轮先在 <code>selfevolve_phase3_preregistration.md</code> 登记案例划分、种子、代码版本和要回答的问题,再开跑;方法变更(M1–M19)逐条记录动机与出处。</li>
+  <li><b>终局验收(confirmatory)</b>:现场 RNG 抽取划分与种子并记录、<b>空缓存</b>起跑、两模式 × 两判官四格全 exit 0;最多 3 次机会,失败必须先有根因修复,<b>不许换种子重抽</b>。</li>
+  <li><b>账本</b>:每一笔真实 API 开销记入 <code>COST_LEDGER.json</code>(当前 $52.89 / $100 上限),作废的运行也入账并标注 INVALID/DIAGNOSTIC。</li>
+  <li><b>机制纯度审计</b>:每个胜局都要追溯到"库内技能 → 架构师 → 部署的组织(+指令)"的因果链;解释不通的涨分按过拟合处理、拒绝入账。</li>
+</ul>
+
+<h3>7.4 一个重要的测量发现:供应商时间漂移</h3>
+<p>同一确定性策略、同一批种子,在相隔 28 分钟的两次测量里可以从 20.8% 掉到 0.0%(p≈4e-4)。这意味着:(a)统计功效的杠杆是<b>更多案例</b>而不是更多种子(同案例种子间高度相关);(b)判读对比时必须配对同窗口;(c)±4pp 量级的臂间差应读作噪声宽度。这条发现直接塑造了上面的判据与 M19a 的"案例数"项。</p>
+
+<h2 id="history">8. 编年史:那些把方法逼出来的失败</h2>
+<p class="small">方法的每个组件都不是设计出来的优雅,而是失败逼出来的必需。挑最有代表性的(完整列表见预注册文档的 M1–M19 变更日志):</p>
+
+<table>
+<tr><th>失败(轮次)</th><th>机制根因</th><th>催生的方法</th></tr>
+<tr><td>盲目重放冠军,换个案例就翻车(P2 终审)</td><td>检索按错误字段升序——Silo 把"成功率"塞进了 CF 的"损失"字段,排序<b>最差优先</b></td><td>统一 primary_loss 语义 + 字段消费审计(同族反转共修了三处)</td></tr>
+<tr><td>跨案例乱套经验(P2)</td><td>经验不带"适用于什么任务"的条件</td><td><b>M1</b> 证据条件化信任 + 弃权到冷路径</td></tr>
+<tr><td>门控三连误拒(dev-1 gen)</td><td>3 样本二值验证 ≈ 抛硬币</td><td><b>M5</b> 验证种子×3 + 允一次失手的 ε</td></tr>
+<tr><td>72/72 全弃权(dev-5)</td><td>14 路统计族分类把信任键击碎(回文读成 max,锚点经验进了别的槽)</td><td><b>M12/M16</b> 二位机制键(损失性×形状)取代细颗粒分类</td></tr>
+<tr><td>r3 冠军莫名换人、曲线塌陷(dev-6)</td><td>近平手洗牌 + 结构去重把带指令版顶掉</td><td><b>round-10</b> replay_first / 粘性边际 / 指令保留去重</td></tr>
+<tr><td>全臂同时 21.4%、含空库臂(dev-10)</td><td>代理 cookie 在 httpx 持久 jar 里累积 → 431 头超限,纯基础设施</td><td>无 cookie HTTP 客户端;测量作废重跑(机制结论零提取)</td></tr>
+<tr><td>组合答案案例 16/24 饿死弃权(dev-10b)</td><td>训练池全是标量案例,组合槽位永远没人有证据</td><td><b>M16b</b> 形状兄弟槽外推 + 自动 Modify</td></tr>
+<tr><td>单案例配方劫持全部部署(dev-11)</td><td>三层叠加:验证行自挣信任 + LCB 低样本乐观 + <b>部署的不是验证的工件</b></td><td><b>M19a/b/c</b>(§5 §6 已详述)+ 缓存跨运行播种禁令</td></tr>
+</table>
+
+<div class="box warn">
+<span class="tag">工程教训(同样写进规程)</span><br>
+长测试一律脱离终端分离启动、只认文件系统工件(状态行、判决 JSON、诊断行),不信任何后台通知;运行中不许改源码/提交(判官进程各自 import 的代码版本必须唯一);所有测试可断点续跑(M18:按"库内容哈希"为键的评测缓存,中断后重启同一驱动即自动重放已付费的行)。
+</div>
+
+<h2 id="results">9. 当前战绩与剩余步骤</h2>
+
+<h3>9.1 里程碑(round-21,种子 131-138,M19 代码,一次抽签内)</h3>
+<table>
+<tr><th>格子</th><th>判决</th><th>数字</th></tr>
+<tr><td>stable × refine</td><td class="pass">PASS</td><td>基线 8.3%;45.8*/62.5*/45.8*,末轮 9:0</td></tr>
+<tr><td>stable × gen</td><td class="pass">PASS</td><td>基线 8.3%;五轮全压制 +37.5~+45.8pp,败局 ≤1</td></tr>
+<tr><td>4-arm × refine</td><td class="pass">PASS</td><td>45.8 vs select 37.5 / 冷启动 8.3 / <b>fixed=one_peer 37.5</b></td></tr>
+<tr><td>4-arm × gen</td><td class="pass">PASS(史上首次)</td><td><b>50.0</b> vs 37.5 / 8.3 / <b>41.7</b>(对最强固定拓扑 +8.3pp,4:2)</td></tr>
+</table>
+<p class="small">机制纯度:全部部署行可追溯到库内技能;标量案例 Preserve 原样重放、组合案例 Modify+4 条改写指令;零弃权、零配方劫持;两个 4-arm 的差距来源都是组合案例 II-19(0.62–0.75 vs 其他臂 0.12–0.38)。</p>
+
+<h3>9.2 进行中(本文档生成时)</h3>
+<ul>
+  <li><b>dev-13</b>:第三组种子(141-148)四格复扫——可重复性检验。早段战报:stable_gen r1 +41.7pp(10:0)、r2 +16.7pp(6:2);stable_refine r1 +29.2pp(7:0);门控还正确拒绝了一个会变差的更新批次。</li>
+  <li><b>JSSP 佐证</b>:同一学习器、零改动判分逻辑,在 6 个合成调度实例上跑"冷启动 vs 3 轮进化"。</li>
+</ul>
+
+<h3>9.3 剩余步骤</h3>
+<p>两路加固落地且健康 → 按操作员批准的 SHAPE v3 现场抽取划分与种子(RNG 记录在案)、空缓存,烧 confirmatory 第 1 次机会;四格全 exit 0 即为正式验收通过。预算余量足够 3 次机会加中间修复轮。</p>
+
+<h2 id="limits">10. 诚实的边界声明</h2>
+<ol>
+  <li><b>规模边界</b>:全部结论在 n=5 agents、gpt-4o-mini、温度 0 条件下取得。n=10 侦察显示该模型在此基准上能力地板更深(双臂全零),组织优化救不了执行力不存在的地方——"组织记忆不能创造执行者没有的能力"是本项目实测的硬边界(dev-4:0 胜/72 局)。</li>
+  <li><b>案例池边界</b>:Silo 在 n=5 下有动态范围的 II 级案例只有 4 个,全部在开发期被触碰过。因此终局验收的"未动过"只能在<b>划分+种子+空缓存</b>层面成立(SHAPE v3,操作员知情批准),它证明的是"未见过的组合上可重复",不是"全新任务上的泛化"——后者由 JSSP 佐证补位。</li>
+  <li><b>II-17 仍是地板</b>:该案例在最近几轮对<b>所有</b>臂都是 0%(包括人类预设拓扑),系统在它上面的正确行为是不伤害(同 0),而非创造奇迹。</li>
+  <li><b>漂移噪声</b>:±4pp 量级的单次臂间差不构成结论;这正是判据要求"连续多轮 + 赢负边际"且加固轮要换种子复扫的原因。</li>
+</ol>
+
+<h2 id="glossary">11. 词汇表</h2>
+<dl>
+  <dt>拓扑 / 时序 DAG</dt><dd>"第 k 轮谁发消息给谁、最终谁交卷"的有向图;本项目的被学习对象。</dd>
+  <dt>冷启动(coldgen)</dt><dd>同一套管线,但技能库为空、无 motif 先验——"没有记忆的自己"。</dd>
+  <dt>gen / refine 两种模式</dt><dd>gen(graph_generate):架构师现场设计 DAG,技能只作为播种与先验;refine(select_then_refine):优先检索重放库内最优工件再精修。两者都要过全部判官。</dd>
+  <dt>技能卡(SkillCard)</dt><dd>带可执行 DAG 存档、信任账本、触发条件的记忆单元;"经验"的落地形态。</dd>
+  <dt>信任账本(transfer_evidence)</dt><dd>每张卡按"任务桶#槽位"记 {行数 n、EM 总和、去重案例表};一切部署授权的依据。</dd>
+  <dt>槽位(slot)</dt><dd>任务桶 #(lossless|lossy)-(scalar|composite):证据被允许声明效力的最小单位。</dd>
+  <dt>门控(gate)</dt><dd>每轮更新入库前在保留验证集上的预演;变差整批拒绝;M2 棘轮 = 与在位库比而非空库比。</dd>
+  <dt>motif</dt><dd>图的结构特征(扇入、深度、汇点……)与成绩的关联统计,按任务桶隔离,作生成先验。</dd>
+  <dt>配方(recipe)</dt><dd>M10 在训练期为困难案例搜索并当场验证的"结构+每步指令"完整程序。</dd>
+  <dt>弃权(abstain)</dt><dd>无可信技能时部署与冷启动逐字节相同的路径;do-no-harm 的实现。</dd>
+  <dt>EM(Exact-Match)</dt><dd>最终答案与标准答案精确一致的比率;Silo 的主判分。</dd>
+  <dt>pp(百分点)</dt><dd>percentage point;"+12.5pp"即均值高 12.5 个百分点。</dd>
+  <dt>confirmatory</dt><dd>预注册的终局验收:现场抽签、空缓存、四格全过、≤3 次机会。</dd>
+</dl>
+
+<p class="small" style="margin-top:48px;border-top:1px solid var(--line);padding-top:16px;">
+来源与可复核性:判官 <span class="kbd">masbench/scripts/verify_evolve_stable.py</span> 与 <span class="kbd">verify_beats_baselines.py</span>(冻结);预注册与变更日志 <span class="kbd">masbench/docs/selfevolve_phase3_preregistration.md</span>;逐轮证据 <span class="kbd">masbench/docs/selfevolve_phase3_evidence_report.md</span>;每轮判决 JSON 归档 <span class="kbd">lab_records/round_NN/</span>;开销账本 <span class="kbd">masbench/runs/COST_LEDGER.json</span>。
+借鉴的文献:SkillLens(2605.08386,SKIP 弃权路线)、SkillGraph(2605.12039,任务条件化检索)、SAGE(2512.17102,技能质量与任务结果联动)、Reflexion/STaR(配方的验证式自举)、Voyager/AWM(技能库先例)、LCB/冠军-挑战者(置信下界与棘轮门控)、REALM-Bench/M-APPLE-OS(2502.18836,JSSP)。
+</p>
+
+</div>
+</body>
+</html>
