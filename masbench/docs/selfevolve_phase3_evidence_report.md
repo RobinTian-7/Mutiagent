@@ -191,6 +191,71 @@ Provenance audits (operator requirement): every win traces to a bank
 skill (replayed structure + architect-written instructions); zero
 non-skill-driven wins claimed.
 
+## Dev rounds 6-10c: stability, the fixed-best bar, and the shape axis
+
+Split for all of these: TRAIN {I-01,02,04,06,07,08,II-13} / TEST
+{II-15,II-17,II-19}; seeds dev-6 81-88, dev-7 91-98, dev-8 101-108,
+dev-9 111-118, dev-10/b/c 121-128. Two frozen judges: verify_evolve_stable
+(vs same-pipeline cold) and verify_beats_baselines (4-arm: select /
+coldgen / fixed_best_on_train; PASS = ≥5pp AND win-margin ≥2 vs EACH).
+
+- **dev-6 (37c64ea): gen-mode first-ever stable PASS** (4.2/29.2*/37.5*
+  rising, zero losses); II-13 train-verified recipe replayed onto II-15 =
+  15/16. refine FAILED by an r3 deployment reshuffle → round-10
+  deployment-stability fixes (replay_first, sticky motif margin,
+  instruction-keeping dedupe).
+- **dev-7 (764bcb0): BOTH modes stable PASS** (refine 45.8/45.8/62.5* vs
+  16.7; gen 25.0*×3 vs 8.3) — first simultaneous PASS.
+- **dev-8: first 4-arm battles** — refine -8.3pp vs fixed (unconditional
+  Modify added noise where bare structure worked) → M14
+  evidence-conditioned Preserve/Modify; gen 0.0pp all-abstain (no named
+  aggregators in gen evidence) → M15 portfolio parity.
+- **dev-9 (cfc768c): stable_gen 5-round PASS, ALL 5 dominate** (+25.0/
+  +12.5/+16.7/+20.8/+20.8); gen vs fixed closed -33.3→+0.0; refine
+  -4.2pp. All 48 deployments preserve-verbatim → floors II-17/19 stayed
+  0 — M14 had traded screen-B's Modify-cracked floors for II-15
+  protection. Distinguisher identified: ANSWER SHAPE → M16 slot key
+  bucket#(lossy|lossless)-(scalar|composite).
+- **dev-10 INVALID (infra)**: httpx cookie-jar accumulation → 431s
+  poisoned all arms; fixed by _NoCookieHTTPClient (66c10b3).
+- **dev-10b: M16-as-shipped NET NEGATIVE** (all-scalar train pool starves
+  composite slots; 16/24 abstentions; stable_gen fell to FAIL) → **M16b**:
+  the shape axis EXTRAPOLATES via the sibling-shape verdict with action
+  auto-Modify; the losslessness axis never does.
+- **dev-10c (M16b + M18 resume layer): the validation round.**
+  - stable_gen PASS exit 0 — strongest curve to date: base 12.5%, rounds
+    +16.7(6:2)/+37.5(9:0)/+25.0(6:0)/+50.0(12:0)/+45.8(11:0), 5/5
+    dominate, zero losses after r1, bank 14→24 all gates accepted.
+  - **beats_refine PASS exit 0 — FIRST-EVER 4-arm unconditional win**:
+    evolved 58.3% vs select 41.7 (+16.7, 4:0), coldgen 8.3 (+50.0, 12:0),
+    fixed_best=one_peer_exponential 45.8 (+12.5, 4:1); 24 pairs, 0
+    dropped. Margin carried by II-19: evolved 0.75 vs fixed 0.38 vs
+    select 0.25 — the M16b Modify path (extrapolated lossless-composite
+    trust, 4 rewritten step instructions on every deployed row). II-15 =
+    shared ceiling (1.00 evolved/select/fixed), II-17 = shared floor
+    (0.00 all four arms at these seeds).
+  - beats_gen FAIL — but only on the select arm and only by noise width:
+    vs fixed +37.5pp (10:1, PASS), vs coldgen +29.2 (8:1, PASS), vs
+    select +4.2pp 4:3 (needs ≥5pp & margin 2). The two lost II-15 pairs
+    are seeds where evolved and select deployed the SAME verbatim
+    one_peer policy (instr0, identical family) — same-policy provider
+    drift, the ~4pp arm-noise measured in dev-9. II-19 evolved 0.50 vs
+    select 0.12 (4 Modify wins). Mechanically gen now clears the
+    operator-named bar (beat the best fixed topology) on this split; the
+    frozen judge's select-arm criterion remains unmet at this power.
+  - Deployment forensics (all three runs): composite cases II-17/II-19
+    deploy with extrapolated trust + 4 instruction-carrying steps
+    (Modify); scalar II-15 deploys preserve-verbatim (instr0); ZERO
+    evolved-row abstentions (dev-10b's 16/24 starvation eliminated).
+  - M18 resume layer validated live (operator directive: every test
+    resumable): dev-10c was SIGTERM-killed at 5 min, relaunched, and
+    replayed the killed leg's finished rows at 0.0s (beats_gen 20/32,
+    beats_refine 8/8 portfolio) before purchasing new work.
+    POLICY: dev runs may seed caches across same-split runs;
+    CONFIRMATORY attempts run with fresh empty caches (no cross-run
+    seeding, fresh MASBENCH_EVAL_CACHE) so every confirmatory number is
+    a fresh measurement.
+
 ## Thesis alignment (operator's ultimate framing)
 
 The system IS the thesis: frozen workers (soldier prompts never learned);
