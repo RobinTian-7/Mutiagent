@@ -17,6 +17,8 @@ from exp_graph.mas.schemas import (
     MASRuntimeConfig,
     ObjectiveSpec,
     PlannerRequest,
+    RoleLLMConfig,
+    RoleLLMProfiles,
 )
 from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.runner import SynchronousRunner
@@ -445,6 +447,19 @@ def _plan_graph_generate(
         # and select the best-scoring one; 0 -> off (blind first-valid/motif pick).
         graph_search_mode=("topk" if cfg.graph_validation_seeds > 0 else "single"),
         graph_validation_seeds=list(range(cfg.graph_validation_seeds)),
+        # M23 (frozen workers, stronger architect): emperor-role calls
+        # (graph generation + instruction rewrite) use the planner model
+        # when the split is configured; None -> byte-identical legacy path.
+        role_llm_profiles=(
+            RoleLLMProfiles(
+                emperor=RoleLLMConfig(
+                    platform=cfg.llm_provider,
+                    model_name=cfg.planner_model_name,
+                )
+            )
+            if getattr(cfg, "planner_model_name", None)
+            else None
+        ),
     )
     request = PlannerRequest(
         task_family="silo",

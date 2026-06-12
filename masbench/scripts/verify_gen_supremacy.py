@@ -58,6 +58,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--benchmarks-dir", default="third_party/acl26-silo-bench/benchmarks")
     p.add_argument("--llm", default="openai")
     p.add_argument("--model-name", default="gpt-4o-mini")
+    p.add_argument("--planner-model", default=None,
+                   help="M23: architect-side model (graph generation, instruction rewrite, recipe/exemplar writing); workers keep --model-name. None = no split")
     p.add_argument("--merge-mode", default="llm_full_merge")
     p.add_argument("--init-mode", default="llm_local_solve")
     p.add_argument("--objective", default="accuracy_first")
@@ -105,6 +107,7 @@ def main() -> int:
         benchmark="silo_bench", objective=args.objective,
         merge_mode=args.merge_mode, init_mode=args.init_mode,
         llm_provider=args.llm, model_name=args.model_name,
+        planner_model_name=args.planner_model,
         request_timeout=args.request_timeout,
         num_graph_candidates=args.graphgen_candidates,
         n_agents=args.n_agents,

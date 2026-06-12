@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
                    help="directory of *.jssp files (see gen_jssp_instances.py)")
     p.add_argument("--llm", default="openai")
     p.add_argument("--model-name", default="gpt-4o-mini")
+    p.add_argument("--planner-model", default=None,
+                   help="M23: architect-side model (graph generation, instruction rewrite, recipe/exemplar writing); workers keep --model-name. None = no split")
     p.add_argument("--objective", default="accuracy_first")
     p.add_argument("--evolved-mode", default="graph_generate",
                    choices=["graph_generate", "select_then_refine"])
@@ -72,6 +74,7 @@ def main() -> int:
         benchmark="jssp", objective=args.objective,
         merge_mode="llm_full_merge", init_mode="llm_local_solve",
         llm_provider=args.llm, model_name=args.model_name,
+        planner_model_name=args.planner_model,
         request_timeout=args.request_timeout, evolved_mode=args.evolved_mode,
         num_graph_candidates=args.graphgen_candidates,
         n_agents=args.n_agents,

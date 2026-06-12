@@ -348,6 +348,24 @@ Offline fake = all-zero FAIL by construction (verified).
   (dev-15 behavior). Suites 296 green.
 - Dev round 17 (registered): supremacy draw 4, FRESH seeds 181-188,
   round-29 code (slot-exact anchors + all prior fixes).
+- Round 30 method (M23, operator direction "规划器提升,worker 保持
+  4o-mini", registered before JSSP v7): PER-ROLE MODEL SPLIT. New
+  RunConfig.planner_model_name routes ONLY architect-side calls to a
+  stronger model -- emperor graph generation + deploy-time instruction
+  rewrite (via exp-graph role_llm_profiles.emperor), recipe PROPOSALS,
+  and exemplar writing -- while every worker execution (init/merge
+  protocol calls) stays on model_name. Verification still EXECUTES on
+  worker-model runs (a recipe is only trusted if 4o-mini workers can
+  follow it). Recipe cache keys include the architect model. None = no
+  split, byte-identical (suites 298/271 green). Thesis-pure experiment:
+  if a stronger architect's designs+instructions lift frozen mini
+  workers, the gain is attributable to DESIGN quality alone.
+- JSSP v5/v6 scan results: 3x2 = cold quality 52.5%, field undifferentiated
+  (everyone swims), correct abstention #4; v6 (4x2) registered as the
+  last scan gap on mini-architect. JSSP v7 (registered): the M23 shot --
+  4x2 grid, workers gpt-4o-mini, --planner-model gpt-4o, 5 rounds, fresh
+  eval seeds 71-74. Question: can a stronger architect's instructions
+  lift frozen mini workers where mini-architect designs could not?
 - Supremacy judge v3 (operator direction, registered 2026-06-12,
   applies from dev-18; dev-17 runs v2 mid-flight): deploy the evolved
   arm's VAL-SELECTED checkpoint instead of blindly the last round.

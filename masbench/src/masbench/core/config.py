@@ -78,6 +78,11 @@ class RunConfig:
     # passing set is stored on the card and anchors deploy-time Modify
     # rewrites, removing the per-deployment instruction-draw lottery). 0 = off.
     exemplar_search_budget: int = 6
+    # Phase-3 M23 (operator: stronger PLANNER, frozen workers): when set,
+    # architect-side calls (emperor graph generation, instruction rewrite,
+    # recipe search, exemplar writing) use this model while workers keep
+    # model_name. None = no split (byte-identical historical behavior).
+    planner_model_name: str | None = None
     # Phase-3 M9: replay candidates get per-step receiver instructions
     # REWRITTEN for the current task (one emperor call per seeded candidate)
     # and the protocol runner injects them into merge prompts. False =

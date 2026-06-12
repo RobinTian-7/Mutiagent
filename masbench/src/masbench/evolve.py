@@ -673,9 +673,12 @@ def _recipe_search_phase(
         # replays it instead of re-searching (the search is adaptive and
         # expensive; the artifact is just a spec).
         recipe_cache = open_eval_cache()
+        # M23: key includes the ARCHITECT model -- a planner-model proposal
+        # must never replay as a worker-model one (or vice versa).
+        _arch = getattr(cfg, "planner_model_name", None) or cfg.model_name
         recipe_key = (
             f"recipe|{inst.case_id}|a{n_agents}|s{'-'.join(map(str, verify_seeds))}"
-            f"|{cfg.model_name}"
+            f"|{_arch}"
         )
         spec = None
         trace: list[dict[str, Any]] = []
@@ -691,7 +694,10 @@ def _recipe_search_phase(
                 task_brief=(inst.task_prompt or "")[:1800],
                 n_agents=n_agents, max_steps=max_steps,
                 shards=list(inst.shards),
-                llm_client=llm_client, model_name=cfg.model_name,
+                llm_client=llm_client,
+                # M23: recipe PROPOSALS are architect-side design work;
+                # verification still EXECUTES on worker-model runs.
+                model_name=getattr(cfg, "planner_model_name", None) or cfg.model_name,
                 run_and_score=_score, verify_seeds=verify_seeds,
                 attempts=4,
             )
@@ -735,10 +741,11 @@ def _rewrite_instructions_for_case(
         n_steps=len(spec.steps),
         structure=structure,
     )
+    architect_model = getattr(cfg, "planner_model_name", None) or cfg.model_name
     for _ in range(2):
         try:
             response = llm_client.complete(
-                prompt, model_name=cfg.model_name, temperature=cfg.temperature
+                prompt, model_name=architect_model, temperature=cfg.temperature
             )
             raw = (getattr(response, "text", "") or "").strip()
             start, end = raw.find("{"), raw.rfind("}")
