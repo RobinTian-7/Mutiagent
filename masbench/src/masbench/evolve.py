@@ -72,7 +72,7 @@ from exp_graph.protocols.spec import ProtocolGraphSpec, ProtocolStepSpec
 from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
 
 from masbench import diag
-from masbench.cache import EvidenceCache, open_cache
+from masbench.cache import EvidenceCache, open_cache, open_eval_cache
 from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
@@ -86,6 +86,7 @@ from masbench.task_classify import (
 )
 from masbench.recipes import recipe_skill_card, search_recipe
 from masbench.transfer import (
+    bank_state_hash,
     deployment_view,
     inject_transfer_evidence,
     merge_structural_duplicates,
@@ -192,6 +193,23 @@ def _run_one(
     task_adapter = SiloProtocolAdapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
+
+    # M18 resume layer: at temperature 0, (case, seed, planner knobs, BANK
+    # CONTENT, motif) determines the measurement; with MASBENCH_EVAL_CACHE
+    # set, finished rows replay across relaunches so an interrupted frozen-
+    # judge run resumes instead of repurchasing its pairs. Env unset: no-op.
+    eval_cache = open_eval_cache()
+    eval_key: str | None = None
+    if eval_cache is not None:
+        state_hash = bank_state_hash(skill_bank, motif_stats)
+        eval_key = "evalrow|" + EvidenceCache.key(
+            case_id=instance.case_id, n_agents=n_agents,
+            planner_mode=f"{cfg.planner_mode}@{state_hash}",
+            objective=objective.name, seed=seed, cfg=cfg,
+        )
+        cached_row = eval_cache.get(eval_key)
+        if cached_row is not None:
+            return cached_row
 
     request = PlannerRequest(
         task_family=SILO_TASK_FAMILY,
@@ -336,6 +354,8 @@ def _run_one(
                 for s in skill_bank.retrieve(request)
             ]
         diag.dump_eval_run(record)
+    if eval_cache is not None and eval_key is not None:
+        eval_cache.put(eval_key, row)
     return row
 
 
@@ -622,14 +642,34 @@ def _recipe_search_phase(
             except Exception as exc:  # noqa: BLE001 - a failed attempt is feedback
                 return 0.0, {"wrong_agents": "run failed", "holder_state": f"{type(exc).__name__}"}
 
-        spec, trace = search_recipe(
-            task_brief=(inst.task_prompt or "")[:1800],
-            n_agents=n_agents, max_steps=max_steps,
-            shards=list(inst.shards),
-            llm_client=llm_client, model_name=cfg.model_name,
-            run_and_score=_score, verify_seeds=verify_seeds,
-            attempts=4,
+        # M18: a VERIFIED recipe is a deterministic-keyed artifact -- resume
+        # replays it instead of re-searching (the search is adaptive and
+        # expensive; the artifact is just a spec).
+        recipe_cache = open_eval_cache()
+        recipe_key = (
+            f"recipe|{inst.case_id}|a{n_agents}|s{'-'.join(map(str, verify_seeds))}"
+            f"|{cfg.model_name}"
         )
+        spec = None
+        trace: list[dict[str, Any]] = []
+        if recipe_cache is not None:
+            cached_spec = recipe_cache.get(recipe_key)
+            if cached_spec is not None:
+                from exp_graph.protocols.spec import ProtocolGraphSpec
+
+                spec = ProtocolGraphSpec.model_validate(cached_spec["spec"])
+                trace = [{"status": "resumed_from_cache"}]
+        if spec is None:
+            spec, trace = search_recipe(
+                task_brief=(inst.task_prompt or "")[:1800],
+                n_agents=n_agents, max_steps=max_steps,
+                shards=list(inst.shards),
+                llm_client=llm_client, model_name=cfg.model_name,
+                run_and_score=_score, verify_seeds=verify_seeds,
+                attempts=4,
+            )
+            if spec is not None and recipe_cache is not None:
+                recipe_cache.put(recipe_key, {"spec": spec.model_dump(mode="json")})
         traces.append({
             "case_id": inst.case_id, "bucket": bucket, "slot": slot,
             "verified": spec is not None, "trace": trace,

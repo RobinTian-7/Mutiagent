@@ -41,6 +41,27 @@ def _row_em(row: dict[str, Any]) -> float:
     return float(row.get("ExactMatchRate", 0.0) or 0.0)
 
 
+def bank_state_hash(bank: SkillBank, motif_stats: dict | None = None) -> str:
+    """Deterministic content hash of (bank, motif) — the resume-cache key part.
+
+    Two runs holding byte-identical learned state are the same measurement
+    condition at temperature 0; M18 keys deployment-phase rows on this so an
+    interrupted judge run can be relaunched and replay its finished pairs.
+    """
+    import hashlib
+    import json as _json
+
+    payload = {
+        "skills": sorted(
+            (_json.dumps(s.model_dump(mode="json"), sort_keys=True) for s in bank),
+        ),
+        "motif": motif_stats or {},
+    }
+    return hashlib.sha256(
+        _json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:24]
+
+
 def spec_struct_hash(spec_data: Any) -> str | None:
     """M11: structural identity of an executed organization.
 

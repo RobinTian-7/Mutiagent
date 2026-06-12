@@ -89,3 +89,22 @@ def open_cache() -> EvidenceCache | None:
     """The env-configured cache, or None when disabled."""
     path = cache_path()
     return EvidenceCache(path) if path is not None else None
+
+
+def eval_cache_path() -> Path | None:
+    raw = os.environ.get("MASBENCH_EVAL_CACHE", "").strip()
+    return Path(raw) if raw else None
+
+
+def open_eval_cache() -> EvidenceCache | None:
+    """M18 resume layer: deterministic-keyed DEPLOYMENT-phase rows.
+
+    Bank-dependent rows (paired eval, gate:after/incumbent) become resumable
+    by keying on (case, seed, planner knobs, BANK CONTENT HASH, motif hash):
+    an interrupted frozen-judge run relaunched with seeded caches replays
+    every finished pair instead of repurchasing it. Same honesty note as the
+    evidence cache -- at temperature 0 a cached row is the same measurement
+    reused; judge logic is untouched. Env unset: no behaviour change.
+    """
+    path = eval_cache_path()
+    return EvidenceCache(path) if path is not None else None
