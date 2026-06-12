@@ -471,6 +471,17 @@ def deployment_view(
         ledger = policy.get(TRANSFER_EVIDENCE_KEY) or {}
         direct = _slot_passes(ledger.get(f"{bucket}#{kind}")) if kind else None
         policy["deploy_action"] = "preserve" if direct is True else "modify"
+        # M20: surface this bucket's train-verified instruction exemplar (if
+        # the card carries one) so the deploy-time Modify rewrite is anchored
+        # by a VERIFIED style instead of re-rolling from scratch (dev-12b/13:
+        # 6-7 distinct instruction sets per 8 seeds; EM tracked the draw).
+        exemplars = policy.get("instruction_exemplars")
+        if isinstance(exemplars, dict):
+            ex = exemplars.get(bucket)
+            if isinstance(ex, dict) and isinstance(ex.get("steps"), list):
+                policy["active_instruction_exemplar"] = [
+                    str(s)[:300] for s in ex["steps"]
+                ]
     return view, motif_view(motif_stats, bucket), False, tier
 
 

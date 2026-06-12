@@ -72,6 +72,12 @@ class RunConfig:
     # train-time VERIFIED recipe search on unanchored bucket#slots. 0 = off.
     # Env: MASBENCH_RECIPE_BUDGET.
     recipe_search_budget: int = 18
+    # Phase-3 M20: run budget for train-time instruction-EXEMPLAR
+    # verification (architect writes per-step instructions for the bucket
+    # champion's structure on a train anchor; executed on verify seeds; a
+    # passing set is stored on the card and anchors deploy-time Modify
+    # rewrites, removing the per-deployment instruction-draw lottery). 0 = off.
+    exemplar_search_budget: int = 6
     # Phase-3 M9: replay candidates get per-step receiver instructions
     # REWRITTEN for the current task (one emperor call per seeded candidate)
     # and the protocol runner injects them into merge prompts. False =

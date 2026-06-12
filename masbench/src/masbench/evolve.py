@@ -86,6 +86,7 @@ from masbench.task_classify import (
 )
 from masbench.recipes import recipe_skill_card, search_recipe
 from masbench.transfer import (
+    MIN_TRUST_EM,
     bank_state_hash,
     deployment_view,
     inject_transfer_evidence,
@@ -706,6 +707,147 @@ def _recipe_search_phase(
                     candidate_skill=card,
                 )
             )
+    return traces, runs_spent
+
+
+def _rewrite_instructions_for_case(
+    spec,
+    inst: BenchmarkInstance,
+    cfg: RunConfig,
+    llm_client: LLMClient,
+) -> list[str] | None:
+    """One architect rewrite call: per-step instructions for spec on inst."""
+    from exp_graph.mas.graph_generation import _INSTRUCTION_REWRITE_PROMPT
+
+    structure = "\n".join(
+        f"{idx}: " + ", ".join(f"{src}->{dst}" for src, dst in step.transmissions)
+        for idx, step in enumerate(spec.steps)
+    )
+    prompt = _INSTRUCTION_REWRITE_PROMPT.format(
+        task_brief=(inst.task_prompt or "")[:1500],
+        n_steps=len(spec.steps),
+        structure=structure,
+    )
+    for _ in range(2):
+        try:
+            response = llm_client.complete(
+                prompt, model_name=cfg.model_name, temperature=cfg.temperature
+            )
+            raw = (getattr(response, "text", "") or "").strip()
+            start, end = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[start:end + 1]) if 0 <= start < end else {}
+            candidate = data.get("instructions")
+            if isinstance(candidate, list) and candidate:
+                return [str(s).strip()[:300] for s in candidate if str(s).strip()]
+        except Exception:
+            continue
+    return None
+
+
+def _exemplar_phase(
+    train_instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    skill_bank: SkillBank,
+    train_seeds: list[int],
+    llm_client: LLMClient,
+) -> tuple[list[dict[str, Any]], int]:
+    """M20: train-verified instruction exemplars for bucket champions.
+
+    Deploy-time Modify rewrites are a fresh stochastic draw per deployment;
+    dev-12b vs dev-13 measured 6-7 DISTINCT instruction sets per 8 seeds on
+    the same structure with EM tracking the draw (6/8 vs 1/8). This phase
+    writes instructions for the bucket champion's structure on a TRAIN
+    anchor case, executes them on verification seeds, and stores a passing
+    set on the card (``organization_policy.instruction_exemplars[bucket]``).
+    The deployment view surfaces it; the rewrite prompt anchors on it.
+    Train-time only -- zero test leakage.
+    """
+    budget = int(getattr(cfg, "exemplar_search_budget", 0))
+    if budget <= 0:
+        return [], 0
+    traces: list[dict[str, Any]] = []
+    runs_spent = 0
+    base = train_seeds[0] if train_seeds else 0
+    verify_seeds = [base, base + 7919]
+    done_buckets: set[str] = set()
+    for inst in train_instances:
+        if runs_spent >= budget:
+            break
+        if _task_family(inst) != SILO_TASK_FAMILY:
+            continue
+        classification = classify_task(
+            inst.task_prompt, llm_client=llm_client, model_name=cfg.model_name,
+            llm_provider=cfg.llm_provider,
+            source=getattr(cfg, "task_feature_source", "llm"),
+        )
+        bucket = classification_bucket(classification)
+        slot = classification_lossless_slot(classification)
+        if bucket in done_buckets:
+            continue
+        view, _motif, abstained, _tier = deployment_view(
+            skill_bank, None, bucket, kind=slot, mode="feature",
+            fallback_tier=True,
+        )
+        if abstained or len(view) == 0:
+            continue
+        champion_view = next(iter(view))
+        champion = next(
+            (s for s in skill_bank if s.skill_id == champion_view.skill_id), None
+        )
+        if champion is None or champion.organization_policy is None:
+            continue
+        exemplars = champion.organization_policy.get("instruction_exemplars")
+        if isinstance(exemplars, dict) and bucket in exemplars:
+            done_buckets.add(bucket)
+            continue
+        spec_data = champion.organization_policy.get("protocol_spec")
+        if not isinstance(spec_data, dict) or not spec_data.get("steps"):
+            continue
+        try:
+            spec = ProtocolGraphSpec.model_validate(spec_data)
+        except Exception:
+            continue
+        instructions = _rewrite_instructions_for_case(spec, inst, cfg, llm_client)
+        if not instructions:
+            continue
+        instructed = spec.model_copy(
+            update={
+                "steps": [
+                    step.model_copy(update={"instruction": instr})
+                    for step, instr in zip(
+                        spec.steps,
+                        [*instructions, *[""] * len(spec.steps)][: len(spec.steps)],
+                    )
+                ]
+            }
+        )
+        ems = []
+        for seed in verify_seeds:
+            if runs_spent >= budget:
+                break
+            em, _fb = _run_spec_on_instance(
+                inst, cfg, spec=instructed, seed=seed, llm_client=llm_client
+            )
+            runs_spent += 1
+            ems.append(em)
+        verified = bool(ems) and (sum(ems) / len(ems)) >= MIN_TRUST_EM
+        traces.append({
+            "phase": "exemplar", "case_id": inst.case_id, "bucket": bucket,
+            "skill_id": champion.skill_id, "verified": verified,
+            "ems": ems,
+        })
+        if verified:
+            store = champion.organization_policy.setdefault(
+                "instruction_exemplars", {}
+            )
+            store[bucket] = {
+                "steps": instructions[: len(spec.steps)],
+                "case": inst.case_id,
+                "em": sum(ems) / len(ems),
+                "n": len(ems),
+            }
+            done_buckets.add(bucket)
     return traces, runs_spent
 
 
@@ -1450,6 +1592,16 @@ def run_evolution(
         train_instances, cfg, skill_bank=skill_bank,
         train_seeds=train_seeds, llm_client=client,
     )
+    # M20: train-verify an instruction EXEMPLAR for the bucket champion so
+    # deploy-time Modify rewrites anchor on a proven style instead of
+    # re-rolling per deployment (instruction-draw variance was the gen-vs-
+    # select instability: 6-7 distinct sets per 8 seeds, EM tracked the draw).
+    exemplar_traces, n_exemplar_runs = _exemplar_phase(
+        train_instances, cfg, skill_bank=skill_bank,
+        train_seeds=train_seeds, llm_client=client,
+    )
+    recipe_traces = [*recipe_traces, *exemplar_traces]
+    n_recipe_runs += n_exemplar_runs
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now

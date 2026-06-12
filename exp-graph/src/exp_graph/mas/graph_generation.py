@@ -77,6 +77,10 @@ class GeneratedGraphPlan(BaseModel):
     # verbatim (Preserve); only transfers into unevidenced territory get
     # their instructions rewritten (Modify). Default True = historical.
     allow_instruction_rewrite: bool = True
+    # M20: a train-VERIFIED per-step instruction set for this structure
+    # (stamped by the deployment view); the Modify rewrite anchors on it
+    # instead of re-rolling style from scratch. None = historical prompt.
+    instruction_exemplar: list[str] | None = None
 
 
 class GraphValidationOptions(BaseModel):
@@ -678,6 +682,22 @@ def _rewrite_replay_instructions(
             n_steps=len(graph.steps),
             structure=structure,
         )
+        # M20: anchor the rewrite on a train-VERIFIED instruction set for
+        # this structure when the skill carries one. Unanchored rewrites are
+        # a fresh stochastic draw per deployment (dev-12b/13: 6-7 distinct
+        # sets per 8 seeds; EM tracked the draw quality).
+        if graph.instruction_exemplar:
+            exemplar_lines = "\n".join(
+                f"{idx}: {text}" for idx, text in enumerate(graph.instruction_exemplar)
+            )
+            prompt += (
+                "\n\nA per-step instruction set VERIFIED to work on this exact "
+                "structure for a related task:\n"
+                f"{exemplar_lines}\n"
+                "Adapt this per-step pattern to THIS task; keep what makes it "
+                "work (what each receiver computes and forwards), drop details "
+                "specific to the other task."
+            )
         instructions = None
         # One retry: silent parse failures left replays instruction-less in
         # whole dev rounds (instr=0/8 on every deployed row).
@@ -741,8 +761,15 @@ def _graph_from_skill_protocol(
     deploy_action = str(
         (skill.organization_policy or {}).get("deploy_action", "")
     ).lower()
+    raw_exemplar = (skill.organization_policy or {}).get("active_instruction_exemplar")
+    exemplar = (
+        [str(s)[:300] for s in raw_exemplar]
+        if isinstance(raw_exemplar, list) and raw_exemplar
+        else None
+    )
     return GeneratedGraphPlan(
         allow_instruction_rewrite=(deploy_action != "preserve"),
+        instruction_exemplar=exemplar,
         candidate_id=f"skill_{_safe_candidate_id(skill.skill_id)}",
         name=spec.name or _safe_candidate_id(skill.skill_id),
         graph_type=str(spec.metadata.get("graph_type") or "temporal_dag"),

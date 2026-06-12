@@ -196,6 +196,48 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   round-19 module state at launch (single code version per the dev-3
   rule), and the edits are provably silo-inert regardless.
 
+## OPERATOR ULTIMATE GOAL (2026-06-12, verbatim intent, registered)
+
+gen, after multi-round evolution, must STABLY dominate: (1) the cold
+baseline; (2) the best fixed topology where "best" is PER-PROBLEM
+customized (the strongest reading: a per-case best-fixed, which we
+operationalize as the per-case UPPER ENVELOPE of the fixed family chosen
+on the eval runs themselves -- an oracle no realizable fixed policy can
+beat); (3) select; and ideally (4) refine, where refine must NOT be
+weakened to make gen look good (it evolves independently at full
+strength). All of it with real, valid evidence.
+
+Instrument: NEW additive judge ``scripts/verify_gen_supremacy.py``
+(frozen judges untouched): arms gen / coldgen / select (same semantics as
+the frozen 4-arm judge) / oracle_fixed (per-case best of the 4 fixed
+topologies, each run on the FULL eval grid) / refine (independent
+select_then_refine evolution). Exit 0 = gen >= +5pp AND win-margin >= 2
+vs EACH of {coldgen, oracle_fixed, select}; gen-vs-refine reported with
+identical statistics but non-gating (operator: "最好" = aspirational).
+Offline fake = all-zero FAIL by construction (verified).
+
+- Round 24 method (M20, from dev-12b/13 instruction forensics --
+  registered before dev-14): train-time instruction-exemplar
+  verification. Deploy-time Modify rewrites are a fresh stochastic draw
+  per deployment (measured: 6-7 DISTINCT instruction sets per 8 seeds on
+  the same structure; EM tracked the draw, 6/8 one batch vs 1/8 the
+  next; one draw cracked II-17's floor with EM=1.0). New evolution phase
+  (budget exemplar_search_budget=6 runs): the architect writes per-step
+  instructions for the bucket champion's structure on a TRAIN anchor
+  case; they execute on 2 verification seeds; a passing set (mean EM >=
+  MIN_TRUST_EM) is stored as organization_policy.instruction_exemplars
+  [bucket]; the deployment view stamps the bucket's exemplar onto the
+  card copy; the Modify rewrite prompt anchors on it ("adapt this
+  VERIFIED per-step pattern") instead of re-rolling style from scratch.
+  Train-only signal, zero test leakage; CF byte-identical (no exemplar
+  fields ever present). Suites 285/271+2skip green.
+- Dev round 14 (registered 2026-06-12, code = round-24 M20): FIRST
+  gen-supremacy measurement. Dev split (dev-9's), FRESH seeds 151-158,
+  gen_rounds=5, refine_rounds=3, fresh caches for eval (evcache/feature
+  seeded per established bank-independent policy). Question: where does
+  gen stand against the full operator bar stack with M20 anchoring, and
+  does gen-vs-select stabilize?
+
 ## Method-change ground rules (from the operator brief)
 
 - Anything in the learner may change (SkillCard schema, minister, motif
