@@ -170,6 +170,31 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   live at these seeds). Dev-grid milestone reached; confirmatory is the
   remaining gate, awaiting operator sign-off on the SHAPE v3
   untouched-split interpretation (clause 1 above).
+- OPERATOR DECISION (2026-06-12): "加固后开打" -- reinforce, then fight
+  confirmatory under SHAPE v3. Reinforcement registered as: (a) dev-13
+  = third-draw re-sweep of all four cells, same dev split, FRESH seeds
+  141-148, round-19 code unchanged (repeatability check for round-21);
+  (b) JSSP corroboration = ADDITIVE evolve-vs-cold run on the
+  M-APPLE-OS JSSP adapter (new script, frozen judges untouched) to
+  evidence cross-benchmark generalization of the learner. If both are
+  healthy, draw the SHAPE v3 split + seeds live (recorded RNG) and burn
+  confirmatory attempt 1 with FRESH EMPTY caches.
+- JSSP corroboration registration (round 22, 2026-06-12): learner core
+  made benchmark-routed (evolve _run_one/_run_fixed_one/_run_spec use
+  engine._protocol_adapter; rows/triggers/minister family from the
+  instance's benchmark tag -- silo constant unchanged, factory returns
+  SiloProtocolAdapter for silo = byte-identical, full suite 280 green;
+  recipe search registered silo-scope). Instances: 6 synthetic 5x3 JSSP
+  (scripts/gen_jssp_instances.py, seed 7, deterministic; ub = greedy
+  non-delay list-schedule makespan -> exact_match means "matched or
+  beat the heuristic" = honest dynamic range). Protocol mirror of the
+  stable judge in NEW scripts/jssp_evolve_check.py (gen mode, 3 rounds,
+  split 4 train / 2 test, eval seeds 21-24). This is corroborating
+  evidence for generalization, NOT a Silo acceptance instrument.
+  HYGIENE NOTE: dev-13's four judges launched 05:43, BEFORE the
+  benchmark-routing edits landed; their processes imported the
+  round-19 module state at launch (single code version per the dev-3
+  rule), and the edits are provably silo-inert regardless.
 
 ## Method-change ground rules (from the operator brief)
 

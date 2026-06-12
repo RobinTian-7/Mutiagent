@@ -77,7 +77,7 @@ from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
-from masbench.engine import _build_llm_client, _plan_graph_generate
+from masbench.engine import _build_llm_client, _plan_graph_generate, _protocol_adapter
 from masbench.task_classify import (
     classification_bucket,
     classification_kind,
@@ -102,6 +102,20 @@ from masbench.transfer import (
 # planner retrieval, the held-out gate, and the post-evolution selection probe all
 # operate consistently in one family without any post-hoc re-tagging.
 SILO_TASK_FAMILY = "silo"
+
+
+def _task_family(instance: BenchmarkInstance) -> str:
+    """Row/trigger family for an instance.
+
+    Silo keeps its historical constant (byte-identical paths); any other
+    benchmark (e.g. jssp) uses its own tag so ledgers, triggers, and gates
+    never mix evidence across benchmarks.
+    """
+    bench = str(getattr(instance, "benchmark", "") or "")
+    if not bench or bench == "silo_bench":
+        return SILO_TASK_FAMILY
+    return bench
+
 
 # Default Plan-3 improvement knobs activated on the planner objective. These turn
 # on E (uncertainty-aware selection) and F (counterexample veto + risk floor); the
@@ -190,7 +204,7 @@ def _run_one(
     ``ObjectiveSpec`` and a shared ``SkillBank`` so the Plan-3 E/F selection knobs
     genuinely influence topology selection during evidence collection.
     """
-    task_adapter = SiloProtocolAdapter(instance)
+    task_adapter = _protocol_adapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
 
@@ -298,7 +312,7 @@ def _run_one(
     # (n, case) and the held-out gate evaluates in the silo family.
     row["case_id"] = instance.case_id
     row["seed"] = seed
-    row["task_family"] = SILO_TASK_FAMILY
+    row["task_family"] = _task_family(instance)
     row["task_features_key"] = feature_bucket
     row["task_agg_kind"] = feature_kind
     row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
@@ -377,7 +391,7 @@ def _run_fixed_one(
     (e.g. ``chain``) on the same train grid so order-sensitive evidence exists
     when train contains level-II cases.
     """
-    task_adapter = SiloProtocolAdapter(instance)
+    task_adapter = _protocol_adapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
     config = ProtocolRunnerConfig(
@@ -407,7 +421,7 @@ def _run_fixed_one(
     )
     row["case_id"] = instance.case_id
     row["seed"] = seed
-    row["task_family"] = SILO_TASK_FAMILY
+    row["task_family"] = _task_family(instance)
     row["task_features_key"] = classification_bucket(classification)
     row["task_agg_kind"] = classification_kind(classification)
     row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
@@ -560,7 +574,7 @@ def _run_spec_on_instance(
     llm_client: LLMClient,
 ) -> tuple[float, dict[str, Any]]:
     """Execute one instruction-bearing spec; return (EM, procedural feedback)."""
-    task_adapter = SiloProtocolAdapter(instance)
+    task_adapter = _protocol_adapter(instance)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
     config = ProtocolRunnerConfig(
@@ -619,6 +633,11 @@ def _recipe_search_phase(
     for inst in train_instances:
         if runs_spent >= budget:
             break
+        if _task_family(inst) != SILO_TASK_FAMILY:
+            # Recipe search is registered silo-scope for now: its prompt,
+            # leakage scan, and verification target shard-text tasks. Other
+            # benchmarks (jssp) evolve via the portfolio/minister/motif loop.
+            continue
         classification = classify_task(
             inst.task_prompt, llm_client=llm_client, model_name=cfg.model_name,
             llm_provider=cfg.llm_provider,
@@ -1350,10 +1369,16 @@ def run_evolution(
     val_rows = [*val_rows_real, *(held_out_rows or [])]
 
     # The minister stamps every emitted skill (card, trigger, and namespaced id)
-    # with the silo family natively, so retrieval, the held-out gate, and the
+    # with the run's family natively, so retrieval, the held-out gate, and the
     # selection probe all operate in one family with no post-hoc re-tagging.
+    # Family comes from the rows themselves (silo rows carry "silo" exactly as
+    # before; jssp rows carry "jssp" so cross-benchmark evidence never mixes).
+    _row_family = next(
+        (str(r.get("task_family")) for r in train_rows if r.get("task_family")),
+        SILO_TASK_FAMILY,
+    )
     patches = ResultAnalystMinister().analyze(
-        train_rows, task_family=SILO_TASK_FAMILY
+        train_rows, task_family=_row_family
     )
     # Round-1 root cause: the engine's ratio dominance rule misfires on binary
     # per-case rows (best=0 -> everything "dominated") and advertises avoid
@@ -1550,7 +1575,10 @@ def _selection_probe(
     any counterexample veto).
     """
     request = PlannerRequest(
-        task_family=SILO_TASK_FAMILY,
+        task_family=next(
+            (str(s.task_family) for s in bank if getattr(s, "task_family", None)),
+            SILO_TASK_FAMILY,
+        ),
         n_agents=n_agents,
         objective=objective,
     )
