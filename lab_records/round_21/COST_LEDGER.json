@@ -1,0 +1,295 @@
+{
+  "budget_usd": 40.0,
+  "blended_usd_per_mtok": 0.2625,
+  "note": "tokens from diag eval_runs.jsonl rows + ~2500 tok per graph_generate planner call (planner-side calls are not inside row token counts)",
+  "entries": [
+    {
+      "round": "dev_round1",
+      "date": "2026-06-09",
+      "est_usd": 0.31,
+      "tokens_mtok": 1.03,
+      "gen_calls": 54,
+      "verdict": "FAIL delta=-16.7pp (empty 54.2 evolved 37.5, wins 5/9)"
+    },
+    {
+      "round": "dev_round2",
+      "date": "2026-06-09",
+      "est_usd": 0.46,
+      "tokens_mtok": 1.58,
+      "gen_calls": 60,
+      "verdict": "PASS delta=+25.0pp (empty 12.5 evolved 37.5, wins 8/2; II-13 25->75, II-14 0->0)"
+    },
+    {
+      "round": "dev_round3_A",
+      "date": "2026-06-09",
+      "est_usd": 0.63,
+      "tokens_mtok": 2.19,
+      "gen_calls": 84,
+      "verdict": "PASS delta=+11.1pp (empty 25.0 evolved 36.1, wins 8/4; I-09 42/42, II-13 33->67, II-14 0/0)"
+    },
+    {
+      "round": "dev_round3_B_partial_discarded",
+      "date": "2026-06-09",
+      "est_usd": 0.18,
+      "note": "user paused mid-run; 30 evidence runs spent, no report produced; B will re-run from scratch on resume"
+    },
+    {
+      "round": "dev_round3_B_nogate",
+      "date": "2026-06-09",
+      "est_usd": 0.55,
+      "tokens_mtok": 1.91,
+      "gen_calls": 72,
+      "verdict": "FAIL delta=-2.8pp; gate-off admitted 4th skill (avoid_tree, legitimately earned in B's own sample); deployed policy unchanged (36/36 peer_star); A/B swing driven by empty-arm I-09 rerun noise 42<->67"
+    },
+    {
+      "round": "dev_round3_C_gen",
+      "date": "2026-06-09",
+      "est_usd": 0.27,
+      "tokens_mtok": 0.83,
+      "gen_calls": 80,
+      "verdict": "gate REJECTED generated-evidence bank (j 0->0.333) = protective event; paired eval crashed 32/72 on APIConnectionError (infra), no verdict; retry layer added"
+    },
+    {
+      "round": "confirmatory1_refine",
+      "date": "2026-06-10",
+      "est_usd": 0.42,
+      "verdict": "PASS delta=+35.0pp (empty 15 evolved 50, wins 10/3; II-15 10->80, II-19 20->20); 20/20 peer_star replay; evolved x2.2 tokens"
+    },
+    {
+      "round": "confirmatory1_gen",
+      "date": "2026-06-10",
+      "est_usd": 0.3,
+      "verdict": "PASS delta=+40.0pp (empty 10 evolved 50, wins 9/1; II-15 0->70, II-19 20->30); 20/20 replay of self-generated staged_aggregate_to_sink; ~cost-parity x1.09 tokens"
+    },
+    {
+      "round": "confirmatory2_refine_partial_discarded",
+      "date": "2026-06-10",
+      "est_usd": 0.13,
+      "note": "user paused at evidence phase (30 runs); no eval started, no report produced; attempt 2 NOT consumed -- re-run from scratch with the SAME recorded seeds on resume"
+    },
+    {
+      "round": "confirmatory2_refine",
+      "date": "2026-06-10",
+      "est_usd": 0.42,
+      "verdict": "PASS delta=+40.0pp (empty 10 evolved 50, wins 10/2; II-15 0->80, II-19 20->20); 20/20 peer_star replay; gate STRICT improve j 0.333->0.0"
+    },
+    {
+      "round": "confirmatory2_gen",
+      "date": "2026-06-10",
+      "est_usd": 0.3,
+      "verdict": "PASS delta=+25.0pp (empty 10 evolved 35, wins 7/2; II-15 0->70, II-19 20->0); 20/20 staged_aggregate_to_sink replay; x1.12 tokens"
+    },
+    {
+      "round": "p2_scout",
+      "date": "2026-06-10",
+      "est_usd": 0.45,
+      "verdict": "III@n5 no dynamic range (4 floors, 1 ceiling); n=10: II-13 (sel 0/gen 50) and II-16 (sel 50/gen 0) reserved per pre-registered rule (opposite-direction org-sensitivity); I-02/I-04@n10 gen=100 ceilings; II-19@n10 floor"
+    },
+    {
+      "round": "p2_dev_round1_aborted",
+      "date": "2026-06-10",
+      "est_usd": 0.47,
+      "note": "network outage (112 conn errors; user re-login) killed paired eval; NO verdict. Salvaged mechanism data: explore added generated:staged_tree_aggregation(loss 0)+staged_aggregate_to_sink(0.5) to bank (9 skills); BUG found: n=1 explored design at loss 0 anchored dominance -> avoid skills for ALL named topologies incl the winner; round-2 explore was outage-fallback"
+    },
+    {
+      "round": "p2_dev_round2",
+      "date": "2026-06-10",
+      "est_usd": 0.7,
+      "verdict": "PASS vs ALL baselines: evolved 62.5 vs select 25.0(+37.5,7:1) graphgen 18.8(+43.8,8:1) fixed=peer_star 37.5(+25.0,6:2); 16 pairs 0 dropped; gate REJECTED round-2 update (j 0->0.5, 2nd real firing); avoid pollution GONE; hot explore produced 4 distinct designs across rounds; evolved cost ~= select (x1.03 tok)"
+    },
+    {
+      "round": "p2_dev_round3",
+      "date": "2026-06-10",
+      "est_usd": 0.9,
+      "verdict": "PASS vs ALL (R=3): evolved 37.5 vs 18.8/18.8/18.8 (4:1 each); bank grew 7->8->9 all accepted; evolved replayed SELF-GENERATED tree_reduce_to_sink 16/16 at 9.1k tok/run = x0.39 of select (60% cheaper); I-09 75% carried, II-16@n5 0% (honest)"
+    },
+    {
+      "round": "p2_confirmatory1_refine_FAIL",
+      "date": "2026-06-10",
+      "est_usd": 1.42,
+      "verdict": "FAIL (attempt 1 of 3 consumed): evolved 0.0% on reserved n=10 vs select 17.6/graphgen 17.6/fixed=chain 11.8 (0:3,0:3,0:2). ROOT CAUSE: exp_graph SkillBank._retrieval_sort_key sorts mean_rmse ASC assuming CF loss semantics, but silo rows bridge SUCCESS into that field -> retrieval returns WORST-FIRST; replay deployed a train-loss-1.0 design 20/20. n=5 dev rounds masked it via motif-prior rescue."
+    },
+    {
+      "round": "p2_confirmatory1_curve_killed",
+      "date": "2026-06-10",
+      "est_usd": 1.1,
+      "note": "curve part killed mid-flight (1 evolution of ~5 done, ~85 n=10 runs est) -- measuring a known-broken retrieval is moot; estimate from run counts"
+    },
+    {
+      "round": "p2_screen_fix",
+      "date": "2026-06-10",
+      "est_usd": 0.21,
+      "verdict": "SCREEN(not verdict): post-fix evolved 100% vs select 0% on I-04@n10 (4:0); replayed loss-best design"
+    },
+    {
+      "round": "p2_confirmatory2_refine_FAIL",
+      "date": "2026-06-10",
+      "est_usd": 0.82,
+      "verdict": "FAIL (attempt 2 of 3 consumed): evolved 0.0% vs select 25/graphgen 18.8/fixed=chain 25 (16 pairs, 4 timeout-drops). Retrieval fix WORKED (replayed loss-0 staged_aggregation_tree) but: (a) train pool I-01..I-09 = aggregation paradigm only, reserved II-13/II-16 = sequential chain paradigm -> bank cannot represent the winning org; (b) graph_max_steps=4 makes ~9-step chains INEXPRESSIBLE at n=10 for ALL generation arms while named chain compile is uncapped"
+    },
+    {
+      "round": "p2_confirmatory2_curve_crashed",
+      "date": "2026-06-10",
+      "est_usd": 1.0,
+      "note": "curve died on ONE 120s LLMTimeoutError (no per-run isolation in curve eval; fixed in pipeline + test). Partial spend estimate"
+    },
+    {
+      "round": "p2_confirmatory2_gen_FAIL",
+      "date": "2026-06-10",
+      "est_usd": 0.78,
+      "verdict": "gen mode FAIL: evolved 11.8 vs select 5.9(2:1, margin<2)/graphgen 5.9(2:1)/fixed=CHAIN 23.5(2:4) -- chain named topology beats generation arms on chain-paradigm tasks (step-cap expressiveness analysis confirmed)"
+    },
+    {
+      "round": "p2_screen_bundle",
+      "date": "2026-06-10",
+      "est_usd": 0.19,
+      "verdict": "SCREEN caught probe-inversion BEFORE attempt 3: probe picked cheapest-not-best (success term cancels in _objective_score when raw success stuffed into mean_rmse); evolved 0% vs select 20% on II-13/16@n5; root-fixed _probe_row via primary_loss bridge (exp-graph 265 green)"
+    },
+    {
+      "round": "p2_screen_bundle2",
+      "date": "2026-06-10",
+      "est_usd": 0.15,
+      "verdict": "SCREEN: probe mechanism now ranks correctly but 1-seed probe is a Bernoulli gate -- per-case rejection of reliable replays, lucky fresh designs deployed; evolved 10 vs select 70. Probe route fails screening; NOT taken to attempt 3"
+    },
+    {
+      "round": "p2_close",
+      "date": "2026-06-10",
+      "est_usd": 0.0,
+      "verdict": "PHASE-2 GOAL FORMALLY UNREACHABLE: 2/3 confirmatory attempts consumed, both FAIL; even attempt-3 PASS gives 1<2 required. Attempt 3 left UNCONSUMED (no screened configuration could change the verdict; spending it would be number-chasing). Final report written."
+    },
+    {
+      "round": "p3_dev1_refine",
+      "date": "2026-06-11",
+      "est_usd": 0.85,
+      "verdict": "STABLE JUDGE PASS (dev split 1, refine): base 20.8%, curve r1=20.8(gate REJECTED bank on 3-sample binary val, j 0.0->0.33)/r2=41.7*(+20.8pp,8:3)/r3=37.5*(+16.7pp,8:4). M1 trust gate deployed one_peer_exponential via II-13-earned os trust: II-15 44->88%, II-16 6->25%. r3 wobble = champion flip by 1-row lucky explore org (M4 LCB needed). Tokens 2.81M"
+    },
+    {
+      "round": "p3_dev1_gen",
+      "date": "2026-06-11",
+      "est_usd": 0.44,
+      "verdict": "FAIL (old method, complete): gate false-rejected the bank ALL THREE rounds (j 0.0->0.333 each; skills=0x3; curve 8/12/21% = cold noise). ROOT CAUSE refined: not pure noise -- staged_aggregate_to_sink is kind-bimodal (train: vote 1.00 n5, count 0.17 n6; bucket mean 0.55 earned trust) and deterministically failed the count-kind val case I-02 every round -> M6 contradiction-triggered kind refinement. Earlier 'SIGKILLED' claim was wrong (phantom harness notification); run completed normally"
+    },
+    {
+      "round": "p3_dev2_earlystop",
+      "date": "2026-06-11",
+      "est_usd": 0.52,
+      "verdict": "EARLY STOP after r1 forensics (refine r1 4.2 vs base 29.2): (a) M1+M5 behaved correctly -- no os trust earnable (ALL orgs 0/2 on sole os train case II-12) -> correct abstention on all 24 pairs, DAGs hash-identical to cold; (b) the -25pp is PROVIDER TIME-DRIFT (II-13: same deterministic DAG+seeds, cold@02:40 5/8 vs evolved@03:05 0/8, p~4e-4) -> power must come from MORE CASES not more seeds; (c) split structurally unwinnable (all-os test, unlearnable os train) -> confirmatory pool amended to 10I+2II shape (prereg). Stopped to fund round-3 pilot of the confirmatory shape"
+    },
+    {
+      "round": "p3_dev3",
+      "date": "2026-06-11",
+      "est_usd": 1.9,
+      "verdict": "BOTH MODES FAIL on the 10I+2II pilot (refine 18.8/18.8/15.6 vs base 21.9; gen 9.4/3.1/9.4 vs base 0.0). Forensics: (a) M6 inverted epistemics -- contradiction-demotion only hits well-measured veterans while sparse one-kind generated orgs keep bucket trust and harmed I-09 (evo 0.67 vs cold 0.88) -> M8; (b) lexicographic tails make level-I test kinds (topk/stats) DISJOINT from train kinds -> of-side exact-kind transfer impossible by construction; the only demonstrated carrier is seq-kind II->II; (c) 3rd & largest same-policy time-drift: cold baseline 21.9% (02:56) vs 0.0% (03:24) on identical grid. HYGIENE NOTE: M7 was committed mid-driver; gen judge imported newer code than refine (modes internally consistent). tokens->1.9usd"
+    },
+    {
+      "round": "p3_dev4",
+      "date": "2026-06-11",
+      "est_usd": 0.93,
+      "verdict": "DECISION DATA: refine on untuned seq floors {II-17,II-18,II-20} = 0.0% x3 rounds, 0 wins in 72 evolved evals (banks deployed fine, gates accepted, gate j even improved 0.111->0.0 on val) -- earned seq trust does NOT create capability the executor lacks; floors are model-capability floors at n=5. gen mode crashed at baseline on ONE sporadic 120s LLMTimeoutError through the frozen no-isolation eval pool -> retry layer now gives timeouts exactly one bounded retry. M7 classifier live: 10/10 cases LLM-classified, ~80% agreement with hand labels, disagreements conservative (toward abstention)"
+    },
+    {
+      "round": "p3_scout_n10",
+      "date": "2026-06-11",
+      "est_usd": 0.35,
+      "verdict": "n=10 dynamic-range scout: ALL ZERO -- coldgen AND one_peer_exponential 0.00 on II-13/14/17/18/20 x3 seeds (even II-13, winnable at n=5, is 0 at n=10). n=10 deepens the capability floor; no usable range for the cold-gen-baseline judge. Honest-geometry enumeration now closed: the only winnable shape is the dev-burned {II-13 train anchor + II-15/16 headroom tests}. Path = method-final validation on the dev-1 split (current code M1-M8, both modes) then honest-boundary report"
+    },
+    {
+      "round": "budget_raise",
+      "date": "2026-06-11",
+      "est_usd": 0.0,
+      "verdict": "operator raised cap 40->60 USD; directive: explore until SUCCESS (stable dominance both modes) or budget exhaustion; wins must flow through evolved-skills->planner->organization pathway (per-win provenance audit added to round reports)"
+    },
+    {
+      "round": "p3_dev5",
+      "date": "2026-06-11",
+      "est_usd": 1.43,
+      "verdict": "BOTH MODES FAIL on known-signal split with fresh seeds 51-58 -- ROOT CAUSE SINGLE AND CLEAN: 72/72 abstentions in BOTH modes (provenance audit; zero skills-driven deployments; curves = cold+/-drift). M7 LLM classifier read II-13 as kind=max (defensible reading of 'longest palindrome length') while II-15/16/19 read seq -> II-13-earned trust trapped in os#max, unreachable. Dev-1's PASS happened under regex keys where anchor+targets shared seq. POSITIVE findings: M5/M8 verifiably fixed gen's gate triple-reject (skills deployed all rounds); ratchet fired correctly once. -> M12 needs_lossless binary trust key + M11 structural-hash ledger identity + M13 skill content redesign + M9 instruction injection, one cohesive round"
+    },
+    {
+      "round": "p3_screen8_9",
+      "date": "2026-06-11",
+      "est_usd": 1.52,
+      "verdict": "Screens r8 (M9/11/12, seeds 61-63): all abstain -- routing FIXED but no org cleared the trust bar on the lone os anchor at those seeds -> M10. Screens r9 (M10, seeds 71-73): A-refine PASS +33.3pp (3:0) and B-refine PASS +22.2pp (2:0) -- FLOORS II-17/II-18 cracked by one_peer_exp replay WITH M9-rewritten instructions (instr=True on all deployed rows; dev-4 verbatim replay was 0/72 there). A-gen 0%: M10 verified 3 recipes (I-01, I-03, II-13-after-feedback) but minister-card trigger specificity pushed recipe cards out of the top-3 seeded slots -> trigger parity fix (agent_counts+condition_key; LCB decides)"
+    },
+    {
+      "round": "p3_dev6",
+      "date": "2026-06-11",
+      "est_usd": 2.22,
+      "verdict": "GEN MODE STABLE JUDGE FIRST-EVER PASS (exit 0): base 8.3%, curve 4.2/29.2*(+20.8pp,5:0)/37.5*(+29.2pp,7:0) rising, ZERO losses; THESIS LOOP CLOSED: II-13 train-verified recipe (longest_palindrome_cross_boundary) replayed cross-case onto II-15 -> 15/16 (94%); II-17 same recipe failed but cold=0 -> do-no-harm. refine FAIL with NEW failure mode: r2 +20.8pp (7:2, staged_merge_with_feedback 7/8 on II-19) then r3 reshuffle to staged_boundary_merge (0/8) -- deployment-layer round-to-round instability among near-tied candidates (bank 13->15 explore influx; gen's bank froze at 10 -> stable). ALSO: deployed rows instr=0 -- instructions dropped somewhere in card->seed->compile chain. -> round-10: replay-first selection, sticky ranking (LCB+hash deterministic, motif displaces only with margin), rewrite retry+logging, instruction-drop fix, explicit Preserve/Modify/Avoid action field"
+    },
+    {
+      "round": "p3_dev7",
+      "date": "2026-06-11",
+      "est_usd": 2.35,
+      "verdict": "BOTH MODES STABLE PASS (first time, exit 0 x2): refine 45.8/45.8/62.5 vs 16.7 (r3 +45.8pp 13:2, ALL rounds dominate, rising); gen 25.0x3 vs 8.3 (+16.7pp, 5:1/4:0/5:1, bank frozen at 10). Round-10 deployment-stability fixes decisive (same split as dev-6 where refine r3 had collapsed). Next: tiered fallback + first 4-arm fixed-best battle per operator bar raise"
+    },
+    {
+      "round": "budget_raise_100",
+      "date": "2026-06-11",
+      "est_usd": 0.0,
+      "verdict": "operator raised cap 60->100; priorities: STABLE evolution (esp. gen mode), other benchmarks may corroborate; ultimate goal = evolve stably beats the BEST baseline"
+    },
+    {
+      "round": "p3_dev8",
+      "date": "2026-06-11",
+      "est_usd": 4.13,
+      "verdict": "FIRST fixed-best battle + gen 5-round hypothesis. beats_refine FAIL: evolved 33.3 vs fixed=one_peer_exp 41.7 (-8.3pp 1:3) and select 45.8, while crushing coldgen +33.3 (8:0) -> unconditional Modify (instruction rewrite) adds noise where bare structure already works (B-screen showed it creates capability where bare fails) -> M14 evidence-conditioned Preserve/Modify. gen5 stable FAIL but r4 spike +20.8 proves late-round learning with new gen-explore (bank 10->14 grows; r5 variance returns). beats_gen FAIL 0.0 == coldgen pairwise (0:0): evolved abstained throughout -- STRUCTURAL GAP: gen-mode evidence lacks named aggregation orgs (only chain portfolio), so no generalist can earn breadth trust and tier-2 has nothing to deploy -> portfolio parity fix. Ratchet gate correctly REJECTED a degrading r5 update in beats_gen (j .111->.333). JSSP integration completed+committed in parallel (b4e8c3e)"
+    },
+    {
+      "round": "p3_dev9",
+      "date": "2026-06-11",
+      "est_usd": 5.47,
+      "verdict": "M14/M15 re-battle. STABLE_GEN 5-ROUND PASS exit 0 (operator priority delivered): base 12.5, ALL 5 rounds dominate +25.0/+12.5/+16.7/+20.8/+20.8, losses<=1, bank 18->26 steady -- M15 anchors gen from r1. 4-arm: gen -33.3pp(0:8) -> +0.0pp(2:2) vs fixed (abstention bleed eliminated); refine -8.3 -> -4.2pp(2:3). select 50.0 vs fixed 45.8 = SAME-POLICY arm noise ~4pp (margin context). Forensics: all 48 deployments = preserve verbatim one_peer_exp (M14 worked) -> II-15 0.88 kept BUT floors II-17 0.00 -- M14 traded screen-B's Modify-cracked floors for II-15 protection. Distinguisher found: ANSWER SHAPE (scalar II-13/15 vs composite array II-17/19) -> M16 third mechanistic bit, slot key bucket#(lossy|lossless)-(scalar|composite)"
+    },
+    {
+      "round": "p3_dev10_INVALID",
+      "date": "2026-06-11",
+      "est_usd": 2.66,
+      "verdict": "INFRA FAILURE, measurements DISCARDED (no method conclusions drawn): arm-agnostic '431 Request headers are too large' failures poisoned all arms (beats_refine: all four arms exactly equal at 21.4% with dropped pairs; stable_gen crashed through the frozen no-isolation eval pool; even bank-free select/coldgen arms hit 431s -> NOT prompt size). ROOT CAUSE: proxy/LB session cookies accumulated in httpx's default persistent jar across thousands of calls per process until the Cookie header tripped request limits. FIX: _NoCookieHTTPClient pins the cookies property to a fresh empty jar (httpx re-wraps cookies= args, so a Cookies subclass cannot opt out); OPENAI_KEEP_COOKIES=1 restores default. beats_gen killed mid-run to stop spend on a poisoned measurement. dev-10 to be rerun as dev-10b on the cookie-fixed client"
+    },
+    {
+      "round": "p3_dev10b",
+      "date": "2026-06-11",
+      "est_usd": 4.13,
+      "verdict": "CLEAN measurements (431 zero-recurrence, cookie fix verified). M16 NET NEGATIVE as shipped: stable_gen FAIL 20.8/16.7/0/8.3/8.3 (dev-9 was 5x dominate); beats_refine vs fixed worsened -4.2 -> -16.7 (2:6); beats_gen vs fixed +0.0 (1:1). FORENSICS: composite slots starved -- all-scalar train pool means no org ever has composite evidence AND os bucket has only 1 measurable sub-slot so M8 breadth (>=2) never fires -> 16/24 abstentions, the Modify path never ran. II-15 0.5<->1.0 swings = drift (same deployment). FIX M16b: shape axis extrapolates (sibling slot verdict, action auto-MODIFY), losslessness axis never does"
+    },
+    {
+      "round": "p3_dev10c_partial_paused",
+      "date": "2026-06-11",
+      "est_usd": 0.46,
+      "tokens_mtok": 1.74,
+      "note": "operator directive: pause all non-resumable tests, build resume layer (M18), resume from archive. 120 evidence rows + 68 planner calls spent in first 5 min before SIGTERM; evcache/feature caches preserved in runs/p3_dev10c -> most of this spend REPLAYS on resume instead of being repurchased (M18 eval cache additionally covers deployment-phase rows going forward)"
+    },
+    {
+      "round": "p3_dev10c_resumed",
+      "date": "2026-06-12",
+      "est_usd": 4.68,
+      "tokens_mtok": 17.83,
+      "note": "incremental over the ledgered partial (all-rows total $5.14 minus $0.46; replayed rows re-dumped to diag may slightly overcount = conservative)",
+      "verdict": "M16b VALIDATED. stable_gen PASS exit 0, STRONGEST CURVE TO DATE: base 12.5, 5/5 dominate +16.7(6:2)/+37.5(9:0)/+25.0(6:0)/+50.0(12:0)/+45.8(11:0), zero losses after r1, bank 14->24 all gates accepted. beats_refine PASS exit 0 = FIRST-EVER 4-arm unconditional win: evolved 58.3 vs select 41.7(+16.7,4:0) coldgen 8.3(+50,12:0) fixed=one_peer_exp 45.8(+12.5,4:1); margin carried by II-19 Modify path (0.75 vs fixed 0.38, instr4 on every deployed row). beats_gen FAIL on select arm only: vs fixed +37.5(10:1 PASS) coldgen +29.2(8:1 PASS) select +4.2pp(4:3) -- the 2 lost II-15 pairs are same-policy verbatim one_peer vs one_peer = measured ~4pp arm drift, not mechanism. ZERO evolved-row abstentions across all 3 runs (dev-10b starvation gone); II-17/19 deploy Modify+instr4, II-15 preserve-verbatim. M18 resume validated live (0.0s replay of killed leg's rows)"
+    },
+    {
+      "round": "p3_dev11_stable_refine_DIAGNOSTIC",
+      "date": "2026-06-12",
+      "est_usd": 1.46,
+      "tokens_mtok": 5.57,
+      "verdict": "stable_refine FAIL 4.2/0.0/4.2 vs base 8.3 on round-18 code -- but DIAGNOSTIC not clean (cross-run evalcache seeding transplanted stable_gen's verified II-13 recipe + replayed 3/24 baseline rows). MECHANISM EXPOSED (real, would recur in any run whose own recipe search verifies): silo__recipe_longest_palindrome_cross_boundary earned kind-wide lossless-scalar trust from its own 2-row single-case verification, won retrieval LCB (0+0.5/sqrt2=0.35 beats multi-case generalists), M16b shape-extrapolated it onto composite slots -> deployed on ALL test cases every round (70/72 rows), displacing one_peer (which scored 58.3% in beats_refine same hour). THIRD defect: card stores 5 instruction-bearing steps but deployed spec = 4 bare steps (instr0) -- stored instructions stripped + step truncated in replay compile. -> M19a case-diversity LCB, M19b single-case-no-extrapolation, M19c replay fidelity, M19d seeding hygiene (no cross-run recipe|/evalcache)"
+    }
+    ,{
+      "round": "p3_dev12_stable_refine_screen",
+      "date": "2026-06-12",
+      "est_usd": 1.29,
+      "tokens_mtok": 4.92,
+      "verdict": "PASS exit 0 on M19 code (fresh seeds 131-138): base 8.3, curve 45.8*/62.5*/45.8* ALL dominate, r3 9:0, gates accepted, bank 8->12. The dev-11 broken cell (4.2/0.0/4.2) fully recovered. Forensics: one_peer champion 72/72 evolved rows; II-15 preserve-verbatim 0.88-1.00 vs base 0.25; II-17/19 sibling-extrapolated via M19b GLOBAL-diversity gate -> Modify instr4 every row, II-19 0.50-0.88 vs base 0.00; II-17 floor all arms. No recipe verified live at these seeds (banks recipe-free) -> M19a/M19c guards remain offline-validated, exercised when a recipe next verifies. stable_refine cell now PASS on current code"
+    }
+    ,{
+      "round": "p3_dev12b_grid",
+      "date": "2026-06-12",
+      "est_usd": 3.94,
+      "tokens_mtok": 15.02,
+      "verdict": "FULL FOUR-CELL SWEEP on M19 code, seeds 131-138 (with dev-12): ALL PASS. stable_gen exit 0: 5/5 dominate +41.7/+37.5/+45.8/+45.8/+37.5, losses<=1, bank 15->21. beats_refine exit 0: evolved 45.8 vs select 37.5(+8.3,2:0)/coldgen 8.3(+37.5,11:2)/fixed=ONE_PEER 37.5(+8.3,5:3). beats_gen exit 0 FIRST EVER: evolved 50.0 vs select 37.5(+12.5,6:3)/coldgen 8.3(+41.7,11:1)/fixed=ONE_PEER 41.7(+8.3,4:2) -- select gap closed AND fixed_best drew the strong topology this time. Provenance 100%: all deployments one_peer from bank, II-15 preserve instr0, II-17/19 Modify instr4, zero abstentions, zero recipe hijacks; II-19 = margin-maker both 4-arm runs (0.62-0.75 vs 0.25-0.38). II-17 floor all arms. Both modes x both judges PASS at one fresh draw -- dev-grid milestone reached; next gate = confirmatory (SHAPE v3 pending operator veto window)"
+    }
+  ],
+  "total_est_usd": 52.89,
+  "budget_cap_usd": 100.0
+}

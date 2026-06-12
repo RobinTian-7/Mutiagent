@@ -310,6 +310,43 @@ byte-identical):
   = same-run-dir relaunch only. Confirmatory cache hygiene unchanged
   (fresh empty caches).
 
+## Dev-12/12b: the full four-cell sweep (M19 code, seeds 131-138)
+
+The milestone the campaign has driven toward: BOTH modes x BOTH frozen
+judges PASS at a single fresh seed draw, on one code state (round 19).
+
+| cell | verdict | numbers |
+|---|---|---|
+| stable_refine | PASS exit 0 | base 8.3; 45.8*/62.5*/45.8*; r3 9:0 |
+| stable_gen | PASS exit 0 | base 8.3; 50.0*/45.8*/54.2*/54.2*/45.8*; losses <= 1 |
+| beats_refine | PASS exit 0 | evolved 45.8 vs select 37.5 (+8.3, 2:0), coldgen 8.3 (+37.5, 11:2), fixed=one_peer 37.5 (+8.3, 5:3) |
+| beats_gen | **PASS exit 0 (first ever)** | evolved 50.0 vs select 37.5 (+12.5, 6:3), coldgen 8.3 (+41.7, 11:1), fixed=one_peer 41.7 (+8.3, 4:2) |
+
+Notes that matter:
+
+- Both 4-arm runs drew fixed_best = one_peer_exponential (the genuinely
+  strongest fixed topology) on their train measurement -- unlike
+  round-18's beats_gen where drift had picked chain. The "beats the best
+  fixed topology" claim now stands against the strong arm in both modes.
+- beats_gen's select-arm gap (+4.2pp 4:3 at seeds 121-128) closed to
+  +12.5pp 6:3 at this draw, consistent with the drift-width reading of
+  the earlier near-miss.
+- Provenance (operator requirement): 100% of evolved deployments are
+  bank skills -- one_peer on all three test cases; II-15
+  preserve-verbatim (instr0), II-17/II-19 Modify with 4 rewritten step
+  instructions each (the M16b/M19b extrapolation path). Zero
+  abstentions, zero recipe hijacks (no recipe verified live at these
+  seeds; the M19a/c guards stay offline-validated). II-19 is the
+  margin-maker in both 4-arm runs (evolved 0.62-0.75 vs others
+  0.12-0.38); II-17 remains a floor for every arm; II-15 is
+  ceiling-adjacent for the strong arms.
+- Cost: dev-12 $1.29 + dev-12b $3.94. Total spend $52.89/$100.
+
+Remaining gate: confirmatory per the amended procedure (SHAPE v3, fresh
+recorded RNG seeds, fresh empty caches, both modes x both judges, <= 3
+attempts) -- pending operator sign-off on the SHAPE v3 untouched-split
+interpretation.
+
 ## Thesis alignment (operator's ultimate framing)
 
 The system IS the thesis: frozen workers (soldier prompts never learned);

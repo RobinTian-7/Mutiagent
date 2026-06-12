@@ -159,6 +159,17 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   the grid (stable_gen 5r + 4-arm gen 5r + 4-arm refine 3r, same seeds)
   to confirm M19 did not regress the round-18 wins; then confirmatory
   decision.
+  RESULT (dev-12 + dev-12b, 2026-06-12): **ALL FOUR CELLS PASS at one
+  fresh draw** -- stable_refine 45.8*/62.5*/45.8*; stable_gen 5/5
+  dominate (+37.5..+45.8); beats_refine evolved 45.8 vs select/coldgen/
+  fixed=one_peer 37.5/8.3/37.5 (all margins met); beats_gen FIRST-EVER
+  PASS, evolved 50.0 vs 37.5/8.3/41.7 with fixed_best drawing the
+  STRONG topology (one_peer) in both 4-arm runs. Provenance: 100%
+  bank-skill deployments (one_peer; II-15 preserve, II-17/19 Modify
+  instr4), zero abstentions, zero recipe deployments (none verified
+  live at these seeds). Dev-grid milestone reached; confirmatory is the
+  remaining gate, awaiting operator sign-off on the SHAPE v3
+  untouched-split interpretation (clause 1 above).
 
 ## Method-change ground rules (from the operator brief)
 
