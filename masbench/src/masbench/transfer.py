@@ -298,6 +298,20 @@ def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) ->
         direct = sub.get(kind)
         if direct is not None:
             return direct
+        # M16b: the two bits extrapolate differently. LOSSLESSNESS is a
+        # capability boundary -- never crossed. SHAPE is an adaptation
+        # boundary -- the shape-sibling slot (same losslessness, other
+        # shape) authorizes deployment, and because direct evidence is
+        # absent the M14 action is automatically MODIFY (rewrite the role
+        # instructions for assembly). Without this, train pools whose cases
+        # are all one shape starve every composite slot (dev-10b: 16/24
+        # abstentions, the Modify path never fired).
+        if "-" in kind:
+            lossless_part, shape_part = kind.rsplit("-", 1)
+            sibling_shape = "scalar" if shape_part == "composite" else "composite"
+            sibling = sub.get(f"{lossless_part}-{sibling_shape}")
+            if sibling is not None:
+                return sibling
     passing = sum(1 for v in sub.values() if v is True)
     failing = any(v is False for v in sub.values())
     return passing >= BUCKET_TRUST_MIN_KINDS and not failing

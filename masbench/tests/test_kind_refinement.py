@@ -173,3 +173,38 @@ def test_m16_shape_routes_preserve_vs_modify():
     )
     assert abstained2 is False
     assert next(iter(view2)).organization_policy["deploy_action"] == "modify"
+
+
+def test_m16b_shape_sibling_extrapolates_lossless_never():
+    """dev-10b: all-scalar train pools starved every composite slot (16/24
+    abstentions; Modify never fired). The shape axis extrapolates (with
+    Modify, since direct evidence is absent); the losslessness axis never
+    does."""
+    from masbench.transfer import deployment_view
+
+    skill = _skill_with_ledger({
+        "os": {"n": 2, "em_sum": 1.5},
+        "os#lossless-scalar": {"n": 2, "em_sum": 1.5},
+    })
+    # composite sibling of a passing scalar slot -> trusted, action=modify
+    assert skill_trusted_for(skill, "os", "lossless-composite") is True
+    bank = SkillBank(skills=[skill])
+    view, _, abstained, _ = deployment_view(
+        bank, None, "os", kind="lossless-composite", fallback_tier=True,
+    )
+    assert abstained is False
+    assert next(iter(view)).organization_policy["deploy_action"] == "modify"
+    # scalar slot itself: direct -> preserve
+    view2, _, _, _ = deployment_view(
+        bank, None, "os", kind="lossless-scalar", fallback_tier=True,
+    )
+    assert next(iter(view2)).organization_policy["deploy_action"] == "preserve"
+    # the LOSSLESSNESS axis never extrapolates
+    assert skill_trusted_for(skill, "os", "lossy-scalar") is False
+    assert skill_trusted_for(skill, "os", "lossy-composite") is False
+    # a FAILING sibling blocks (extrapolation inherits the verdict, not just trust)
+    bad = _skill_with_ledger({
+        "os": {"n": 4, "em_sum": 2.0},
+        "os#lossless-scalar": {"n": 4, "em_sum": 0.5},
+    })
+    assert skill_trusted_for(bad, "os", "lossless-composite") is False
