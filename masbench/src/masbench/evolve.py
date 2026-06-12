@@ -790,26 +790,44 @@ def _exemplar_phase(
             fallback_tier=True,
         )
         if abstained or len(view) == 0:
+            traces.append({"phase": "exemplar", "case_id": inst.case_id,
+                           "bucket": bucket, "skip": "abstained"})
             continue
-        champion_view = next(iter(view))
-        champion = next(
-            (s for s in skill_bank if s.skill_id == champion_view.skill_id), None
-        )
-        if champion is None or champion.organization_policy is None:
+        # dev-14 silent no-op: the FIRST view card is often a spec-less
+        # named/cf card; pick the first trusted card that carries a
+        # replayable spec, and trace every skip path.
+        champion = None
+        spec = None
+        for candidate_view in view:
+            real = next(
+                (s for s in skill_bank if s.skill_id == candidate_view.skill_id),
+                None,
+            )
+            if real is None or real.organization_policy is None:
+                continue
+            spec_data = real.organization_policy.get("protocol_spec")
+            if not isinstance(spec_data, dict) or not spec_data.get("steps"):
+                continue
+            try:
+                spec = ProtocolGraphSpec.model_validate(spec_data)
+            except Exception:
+                spec = None
+                continue
+            champion = real
+            break
+        if champion is None or spec is None:
+            traces.append({"phase": "exemplar", "case_id": inst.case_id,
+                           "bucket": bucket, "skip": "no_spec_bearing_champion"})
             continue
         exemplars = champion.organization_policy.get("instruction_exemplars")
         if isinstance(exemplars, dict) and bucket in exemplars:
             done_buckets.add(bucket)
             continue
-        spec_data = champion.organization_policy.get("protocol_spec")
-        if not isinstance(spec_data, dict) or not spec_data.get("steps"):
-            continue
-        try:
-            spec = ProtocolGraphSpec.model_validate(spec_data)
-        except Exception:
-            continue
         instructions = _rewrite_instructions_for_case(spec, inst, cfg, llm_client)
         if not instructions:
+            traces.append({"phase": "exemplar", "case_id": inst.case_id,
+                           "bucket": bucket, "skill_id": champion.skill_id,
+                           "skip": "rewrite_failed"})
             continue
         instructed = spec.model_copy(
             update={
@@ -1600,8 +1618,6 @@ def run_evolution(
         train_instances, cfg, skill_bank=skill_bank,
         train_seeds=train_seeds, llm_client=client,
     )
-    recipe_traces = [*recipe_traces, *exemplar_traces]
-    n_recipe_runs += n_exemplar_runs
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now
@@ -1692,6 +1708,8 @@ def run_evolution(
         "n_merged_duplicates": n_merged_duplicates,
         "n_recipe_runs": n_recipe_runs,
         "recipe_traces": recipe_traces,
+        "n_exemplar_runs": n_exemplar_runs,
+        "exemplar_traces": exemplar_traces,
         "gate": gate_info,
         "gate_mode": gate_mode,
         "selection_gate": selection_gate,

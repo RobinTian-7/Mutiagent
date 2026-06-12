@@ -130,6 +130,26 @@ def test_prompt_unchanged_without_exemplar():
     assert "VERIFIED to work" not in captured["prompt"]
 
 
+def _bare_named_card() -> SkillCard:
+    # a spec-less named/cf-style card that sorts FIRST in the bank: dev-14's
+    # silent no-op picked exactly this shape and skipped without a trace
+    return SkillCard(
+        skill_id="a_first_named", objective="balanced", task_family="silo",
+        trigger={"task_family": "silo"},
+        organization_policy={
+            "planner_mode": "topology_select",
+            "topology_name": "peer_star",
+            "transfer_evidence": {
+                "os": {"n": 4, "em_sum": 4.0, "cases": ["II-13", "II-14"]},
+                "os#lossless-scalar": {"n": 4, "em_sum": 4.0,
+                                       "cases": ["II-13", "II-14"]},
+            },
+        },
+        expected_tradeoff={"mean_primary_loss": 0.0},
+        confidence={}, tags=["mas"],
+    )
+
+
 def test_exemplar_phase_stores_on_verified_success(monkeypatch):
     from pathlib import Path
     from masbench.adapters.silo_bench import SiloBenchAdapter
@@ -140,7 +160,9 @@ def test_exemplar_phase_stores_on_verified_success(monkeypatch):
         )
     )
     card = _card(with_exemplar=False)
-    bank = SkillBank(skills=[card])
+    # dev-14 regression: a spec-less trusted card ahead of the champion must
+    # be skipped over, not silently abort the whole phase
+    bank = SkillBank(skills=[_bare_named_card(), card])
     cfg = RunConfig(
         llm_provider="fake", planner_mode="graph_generate",
         merge_mode="deterministic", init_mode="deterministic",
