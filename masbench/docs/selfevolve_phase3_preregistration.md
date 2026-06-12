@@ -300,6 +300,29 @@ Offline fake = all-zero FAIL by construction (verified).
 - Dev round 16 (registered): supremacy draw 3, FRESH seeds 171-178,
   round-27 code (functioning M20 + M18b + incumbent chain). Stability
   target: gating stack 3/3 draws with a non-degenerate refine arm.
+- JSSP v3 RESULT (FAIL/neutral, decisive forensic): r3 "dominated"
+  (q 13.5 vs 0.0, 2:0) but the mechanism-purity audit killed it -- every
+  eval row in every round ABSTAINED (cold tier); the r3 lift was the
+  drift window recovering (cold q collapsed 23.2 -> 0.0 between draws =
+  5th drift record; schedule validity is fragile under drift). ROOT:
+  M21 made credit graded but the trust BAR stayed absolute 0.5 (a
+  binary-EM design) -- no schedule org ever averages 0.5; orgs clearly
+  better than cold (0.3 vs 0.05) earn nothing; permanent abstention.
+- Round 28 method (M22, registered before JSSP v4): currency-aware
+  comparative trust bar. Slots fed any non-{0,1} value are GRADED; the
+  ledger also accumulates a per-bucket POOLED all-org baseline
+  (reserved "__pool__" identity, stamped onto cards as
+  "__pool__:<bucket>"; mean-preserving under duplicate merges). Binary
+  slots keep the absolute MIN_TRUST_EM=0.5 byte-identically (all Silo
+  rows are binary -- suite-pinned). Graded slots pass by EITHER mean >=
+  0.5 OR (mean >= pool_mean + GRADED_TRUST_MARGIN(0.15) AND mean >=
+  GRADED_TRUST_FLOOR(0.2)) -- do-no-harm is comparative by nature.
+  Constants registered, not tuned per-run.
+- JSSP v4 run (registered): easy grid, FRESH eval seeds 41-44,
+  --rounds 5 (the 0/0/13.5* curve shape says graded trust needs runway,
+  mirroring gen's 5-round hypothesis), round-28 code. Success shape:
+  trust earned -> deployed rows show tier!=cold -> quality dominance
+  with skills-driven provenance.
 
 ## Method-change ground rules (from the operator brief)
 

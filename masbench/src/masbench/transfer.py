@@ -145,10 +145,16 @@ def build_transfer_ledger(
                 f"{bucket}#{'lossless' if lossless else 'lossy'}-{shape}"
             )
         case_id = row.get("case_id")
+        value = _row_em(row)
+        graded = abs(value) > 1e-9 and abs(value - 1.0) > 1e-9
         for key in keys:
             slot = slots.setdefault(key, {"n": 0, "em_sum": 0.0})
             slot["n"] += 1
-            slot["em_sum"] += _row_em(row)
+            slot["em_sum"] += value
+            # M22: currency detection -- a slot fed any non-{0,1} value is
+            # GRADED (quality metric) and gets the comparative trust bar.
+            if graded:
+                slot["graded"] = True
             # M19: distinct-case provenance -- seeds of one case are not
             # transfer evidence (capped; diversity thresholds are tiny).
             if case_id is not None:
@@ -156,6 +162,14 @@ def build_transfer_ledger(
                 if str(case_id) not in cases and len(cases) < 16:
                     cases.append(str(case_id))
                     cases.sort()
+        # M22: per-bucket POOLED stats across ALL organizations (reserved
+        # identity), the comparison baseline for graded trust.
+        pool_slots = ledger.setdefault("__pool__", {})
+        pool = pool_slots.setdefault(str(bucket), {"n": 0, "em_sum": 0.0})
+        pool["n"] += 1
+        pool["em_sum"] += value
+        if graded:
+            pool["graded"] = True
     return ledger
 
 
@@ -169,6 +183,8 @@ def combine_bucket_stats(
             slot = out.setdefault(str(bucket), {"n": 0, "em_sum": 0.0})
             slot["n"] += int(stats.get("n", 0))
             slot["em_sum"] += float(stats.get("em_sum", 0.0))
+            if stats.get("graded"):
+                slot["graded"] = True
             incoming = stats.get("cases")
             if isinstance(incoming, list) and incoming:
                 cases = slot.setdefault("cases", [])
@@ -205,6 +221,16 @@ def inject_transfer_evidence(
         if not fresh:
             topology = skill.organization_policy.get("topology_name") or skill.topology_name
             fresh = ledger.get(str(topology), {})
+        # M22: every card also carries the per-bucket POOLED baseline
+        # (reserved "__pool__:<bucket>" keys) so graded trust can compare
+        # "this org" against "all orgs measured in this bucket". Merging is
+        # mean-preserving under duplicate-card merges (n and sum both add).
+        pool = ledger.get("__pool__", {})
+        if pool and fresh:
+            fresh = {
+                **fresh,
+                **{f"__pool__:{b}": dict(stats) for b, stats in pool.items()},
+            }
         old = (prior or {}).get(skill.skill_id)
         existing = skill.organization_policy.get(TRANSFER_EVIDENCE_KEY)
         # `existing` is whatever survived patch-merging this round; prefer the
@@ -240,6 +266,7 @@ def _ledger_total_n(skill: SkillCard) -> int:
         int(stats.get("n", 0))
         for key, stats in ledger.items()
         if isinstance(stats, dict) and "#" not in key
+        and not key.startswith("__pool__")
     )
 
 
@@ -318,14 +345,36 @@ def snapshot_transfer_evidence(
     return out
 
 
-def _slot_passes(stats: Any) -> bool | None:
-    """True/False when the slot has enough rows to judge, None otherwise."""
+GRADED_TRUST_MARGIN = 0.15
+GRADED_TRUST_FLOOR = 0.2
+
+
+def _slot_passes(stats: Any, pool: Any = None) -> bool | None:
+    """True/False when the slot has enough rows to judge, None otherwise.
+
+    M22 currency-aware bar: BINARY slots (every value in {0,1} -- all Silo
+    rows) keep the absolute MIN_TRUST_EM rule byte-identically. GRADED
+    slots (quality metrics, e.g. JSSP makespan ratio) use a COMPARATIVE
+    do-no-harm bar: the org must beat the bucket's pooled all-org mean by
+    GRADED_TRUST_MARGIN (and clear an absolute floor). An absolute 0.5 on
+    a quality ratio conflates trust with task hardness -- jssp-v3 measured
+    permanent abstention because no schedule ever averaged 0.5 while orgs
+    clearly better than cold (0.3 vs 0.05) earned nothing.
+    """
     if not isinstance(stats, dict):
         return None
     n = int(stats.get("n", 0))
     if n < MIN_TRUST_ROWS:
         return None
-    return (float(stats.get("em_sum", 0.0)) / n) >= MIN_TRUST_EM
+    mean = float(stats.get("em_sum", 0.0)) / n
+    if not stats.get("graded"):
+        return mean >= MIN_TRUST_EM
+    if mean >= MIN_TRUST_EM:
+        return True
+    if isinstance(pool, dict) and int(pool.get("n", 0)) >= MIN_TRUST_ROWS:
+        pool_mean = float(pool.get("em_sum", 0.0)) / int(pool["n"])
+        return mean >= pool_mean + GRADED_TRUST_MARGIN and mean >= GRADED_TRUST_FLOOR
+    return False
 
 
 def slot_case_diversity(stats: Any) -> int:
@@ -389,10 +438,12 @@ def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) ->
     ledger = policy.get(TRANSFER_EVIDENCE_KEY)
     if not isinstance(ledger, dict):
         return False
-    if _slot_passes(ledger.get(bucket)) is not True:
+    # M22: graded slots compare against the bucket's pooled all-org mean
+    pool = ledger.get(f"__pool__:{bucket}")
+    if _slot_passes(ledger.get(bucket), pool) is not True:
         return False
     sub = {
-        key.split("#", 1)[1]: _slot_passes(stats)
+        key.split("#", 1)[1]: _slot_passes(stats, pool)
         for key, stats in ledger.items()
         if key.startswith(f"{bucket}#")
     }
@@ -485,7 +536,13 @@ def deployment_view(
         if policy is None:
             continue
         ledger = policy.get(TRANSFER_EVIDENCE_KEY) or {}
-        direct = _slot_passes(ledger.get(f"{bucket}#{kind}")) if kind else None
+        direct = (
+            _slot_passes(
+                ledger.get(f"{bucket}#{kind}"), ledger.get(f"__pool__:{bucket}")
+            )
+            if kind
+            else None
+        )
         policy["deploy_action"] = "preserve" if direct is True else "modify"
         # M20: surface this bucket's train-verified instruction exemplar (if
         # the card carries one) so the deploy-time Modify rewrite is anchored

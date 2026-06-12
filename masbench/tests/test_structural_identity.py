@@ -61,11 +61,15 @@ def test_same_structure_different_names_share_one_ledger_row_pool():
         _row("generated:pairwise_merge_sink", _spec("pairwise_merge_sink"), True, 1.0),
     ]
     ledger = build_transfer_ledger(rows)
-    assert len(ledger) == 1, "structurally identical rows must pool"
-    (identity, slots), = ledger.items()
+    # M22 adds a reserved "__pool__" baseline entry; identity pooling is
+    # asserted over the non-reserved keys.
+    identities = {k: v for k, v in ledger.items() if k != "__pool__"}
+    assert len(identities) == 1, "structurally identical rows must pool"
+    (identity, slots), = identities.items()
     assert identity == spec_struct_hash(_SPEC)
-    assert slots["os"] == {"n": 2, "em_sum": 2.0}
-    assert slots["os#lossless-scalar"] == {"n": 2, "em_sum": 2.0}
+    assert slots["os"]["n"] == 2 and slots["os"]["em_sum"] == 2.0
+    assert slots["os#lossless-scalar"]["n"] == 2
+    assert slots["os#lossless-scalar"]["em_sum"] == 2.0
 
 
 def test_rows_without_spec_fall_back_to_name():
