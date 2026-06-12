@@ -409,6 +409,28 @@ Offline fake = all-zero FAIL by construction (verified).
   cross-run seeding); MASBENCH_EVAL_CACHE set to fresh per-attempt
   files (mid-attempt crash recovery only).
 - Attempt budget guard $9; attempts consumed after this one: 1 of 3.
+- ATTEMPT 1 RESULT (2026-06-12): ALL FOUR CELLS FAIL with one
+  mechanistic root cause. The bucket-BLIND even/odd train/val carve in
+  run_evolution sent the os anchor II-13 to the VAL side (sorted index
+  7 in the 8-case confirmatory pool; dev's 7-case pool had it at even
+  index 6 -- every dev result rode that parity): ZERO os evidence rows
+  were ever collected, no org earned os trust, 100% of evolved
+  deployments abstained to the cold path in all four cells (verified in
+  diags: all eval rows cold-tier; final banks carry only of-bucket
+  slots; II-13 appears exclusively in gate phases; classifications
+  identical to dev). Attempt 1 consumed honestly; cost $4.70.
+- Round 33 method (M24, registered before attempt 2): BUCKET-STRATIFIED
+  anchor-preserving carve -- _split_train_val now stratifies by the
+  benchmark-agnostic M7 classifier bucket (no case names): within each
+  bucket, even local indices -> train / odd -> val; a bucket's SINGLETON
+  case goes to BOTH train and val (the function's existing
+  single-instance precedent), so every measurable bucket always
+  contributes evidence and the gate keeps held-out rows. Offline tests
+  pin the exact attempt-1 geometry (8-case pool -> II-13 in train) and
+  legacy no-bucketer behavior. Gate-geometry test updated (2 singleton
+  val instances x 3 derived seeds = n_samples 6). Suites 303/271 green.
+- ATTEMPT 2 (registered): SAME drawn split and seeds (no re-roll, per
+  the no-re-rolling rule), fresh empty caches, round-33 code.
 
 ## Method-change ground rules (from the operator brief)
 

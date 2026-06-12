@@ -117,8 +117,9 @@ def test_gate_seed_expansion_and_one_miss_tolerance(monkeypatch):
             calls[phase].append(kwargs["seed"])
             if phase == "gate:before":
                 return {"ExactMatchRate": 1.0, "mean_primary_loss": 0.0}
-            # exactly one miss across the 3 derived seeds
-            miss = kwargs["seed"] == calls["gate:after"][0]
+            # exactly one missed ROW across the whole gate:after grid
+            # (M24: 2 singleton-bucket val instances x 3 derived seeds)
+            miss = len(calls["gate:after"]) == 1
             return {"ExactMatchRate": 0.0 if miss else 1.0,
                     "mean_primary_loss": 1.0 if miss else 0.0}
         return orig(inst, cfg, **kwargs)
@@ -130,9 +131,11 @@ def test_gate_seed_expansion_and_one_miss_tolerance(monkeypatch):
         levels=["I", "ORD"],
     )
     gate = summary["gate"]
-    assert gate["n_samples"] == 3
-    assert sorted(calls["gate:before"]) == [3, 1012, 2021]
-    assert abs(gate["j_after"] - 1.0 / 3.0) < 1e-9
+    # M5 seed expansion x3; M24 stratified carve puts BOTH singleton-bucket
+    # cases (I-01=of, ORD-50=os) into val -> 2 instances x 3 gate seeds.
+    assert gate["n_samples"] == 6
+    assert sorted(set(calls["gate:before"])) == [3, 1012, 2021]
+    assert abs(gate["j_after"] - 1.0 / 6.0) < 1e-9
     assert gate["accepted"] is True, gate  # one miss tolerated
 
 

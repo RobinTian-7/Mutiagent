@@ -1158,20 +1158,48 @@ def _filter_misfired_avoids(
 
 def _split_train_val(
     instances: list[BenchmarkInstance],
+    *,
+    bucket_of: Any = None,
 ) -> tuple[list[BenchmarkInstance], list[BenchmarkInstance]]:
     """Stable TRAIN/VAL split over the instance *set* (not over seeds).
 
     Silo instances are fixed per ``(case, n_agents)`` and the deterministic
     offline path is seed-invariant, so simulating seeds would yield identical
-    rows and a degenerate gate. We therefore split the instance set: even sorted
-    indices go to TRAIN, odd to VAL. With a single instance it lands in both so
-    the loop still runs end to end (and the gate still has held-out rows).
+    rows and a degenerate gate. We split the instance set; with a single
+    instance it lands in both so the loop still runs end to end.
+
+    M24 (confirmatory attempt 1 root cause): the old bucket-BLIND even/odd
+    carve silently sent a bucket's ONLY case to VAL when its sorted index
+    was odd -- the os anchor (II-13) flipped parity when the registered
+    confirmatory pool had 7 level-I cases instead of dev's 6, so NO os
+    evidence was ever collected and every deployment abstained. The carve
+    is now STRATIFIED PER TASK BUCKET (benchmark-agnostic classifier
+    bucket; no case names): within each bucket, even local indices train /
+    odd val; a bucket's SINGLETON case goes to BOTH (the function's
+    existing single-instance precedent) so every measurable bucket always
+    contributes evidence AND the gate keeps held-out rows.
     """
     ordered = sorted(instances, key=lambda inst: (inst.case_id, inst.n_agents))
     if len(ordered) == 1:
         return ordered, ordered
-    train = [inst for idx, inst in enumerate(ordered) if idx % 2 == 0]
-    val = [inst for idx, inst in enumerate(ordered) if idx % 2 == 1]
+    if bucket_of is None:
+        train = [inst for idx, inst in enumerate(ordered) if idx % 2 == 0]
+        val = [inst for idx, inst in enumerate(ordered) if idx % 2 == 1]
+    else:
+        groups: dict[str, list[BenchmarkInstance]] = {}
+        for inst in ordered:
+            groups.setdefault(str(bucket_of(inst)), []).append(inst)
+        train, val = [], []
+        for _bucket, members in sorted(groups.items()):
+            if len(members) == 1:
+                train.extend(members)
+                val.extend(members)
+                continue
+            train.extend(m for i, m in enumerate(members) if i % 2 == 0)
+            val.extend(m for i, m in enumerate(members) if i % 2 == 1)
+        order_index = {id(inst): i for i, inst in enumerate(ordered)}
+        train.sort(key=lambda inst: order_index[id(inst)])
+        val.sort(key=lambda inst: order_index[id(inst)])
     if not train:
         train = ordered
     if not val:
@@ -1394,7 +1422,22 @@ def run_evolution(
         raise SystemExit(
             "no Silo-Bench instances matched the given cases/agent-counts/levels"
         )
-    train_instances, val_instances = _split_train_val(instances)
+
+    # M24: the carve is stratified per classifier bucket so a bucket's only
+    # case can never be silently excluded from evidence collection
+    # (classification is the same benchmark-agnostic M7 call the pipeline
+    # makes anyway; cached per text hash, heuristic fallback offline).
+    def _carve_bucket(inst: BenchmarkInstance) -> str:
+        classification = classify_task(
+            inst.task_prompt, llm_client=client, model_name=cfg.model_name,
+            llm_provider=cfg.llm_provider,
+            source=getattr(cfg, "task_feature_source", "llm"),
+        )
+        return str(classification_bucket(classification))
+
+    train_instances, val_instances = _split_train_val(
+        instances, bucket_of=_carve_bucket
+    )
 
     # The evolving (held-out) bank is the one the gate mutates. Optionally seed an
     # incumbent so the gate has a concrete starting selection to improve on.
