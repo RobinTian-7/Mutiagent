@@ -1,0 +1,109 @@
+% Paper-ready tables for the self-evolving communication-topology method.
+% All numbers from frozen-judge verdict JSONs archived in lab_records/
+% (round_18 = seeds 121-128, round_21 = 131-138, round_23 = 141-148).
+% Protocol: Silo-Bench, n=5 agents, gpt-4o-mini temp-0; held-out test cases
+% {II-15, II-17, II-19} x 8 eval seeds = 24 paired runs per arm per draw;
+% judges frozen before development (verify_beats_baselines.py /
+% verify_evolve_stable.py). Workers' prompts frozen throughout; only the
+% architect-side memory evolves.
+
+% ---------------------------------------------------------------- Table 1
+\begin{table*}[t]
+\centering
+\caption{Held-out exact-match (\%) on Silo-Bench across three independent
+evaluation seed draws (identical method state; same frozen judge). The
+evolved system is compared \emph{pairwise} per (case, seed) against three
+baselines; PASS requires $\geq$5pp mean delta \emph{and} win-margin
+$\geq 2$ against \emph{every} baseline. Fixed-best is the strongest of
+\{tree, mesh\_star, one\_peer\_exponential, chain\} selected on training
+performance per run.}
+\label{tab:main}
+\small
+\begin{tabular}{llccccc}
+\toprule
+Mode & Arm & Draw A & Draw B & Draw C & Mean & Paired vs.\ evolved (mean $\Delta$, W:L)\\
+\midrule
+\multirow{4}{*}{\shortstack[l]{Evolve-\\refine}}
+ & \textbf{Evolved (ours)} & \textbf{58.3} & \textbf{45.8} & \textbf{54.2} & \textbf{52.8} & --\\
+ & Fixed-best (train-picked) & 45.8 & 37.5 & 45.8 & 43.0 & $+9.7$pp\ \ (4:1 / 5:3 / 3:1)\\
+ & Select (named-topology) & 41.7 & 37.5 & 41.7 & 40.3 & $+12.5$pp (4:0 / 2:0 / 4:1)\\
+ & Cold graph-generation & 8.3 & 8.3 & 0.0 & 5.5 & $+47.2$pp (12:0 / 11:2 / 13:0)\\
+\cmidrule{2-7}
+ & \multicolumn{6}{l}{\emph{Judge verdict: PASS vs.\ all three baselines in 3/3 draws.}}\\
+\midrule
+\multirow{4}{*}{\shortstack[l]{Evolve-\\gen}}
+ & \textbf{Evolved (ours)} & \textbf{41.7} & \textbf{50.0} & 41.7 & \textbf{44.5} & --\\
+ & Fixed-best (train-picked) & 4.2 & 41.7 & 20.8 & 22.2 & $+22.3$pp (10:1 / 4:2 / 5:0)\\
+ & Select (named-topology) & 37.5 & 37.5 & \textbf{45.8} & 40.3 & $+4.2$pp\ \ (4:3 / 6:3 / 2:3)\\
+ & Cold graph-generation & 12.5 & 8.3 & 12.5 & 11.1 & $+33.4$pp (8:1 / 11:1 / 8:1)\\
+\cmidrule{2-7}
+ & \multicolumn{6}{l}{\emph{Judge verdict: PASS vs.\ fixed-best and cold in 3/3 draws; vs.\ select 1/3 (within provider-drift width).}}\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% ---------------------------------------------------------------- Table 2
+\begin{table}[t]
+\centering
+\caption{Stability of self-evolution (frozen stable judge): per-round
+delta over the same-pipeline cold baseline on the held-out grid. A round
+``dominates'' iff mean $\geq$ baseline$+5$pp and win-margin $\geq 2$.
+Evolve-gen dominates in \textbf{15/15} rounds across the three draws;
+evolve-refine in \textbf{6/6}.}
+\label{tab:stability}
+\small
+\begin{tabular}{llrrrrr}
+\toprule
+Mode & Draw (cold base) & r1 & r2 & r3 & r4 & r5\\
+\midrule
+\multirow{3}{*}{Gen}
+ & A (12.5\%) & $+16.7$ & $+37.5$ & $+25.0$ & $+50.0$ & $+45.8$\\
+ & B (8.3\%)  & $+41.7$ & $+37.5$ & $+45.8$ & $+45.8$ & $+37.5$\\
+ & C (20.8\%) & $+41.7$ & $+16.7$ & $+29.2$ & $+37.5$ & $+25.0$\\
+\midrule
+\multirow{2}{*}{Refine}
+ & B (8.3\%)  & $+37.5$ & $+54.2$ & $+37.5$ & -- & --\\
+ & C (29.2\%) & $+29.2$ & $+16.7$ & $+25.0$ & -- & --\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ---------------------------------------------------------------- Table 3
+\begin{table}[t]
+\centering
+\caption{Mechanism ablations: adopted design changes with same-split
+before/after frozen-judge measurements (the M16 row was \emph{rejected}
+by this protocol and replaced by M16b). pp = percentage points vs.\ the
+respective baseline arm.}
+\label{tab:ablation}
+\small
+\begin{tabular}{p{0.30\linewidth}p{0.30\linewidth}p{0.30\linewidth}}
+\toprule
+Design change & Before & After\\
+\midrule
+Deployment stability (replay-first, sticky incumbent, instruction-keeping dedup) &
+refine collapses in round 3 (champion displaced by 0/8 twin); FAIL &
+both modes PASS stable judge (45.8/45.8/62.5*; 25.0*$\times$3)\\
+\addlinespace
+Evidence-conditioned Preserve/Modify + portfolio parity (M14+M15) &
+gen vs.\ fixed $-33.3$pp (0:8, all-abstain) &
+gen vs.\ fixed $+0.0$pp (2:2); stable-gen 5/5 dominate\\
+\addlinespace
+Answer-shape trust bit, no extrapolation (M16) — \emph{rejected} &
+stable-gen 5/5 dominate &
+16/24 abstentions; stable-gen FAIL; refine vs.\ fixed $-16.7$pp\\
+\addlinespace
+Shape-sibling extrapolation + auto-Modify (M16b) &
+(M16 state above) &
+0 abstentions; first 4-arm PASS (58.3 vs.\ 45.8 fixed-best); margins carried by Modify rows (II-19: 0.75 vs.\ 0.38)\\
+\addlinespace
+Verified-artifact deployment + case-diversity guards (M19a--c) &
+single-case recipe hijacks all deployments; stable-refine 4.2/0.0/4.2 vs.\ base 8.3 &
+stable-refine 45.8*/62.5*/45.8* (final round 9:0)\\
+\addlinespace
+Instruction content (M9/M10) on capability-floor cases II-17/18 &
+bare structure replay: 0 wins / 72 runs &
+same structure + task-adapted instructions: $+22.2$ to $+33.3$pp (screens, 5:0 combined)\\
+\bottomrule
+\end{tabular}
+\end{table}
