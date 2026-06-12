@@ -390,6 +390,26 @@ Offline fake = all-zero FAIL by construction (verified).
   eval-based checkpoint selection remains red-lined. Applies equally to
   gen and refine arms (no arm is privileged).
 
+## CONFIRMATORY ATTEMPT 1 (drawn and recorded 2026-06-12, BEFORE launch)
+
+- RNG: python ``random.Random(20260612)`` (seed = date stamp, auditable);
+  7 level-I cases sampled from I-01..I-10, then 8 eval seeds sampled
+  from 10000..99999.
+- DRAWN CASES: I-01 I-02 I-03 I-05 I-06 I-07 I-08 + II-13 II-15 II-17
+  II-19 -> lexicographic 30% split: TRAIN = {7 I cases + II-13}, TEST =
+  {II-15, II-17, II-19}. Induced split differs from every dev-registry
+  split (dev pool was 6-I {I-01,02,04,06,07,08}; this draw adds I-03,
+  I-05 and drops I-04). SHAPE v3 as approved by the operator.
+- DRAWN EVAL SEEDS: 25235 31370 39748 63371 73922 89336 93220 98239
+  (disjoint from train/val seeds 1,2,3 and every dev seed range).
+- Cells: frozen judges x both modes -- verify_evolve_stable (gen 5r,
+  refine 3r) + verify_beats_baselines (gen 5r, refine 3r). PASS = all
+  four exit 0. Code state: round-32 HEAD (no edits during the attempt).
+- Cache hygiene per clause 5: FRESH EMPTY evidence/feature caches (no
+  cross-run seeding); MASBENCH_EVAL_CACHE set to fresh per-attempt
+  files (mid-attempt crash recovery only).
+- Attempt budget guard $9; attempts consumed after this one: 1 of 3.
+
 ## Method-change ground rules (from the operator brief)
 
 - Anything in the learner may change (SkillCard schema, minister, motif
