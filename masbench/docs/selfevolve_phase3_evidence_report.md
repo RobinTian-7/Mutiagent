@@ -256,6 +256,60 @@ coldgen / fixed_best_on_train; PASS = ≥5pp AND win-margin ≥2 vs EACH).
     seeding, fresh MASBENCH_EVAL_CACHE) so every confirmatory number is
     a fresh measurement.
 
+## Dev-11 (DIAGNOSTIC) and round 19: the recipe-hijack triad
+
+dev-11 ran the last unmeasured cell (stable_refine on round-18 code, same
+split/seeds as dev-10c) and FAILED hard: 4.2/0.0/4.2 vs base 8.3 — on the
+same seeds where beats_refine's evolved arm had scored 58.3% an hour
+earlier. Forensics found a single deployment hijack with three stacked
+defects:
+
+1. **Trust**: `silo__recipe_longest_palindrome_cross_boundary` (M10
+   recipe, verified 2x on the ONE train case II-13) earned kind trust for
+   os#lossless-scalar from its own verification rows, and M16b
+   shape-extrapolated it onto the composite slots — it deployed on ALL
+   three test cases, every round, every seed (70/72 evolved rows),
+   displacing one_peer.
+2. **Ranking**: retrieval LCB rewards low-n perfection — recipe
+   0+0.5/sqrt(2)=0.354 outranked the multi-case generalist (~0.45+).
+   Winner-take-all refine replay has no per-case competition to recover.
+3. **Fidelity (the deepest one)**: the card stores 5 instruction-bearing
+   steps (verified 2/2 at train time as such), but deploy compiled under
+   max_messages=32: repair trimmed the 5th step (the global-answer step)
+   AND rebuilt the kept steps without their `instruction` field. The
+   deployed artifact (4 bare steps, 32 msgs — exactly the budget) was NOT
+   the verified artifact. beats_refine's instr4 rows came from the
+   REWRITE path on one_peer; stored instructions never survived repair.
+
+Validity note (honest): dev-11 is recorded as DIAGNOSTIC — my cross-run
+evalcache seeding transplanted stable_gen's stochastic recipe-search
+SUCCESS into the refine run (recipe| keys are split-deterministic), and
+3/24 baseline rows replayed from the gen run's measurements. The hijack
+mechanism itself is run-independent: any refine run whose own recipe
+search verifies would reproduce it.
+
+Round-19 fixes (M19a–d, all offline-tested, suites 277/271 green, CF
+byte-identical):
+
+- **M19c**: repair preserves instructions; skill-replay candidates are
+  admitted under budgets widened to the stored artifact's exact size
+  (budgets bind synthesis, not replay); fresh candidates stay bound.
+- **M19a**: ledger slots record distinct evidenced cases; skills carry
+  global `evidence_case_count`; retrieval adds 0.25/case_count — the
+  7-case generalist (0.498) now outranks the 1-case perfect recipe
+  (0.604).
+- **M19b**: positive shape-sibling extrapolation requires GLOBAL case
+  diversity >= 2 (one_peer keeps the dev-10c winning hop via its
+  multi-case of-evidence; single-case recipes do not hop); measured
+  failures block at any diversity. Per-slot diversity was deliberately
+  NOT required — II-13 is the only learnable os anchor, so per-slot
+  diversity is impossible by geometry and would have killed the working
+  mechanism (the 3 prior-round tests that pin the winning semantics
+  caught exactly this in TDD).
+- **M19d (tooling)**: evalcache is never seeded across runs; M18 resume
+  = same-run-dir relaunch only. Confirmatory cache hygiene unchanged
+  (fresh empty caches).
+
 ## Thesis alignment (operator's ultimate framing)
 
 The system IS the thesis: frozen workers (soldier prompts never learned);

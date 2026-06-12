@@ -128,10 +128,18 @@ def build_transfer_ledger(
             keys.append(
                 f"{bucket}#{'lossless' if lossless else 'lossy'}-{shape}"
             )
+        case_id = row.get("case_id")
         for key in keys:
             slot = slots.setdefault(key, {"n": 0, "em_sum": 0.0})
             slot["n"] += 1
             slot["em_sum"] += _row_em(row)
+            # M19: distinct-case provenance -- seeds of one case are not
+            # transfer evidence (capped; diversity thresholds are tiny).
+            if case_id is not None:
+                cases = slot.setdefault("cases", [])
+                if str(case_id) not in cases and len(cases) < 16:
+                    cases.append(str(case_id))
+                    cases.sort()
     return ledger
 
 
@@ -145,6 +153,13 @@ def combine_bucket_stats(
             slot = out.setdefault(str(bucket), {"n": 0, "em_sum": 0.0})
             slot["n"] += int(stats.get("n", 0))
             slot["em_sum"] += float(stats.get("em_sum", 0.0))
+            incoming = stats.get("cases")
+            if isinstance(incoming, list) and incoming:
+                cases = slot.setdefault("cases", [])
+                for c in incoming:
+                    if str(c) not in cases and len(cases) < 16:
+                        cases.append(str(c))
+                cases.sort()
     return out
 
 
@@ -182,6 +197,22 @@ def inject_transfer_evidence(
         combined = combine_bucket_stats(base, fresh)
         if combined:
             skill.organization_policy[TRANSFER_EVIDENCE_KEY] = combined
+            # M19a: stamp global distinct-case diversity for retrieval-side
+            # pessimism (exp-graph reads expected_tradeoff.evidence_case_count;
+            # CF cards never get here, so CF ranking is untouched).
+            all_cases: set[str] = set()
+            bare_n = 0
+            for key, stats in combined.items():
+                if "#" in key or not isinstance(stats, dict):
+                    continue
+                cases = stats.get("cases")
+                if isinstance(cases, list):
+                    all_cases.update(str(c) for c in cases)
+                elif int(stats.get("n", 0)) > 0:
+                    bare_n = 1
+            count = len(all_cases) if all_cases else bare_n
+            if count and isinstance(skill.expected_tradeoff, dict):
+                skill.expected_tradeoff["evidence_case_count"] = count
 
 
 def _ledger_total_n(skill: SkillCard) -> int:
@@ -281,6 +312,42 @@ def _slot_passes(stats: Any) -> bool | None:
     return (float(stats.get("em_sum", 0.0)) / n) >= MIN_TRUST_EM
 
 
+def slot_case_diversity(stats: Any) -> int:
+    """Distinct evidenced cases behind a slot.
+
+    M19 (dev-11): seeds of one case are correlated draws, not transfer
+    evidence. Slots that predate case tracking (e.g. recipe cards'
+    pre-seeded verification stats) conservatively count as ONE case when
+    they have rows at all.
+    """
+    if not isinstance(stats, dict):
+        return 0
+    cases = stats.get("cases")
+    if isinstance(cases, list):
+        return len({str(c) for c in cases})
+    return 1 if int(stats.get("n", 0)) > 0 else 0
+
+
+def _ledger_case_diversity(ledger: dict[str, Any]) -> int | None:
+    """Global distinct-case count across a skill's whole ledger.
+
+    Returns None when NO slot carries case provenance (ledger predates M19
+    tracking) so callers can keep legacy behavior for old snapshots.
+    """
+    cases: set[str] = set()
+    tracked = False
+    for stats in ledger.values():
+        if not isinstance(stats, dict):
+            continue
+        slot_cases = stats.get("cases")
+        if isinstance(slot_cases, list):
+            tracked = True
+            cases.update(str(c) for c in slot_cases)
+    if not tracked:
+        return None
+    return len(cases)
+
+
 # M8: extrapolating trust to a sub-slot the skill was never measured on
 # demands BREADTH -- every measured sub-slot passing and at least this many
 # of them. With M12's binary slots (lossless/lossy) this means: a skill with
@@ -331,8 +398,24 @@ def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) ->
             lossless_part, shape_part = kind.rsplit("-", 1)
             sibling_shape = "scalar" if shape_part == "composite" else "composite"
             sibling = sub.get(f"{lossless_part}-{sibling_shape}")
-            if sibling is not None:
-                return sibling
+            if sibling is False:
+                # do-no-harm: a measured failure blocks at ANY diversity
+                return False
+            if sibling is True:
+                # M19 (dev-11): a POSITIVE verdict may only extrapolate when
+                # the artifact has been exercised on >=2 distinct cases
+                # ANYWHERE (global robustness prior). A recipe verified 2x on
+                # one train case rode this hop onto every composite test case
+                # and zeroed the curve; one_peer keeps the hop through its
+                # multi-case 'of' evidence (the dev-10c winning path). The
+                # single-anchor geometry makes PER-SLOT diversity impossible
+                # (II-13 is the only learnable os case), so the gate is
+                # global, and ledgers predating case tracking keep legacy
+                # behavior.
+                if _ledger_case_diversity(ledger) is None:
+                    return True
+                if (_ledger_case_diversity(ledger) or 0) >= 2:
+                    return True
     passing = sum(1 for v in sub.values() if v is True)
     failing = any(v is False for v in sub.values())
     return passing >= BUCKET_TRUST_MIN_KINDS and not failing

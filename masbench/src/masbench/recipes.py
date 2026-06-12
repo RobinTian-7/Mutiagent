@@ -200,10 +200,16 @@ def recipe_skill_card(
     lossless_slot: str,
     n_agents: int,
     verify_count: int,
+    source_case_id: str | None = None,
 ) -> SkillCard:
     """Wrap a verified recipe as a deployable, immediately-trusted skill."""
     topology = f"generated:{spec.name}"
-    ledger_rows = {"n": verify_count, "em_sum": float(verify_count)}
+    ledger_rows: dict = {"n": verify_count, "em_sum": float(verify_count)}
+    # M19 (dev-11): verification seeds are ONE case's evidence. Recording the
+    # provenance lets trust decide the recipe's direct slot while refusing
+    # shape-sibling/breadth extrapolation from a single-case card.
+    if source_case_id is not None:
+        ledger_rows["cases"] = [str(source_case_id)]
     return SkillCard(
         skill_id=f"{task_family}__recipe_{spec.name}__a{n_agents}",
         objective="balanced",
@@ -234,6 +240,8 @@ def recipe_skill_card(
             "mean_primary_loss": 0.0,
             "mean_rmse": 0.0,
             "active_evidence_count": verify_count,
+            # M19a: single-case provenance feeds retrieval-side pessimism.
+            "evidence_case_count": 1,
             "lesson": "verified procedure from train-time recipe search",
         },
         confidence={"seed_count": verify_count},

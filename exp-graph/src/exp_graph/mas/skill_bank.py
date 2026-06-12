@@ -543,6 +543,11 @@ def _condition_specificity(skill: SkillCard, request: PlannerRequest) -> int:
 # dev round 1: a 1-row lucky explore organization displaced the proven
 # champion in raw-mean order and the held-out score dropped 25pp on that case.
 RETRIEVAL_LCB_KAPPA = 0.5
+# M19a (dev-11): seeds are not independent evidence -- a 2-row single-CASE
+# perfect score (LCB 0.354) outranked a 7-case generalist and hijacked
+# winner-take-all replay. Distinct-case diversity gets its own pessimism
+# term; cards without the stamp (all CF cards) are byte-identical.
+RETRIEVAL_CASE_KAPPA = 0.25
 
 
 def _skill_retrieval_loss(skill: SkillCard) -> float:
@@ -560,7 +565,14 @@ def _skill_retrieval_loss(skill: SkillCard) -> float:
     except (TypeError, ValueError):
         return _skill_mean_rmse(skill)
     n = max(1, _skill_sample_count(skill))
-    return loss_f + RETRIEVAL_LCB_KAPPA / math.sqrt(n)
+    ranked = loss_f + RETRIEVAL_LCB_KAPPA / math.sqrt(n)
+    cases = skill.expected_tradeoff.get("evidence_case_count")
+    if cases is not None:
+        try:
+            ranked += RETRIEVAL_CASE_KAPPA / max(1.0, float(cases))
+        except (TypeError, ValueError):
+            pass
+    return ranked
 
 
 def _skill_mean_rmse(skill: SkillCard) -> float:

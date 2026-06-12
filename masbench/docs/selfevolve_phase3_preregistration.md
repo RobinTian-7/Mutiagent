@@ -146,6 +146,19 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   requires BOTH judges BOTH modes, so this is the last unmeasured
   judge x mode cell on current code. Caches seeded from dev-10c (same
   split+seeds; bank-independent rows + cold baseline replay).
+  RESULT: FAIL 4.2/0.0/4.2 vs base 8.3 -- recorded as DIAGNOSTIC, not a
+  clean cell (the cross-run evalcache seed transplanted stable_gen's
+  stochastic recipe-search outcome into the refine run and replayed 3/24
+  baseline rows). Mechanism exposed is real and judge-independent: the
+  single-case recipe hijacked deployment on every test case while its
+  verified content was mutilated at deploy (see round-19 changelog).
+- Dev round 12 (registered 2026-06-12, code = round-19 M19a-d): screen
+  the broken cell first -- stable_refine, dev-9's split, FRESH seeds
+  131-138, --rounds 3; evcache/feature seeded from dev-10c (bank-
+  independent), evalcache fresh per M19d. If PASS -> dev-12b completes
+  the grid (stable_gen 5r + 4-arm gen 5r + 4-arm refine 3r, same seeds)
+  to confirm M19 did not regress the round-18 wins; then confirmatory
+  decision.
 
 ## Method-change ground rules (from the operator brief)
 
@@ -244,6 +257,31 @@ ONLY the power parameters below, never after a confirmatory attempt starts)
   (case,seed,cfg,planner_mode@bank_state_hash); recipe-result cache;
   env-unset = byte-identical behavior. Resume = relaunch the same
   driver. Confirmatory cache hygiene clause added to the procedure.
+- Round 19 (from dev-11 forensics; registered 2026-06-12 before dev-12):
+  **M19c replay fidelity** (PRIMARY -- what you verify must be what you
+  deploy): repair_graph_plan now preserves step instructions (it rebuilt
+  steps without the field, silently stripping every repaired replay);
+  skill-replay candidates (candidate_id skill_*) are admitted under
+  budgets widened to the stored artifact's exact size (a verified
+  5-step/40-message recipe was repair-trimmed to a 4-step/32-message
+  mutilation at deploy -- budgets bind synthesis, not replay of an
+  executed artifact); fresh candidates stay budget-bound.
+  **M19a case-diversity retrieval pessimism**: ledger slots record
+  distinct evidenced cases; skills carry global
+  expected_tradeoff.evidence_case_count; retrieval adds
+  RETRIEVAL_CASE_KAPPA=0.25 / case_count (a 2-row single-case perfect
+  score, LCB 0.354, outranked a 7-case generalist and hijacked
+  winner-take-all replay; CF cards lack the field = byte-identical).
+  **M19b global-diversity extrapolation gate**: a POSITIVE shape-sibling
+  verdict extrapolates only when the skill's GLOBAL distinct-case count
+  >= 2 (single-anchor geometry makes per-slot diversity impossible, so
+  the gate is global: one_peer keeps the dev-10c winning hop through its
+  multi-case 'of' evidence; the single-case recipe does not); measured
+  FAILURES block at any diversity; ledgers without case tracking keep
+  legacy semantics. Recipe cards record source_case_id provenance.
+  **M19d (tooling)**: evalcache is never seeded across runs (recipe-
+  search outcomes are stochastic luck; transplanting them contaminated
+  dev-11); M18 resume = same run dir relaunch only.
 
 ## Phase-3 round-1 planned method changes (registered before the run)
 

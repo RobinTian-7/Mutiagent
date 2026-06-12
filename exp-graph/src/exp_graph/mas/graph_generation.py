@@ -349,6 +349,9 @@ def repair_graph_plan(
                     description=step.description,
                     edges=edges,
                     operator_hint=step.operator_hint,
+                    # dev-11: repair used to rebuild steps without this field,
+                    # silently stripping verified replay instructions.
+                    instruction=step.instruction,
                 )
             )
     if len(graph.steps) > options.max_steps:
@@ -819,19 +822,50 @@ def parse_graph_candidates_response(
     return graphs
 
 
+def _admission_options(
+    graph: GeneratedGraphPlan,
+    options: GraphValidationOptions,
+) -> GraphValidationOptions:
+    """Budgets bind SYNTHESIS, not replay of an already-executed artifact.
+
+    dev-11: a verified 5-step/40-message recipe was repair-trimmed to a
+    4-step mutilation at deploy (max_messages=32) -- the deployed spec was
+    not the verified spec. Skill-replay candidates are admitted under
+    budgets widened to fit the stored artifact exactly; safety repairs
+    (self-loops, agent bounds) still apply, fresh candidates stay bound.
+    """
+    if not str(graph.candidate_id).startswith("skill_"):
+        return options
+    steps_n = len(graph.steps)
+    messages = sum(len(step.edges) for step in graph.steps)
+    fan_in = 0
+    for step in graph.steps:
+        per_dst: Counter[int] = Counter(int(dst) for _src, dst in step.edges)
+        if per_dst:
+            fan_in = max(fan_in, max(per_dst.values()))
+    return options.model_copy(
+        update={
+            "max_steps": max(options.max_steps, steps_n),
+            "max_messages": max(options.max_messages, messages),
+            "max_receiver_fan_in": max(options.max_receiver_fan_in, fan_in),
+        }
+    )
+
+
 def _validate_and_compile_candidates(
     graphs: list[GeneratedGraphPlan],
     options: GraphValidationOptions,
 ) -> list[_CandidateState]:
     states: list[_CandidateState] = []
     for generation_index, graph in enumerate(graphs):
-        validation = validate_graph_plan(graph, options)
+        candidate_options = _admission_options(graph, options)
+        validation = validate_graph_plan(graph, candidate_options)
         repaired = graph
         repair_notes: list[str] = []
         status = "valid" if validation.valid else "rejected"
-        if not validation.valid and options.repair_attempts > 0:
-            repaired, repair_notes = repair_graph_plan(graph, options)
-            repaired_validation = validate_graph_plan(repaired, options)
+        if not validation.valid and candidate_options.repair_attempts > 0:
+            repaired, repair_notes = repair_graph_plan(graph, candidate_options)
+            repaired_validation = validate_graph_plan(repaired, candidate_options)
             validation = repaired_validation.model_copy(
                 update={"repair_notes": repair_notes}
             )
@@ -839,7 +873,7 @@ def _validate_and_compile_candidates(
                 status = "repaired"
         spec = None
         if validation.valid:
-            spec = compile_generated_graph(repaired, options)
+            spec = compile_generated_graph(repaired, candidate_options)
         protocol_steps = len(spec.steps) if spec else len(repaired.steps)
         protocol_messages = (
             sum(len(step.transmissions) for step in spec.steps)

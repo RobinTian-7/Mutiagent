@@ -679,6 +679,7 @@ def _recipe_search_phase(
                 spec, task_family=SILO_TASK_FAMILY, bucket=bucket,
                 lossless_slot=slot, n_agents=n_agents,
                 verify_count=len(verify_seeds),
+                source_case_id=inst.case_id,
             )
             skill_bank.apply_patch(
                 SkillPatch(
