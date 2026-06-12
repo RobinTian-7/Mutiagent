@@ -38,6 +38,22 @@ TRANSFER_EVIDENCE_KEY = "transfer_evidence"
 
 
 def _row_em(row: dict[str, Any]) -> float:
+    """Trust-ledger success value for one row.
+
+    M21 (jssp-easy forensics): binary exact-match is the wrong trust
+    currency on quality-graded benchmarks -- a 23%-quality schedule counts
+    as total failure, so the learner can never earn deployment trust and
+    abstains forever. Rows carry ``MeanPrimaryMetric`` (the benchmark's own
+    primary success in [0,1]); prefer it when present. On Silo the two
+    fields are equal by construction (pinned by test), so Silo ledgers are
+    byte-identical; on JSSP trust becomes graded (quality accrues credit).
+    """
+    pm = row.get("MeanPrimaryMetric")
+    if pm is not None:
+        try:
+            return float(pm)
+        except (TypeError, ValueError):
+            pass
     return float(row.get("ExactMatchRate", 0.0) or 0.0)
 
 

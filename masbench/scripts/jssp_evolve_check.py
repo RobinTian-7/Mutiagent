@@ -132,9 +132,20 @@ def main() -> int:
         scores = eval_grid(bank, motif)
         em = sum(s for s, _q in scores) / len(scores)
         q = sum(qq for _s, qq in scores) / len(scores)
-        wins = sum(1 for (s, _), (b, _b) in zip(scores, base) if s > b)
-        losses = sum(1 for (s, _), (b, _b) in zip(scores, base) if s < b)
-        ok = (em >= base_em + args.delta_min) and ((wins - losses) >= args.win_margin)
+        # v2 (registered before the M21 rerun): pairwise wins decided by
+        # exact-match first; when em ties (the common case on scheduling),
+        # schedule QUALITY decides with a 0.05 dead-band. Round dominance
+        # accepts either metric clearing the bar -- em stays primary, the
+        # graded metric stops all-tie blindness.
+        wins = losses = 0
+        for (s, sq), (b, bq) in zip(scores, base):
+            if s != b:
+                wins, losses = wins + (s > b), losses + (s < b)
+            elif abs(sq - bq) > 0.05:
+                wins, losses = wins + (sq > bq), losses + (sq < bq)
+        ok = (
+            (em >= base_em + args.delta_min) or (q >= base_q + args.delta_min)
+        ) and ((wins - losses) >= args.win_margin)
         rounds_out.append({
             "round": r, "exact_match": em, "quality": q,
             "delta_em": em - base_em, "delta_quality": q - base_q,

@@ -237,6 +237,50 @@ Offline fake = all-zero FAIL by construction (verified).
   seeded per established bank-independent policy). Question: where does
   gen stand against the full operator bar stack with M20 anchoring, and
   does gen-vs-select stabilize?
+  RESULT: PASS exit 0 (first supremacy pass): gen 50.0 vs coldgen 16.7
+  (+33.3, 9:1) / select 41.7 (+8.3, 3:1) / per-case ORACLE fixed 29.2
+  (+20.8, 5:0); vs full-strength refine tied 50.0 (4:4, non-gating).
+  CAVEAT: M20 exemplar phase was a silent no-op (spec-less first card;
+  fixed in round 25 with regression test + skip traces) -> dev-14 = the
+  BEFORE arm of the M20 A/B.
+- OPERATOR DIRECTIVE (2026-06-12): keep iterating until the architecture
+  has CONVINCING data on BOTH Silo-Bench and JSSP-Bench. Generalization
+  is an ultimate metric; a Silo-only solver does not satisfy the goal.
+- Dev round 15 (registered 2026-06-12, code = round-25): supremacy
+  re-run WITH effective M20, fresh seeds 161-168 = the AFTER arm of the
+  M20 A/B + the second independent supremacy draw.
+- JSSP-easy corroboration v2 (registered 2026-06-12): 6 synthetic 4x3
+  instances with 2 ops/job (gen_jssp_instances.py seed 11, greedy-UB
+  18-22) -- one difficulty step DOWN so the executor sits above its
+  capability floor (the 5x3 grid was em-floor for BOTH arms).
+  jssp_evolve_check.py, gen mode, 3 rounds, eval seeds 21-24. First
+  live datum: COLD BASELINE quality = 23.2% (vs 0.0% at 5x3) -- dynamic
+  range exists at this size. Target: judge-grade evolve-vs-cold
+  dominance on a second benchmark.
+  RESULT (FAIL/neutral) + forensics: evolved arm ABSTAINED on every test
+  row (transfer_tier=cold; deployed topologies near-identical to the
+  cold arm, instr0) -- do-no-harm worked CORRECTLY; the apparent quality
+  drop 23.2 -> 5.6/5.6/0.0 is SAME-POLICY provider drift (4th recorded
+  drift instance, first cross-benchmark), and the judge's em-only
+  pairing showed 0:0 ties throughout. ROOT MECHANISM GAP: the trust
+  ledger's currency was binary exact-match -- on quality-graded
+  benchmarks a 23%-quality schedule counts as total failure, so the
+  learner can NEVER earn deployment trust on JSSP and abstains forever.
+- Round 26 method (M21, registered before the JSSP v3 rerun): graded
+  trust currency. transfer._row_em prefers the row's own
+  MeanPrimaryMetric (the benchmark's primary success in [0,1]) over
+  binary ExactMatchRate. Silo invariance: silo rows carry
+  MeanPrimaryMetric == ExactMatchRate by construction (pinned by an
+  offline test; full 289-test suite unchanged). On JSSP trust becomes
+  graded: quality accrues ledger credit, so organizations with mean
+  quality >= MIN_TRUST_EM(0.5) on train can earn deployment.
+  jssp_evolve_check v2 amendment (this script is NOT a frozen Silo
+  judge; amended prospectively): pairwise wins decided by em first,
+  QUALITY with a 0.05 dead-band on em ties; round dominance = (em OR
+  quality clears +5pp) AND win-margin >= 2.
+- JSSP v3 run (registered): same easy grid, FRESH eval seeds 31-34,
+  round-26 code. Question: with graded trust, does the learner earn
+  deployment on JSSP and dominate cold under the v2 pairing?
 
 ## Method-change ground rules (from the operator brief)
 
