@@ -108,10 +108,36 @@ class OpenAIChatClient:
         connect_timeout = float(
             os.environ.get("OPENAI_CONNECT_TIMEOUT", str(min(10.0, timeout_total)))
         )
+        http_client: object | None = None
         try:
             import httpx
 
             timeout: object = httpx.Timeout(timeout_total, connect=connect_timeout)
+
+            class _NoCookieHTTPClient(httpx.Client):
+                """An httpx client whose cookie jar never persists anything.
+
+                httpx re-wraps any ``cookies=`` argument into a plain jar, so
+                a Cookies subclass cannot opt out; pinning the property is
+                the reliable seam. The API needs no cookies, but a proxy/
+                load-balancer that sets session cookies makes the default jar
+                GROW across the thousands of calls a long run makes in one
+                process, until the Cookie header alone trips request limits
+                (phase-3 dev-10: arm-agnostic '431 Request headers are too
+                large' failures poisoned every judge arm).
+                OPENAI_KEEP_COOKIES=1 restores the default client.
+                """
+
+                @property
+                def cookies(self):  # noqa: D102
+                    return httpx.Cookies()
+
+                @cookies.setter
+                def cookies(self, value):  # noqa: D102
+                    return None
+
+            if os.environ.get("OPENAI_KEEP_COOKIES", "").strip() not in {"1", "true"}:
+                http_client = _NoCookieHTTPClient(timeout=timeout)
         except Exception:  # pragma: no cover - httpx ships with the openai SDK
             timeout = timeout_total
         max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "2"))
@@ -121,6 +147,8 @@ class OpenAIChatClient:
             "timeout": timeout,
             "max_retries": max_retries,
         }
+        if http_client is not None:
+            client_kwargs["http_client"] = http_client
         resolved_base_url = base_url or _DEFAULT_BASE_URLS.get(self._platform)
         if resolved_base_url:
             client_kwargs["base_url"] = resolved_base_url
