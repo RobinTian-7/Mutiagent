@@ -451,6 +451,20 @@ Offline fake = all-zero FAIL by construction (verified).
   (gen_jssp_instances seed 19) -> TRAIN 8 / TEST 4, 8 eval seeds = 32
   pairs. JSSP v9 (registered): this configuration, mini architect,
   5 rounds, eval seeds 91-98.
+- JSSP v9 RESULT: cross-window curve had a REAL r1 peak (baseline q 7.0
+  -> r1 16.0, +9.0pp, 9:4 DOMINATES) decaying to r5 10.5; but the
+  same-window-paired checkpoint FAILED (8.3 vs cold 8.9) because the
+  checkpoint was selected by the gate's EM-based j_after, which FLOORS
+  to 1.0 on JSSP and deployed the DECAYED r5 instead of the r1 peak.
+- JSSP judge v5 (M25, registered before v10): (a) checkpoint selected by
+  held-out VAL QUALITY -- train instances x val seeds, never eval --
+  since the gate's EM j_after has no round discrimination on a
+  quality-graded benchmark (this is the same M21/M22 currency insight
+  applied to checkpoint selection); (b) PER-ROUND same-window pairing so
+  the reported curve is drift-corrected (each round's evolved bank vs a
+  FRESH cold arm, interleaved). exit 0 = curve OR paired-checkpoint
+  pass. JSSP v10 (registered): 12-instance 4x2 pool, mini architect,
+  5 rounds, FRESH eval seeds 101-108, --paired-final.
 
 ## Method-change ground rules (from the operator brief)
 

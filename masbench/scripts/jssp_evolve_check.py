@@ -129,11 +129,31 @@ def main() -> int:
 
     bank, motif = SkillBank(), {}
     rounds_out = []
-    # v3 (registered; mirrors the supremacy judge): track the VAL-selected
-    # checkpoint (gate j_after on accepted rounds, train/val signal only)
-    # for a final beats-style deployment -- v6 measured real early-round
-    # dominance that the last-2-rounds rule then lost to late reshuffle.
+    # v5 (operator: JSSP must show a RISING training curve). Two structural
+    # fixes over v4: (a) PER-ROUND same-window pairing -- each round's
+    # evolved bank and a FRESH cold arm run interleaved, so the curve is
+    # drift-corrected (cross-window cold drifts 0<->50pp and buried every
+    # margin); (b) checkpoint chosen by held-out VAL QUALITY (train
+    # instances x val seeds), since the gate's EM-based j_after floors to
+    # 1.0 and picked the decayed last round (v9: r5 over the r1 peak).
+    probe_insts = list(adapter.iter_instances(
+        agent_counts=[args.n_agents], cases=train_cases))
+    probe_pairs = [(inst, s) for inst in probe_insts for s in args.val_seeds]
     best_ckpt: tuple[float, int, SkillBank, dict] | None = None
+
+    def _paired_eval(bk, mt):
+        def _arm(task):
+            inst, seed, arm = task
+            b2, m2 = (bk, mt) if arm == "ev" else (SkillBank(), None)
+            row = _run_one(inst, eval_cfg, objective=objective, skill_bank=b2,
+                           seed=seed, llm_client=client, motif_stats=m2)
+            return (float(row.get("ExactMatchRate", 0.0)),
+                    float(row.get("MeanPrimaryMetric", 0.0)))
+        tasks = [(i, s, a) for (i, s) in pairs for a in ("ev", "cold")]
+        with ThreadPoolExecutor(max_workers=min(args.workers, len(tasks))) as ex:
+            flat = list(ex.map(_arm, tasks))
+        return flat[0::2], flat[1::2]
+
     for r in range(1, args.rounds + 1):
         summ = run_evolution(
             adapter, cases=train_cases, agent_counts=[args.n_agents],
@@ -147,40 +167,51 @@ def main() -> int:
         if bool(gate.get("accepted")) or len(new_bank) > 0:
             bank, motif = new_bank, _merge_motif(motif, new_motif)
         if bool(gate.get("accepted")) and len(bank) > 0:
-            j_after = gate.get("j_after")
-            j_val = float(j_after) if j_after is not None else 1.0
-            if best_ckpt is None or j_val <= best_ckpt[0]:
+            def _pq(task):
+                inst, s = task
+                row = _run_one(inst, eval_cfg, objective=objective,
+                               skill_bank=bank, seed=s, llm_client=client,
+                               motif_stats=motif)
+                return float(row.get("MeanPrimaryMetric", 0.0))
+            with ThreadPoolExecutor(
+                max_workers=min(args.workers, len(probe_pairs))
+            ) as ex:
+                vq = sum(ex.map(_pq, probe_pairs)) / len(probe_pairs)
+            if best_ckpt is None or vq > best_ckpt[0]:
                 best_ckpt = (
-                    j_val, r,
+                    vq, r,
                     SkillBank(skills=[s.model_copy(deep=True) for s in bank]),
                     dict(motif),
                 )
-        scores = eval_grid(bank, motif)
+        if args.paired_final:
+            scores, cold_now = _paired_eval(bank, motif)
+        else:
+            scores, cold_now = eval_grid(bank, motif), base
         em = sum(s for s, _q in scores) / len(scores)
         q = sum(qq for _s, qq in scores) / len(scores)
-        # v2 (registered before the M21 rerun): pairwise wins decided by
-        # exact-match first; when em ties (the common case on scheduling),
-        # schedule QUALITY decides with a 0.05 dead-band. Round dominance
-        # accepts either metric clearing the bar -- em stays primary, the
-        # graded metric stops all-tie blindness.
+        cb_em = sum(s for s, _q in cold_now) / len(cold_now)
+        cb_q = sum(qq for _s, qq in cold_now) / len(cold_now)
+        # pairwise wins vs the SAME-WINDOW cold arm: exact-match first,
+        # schedule QUALITY on em ties (0.05 dead-band).
         wins = losses = 0
-        for (s, sq), (b, bq) in zip(scores, base):
+        for (s, sq), (b, bq) in zip(scores, cold_now):
             if s != b:
                 wins, losses = wins + (s > b), losses + (s < b)
             elif abs(sq - bq) > 0.05:
                 wins, losses = wins + (sq > bq), losses + (sq < bq)
         ok = (
-            (em >= base_em + args.delta_min) or (q >= base_q + args.delta_min)
+            (em >= cb_em + args.delta_min) or (q >= cb_q + args.delta_min)
         ) and ((wins - losses) >= args.win_margin)
         rounds_out.append({
             "round": r, "exact_match": em, "quality": q,
-            "delta_em": em - base_em, "delta_quality": q - base_q,
+            "cold_exact_match": cb_em, "cold_quality": cb_q,
+            "delta_em": em - cb_em, "delta_quality": q - cb_q,
             "wins": wins, "losses": losses, "dominates": ok,
             "n_skills": len(bank), "gate": summ.get("gate"),
         })
         el = int(time.monotonic() - t0)
-        print(f"round {r}/{args.rounds}: em={em * 100:5.1f}% q={q * 100:5.1f}% "
-              f"(dEM={100 * (em - base_em):+.1f}pp dQ={100 * (q - base_q):+.1f}pp "
+        print(f"round {r}/{args.rounds}: q={q * 100:5.1f}% vs same-window cold "
+              f"{cb_q * 100:5.1f}% (dQ={100 * (q - cb_q):+.1f}pp "
               f"wins={wins} losses={losses} skills={len(bank)}) "
               f"{'DOMINATES' if ok else 'below'}  [{el // 60}:{el % 60:02d}]")
 
@@ -195,8 +226,8 @@ def main() -> int:
     checkpoint_out: dict | None = None
     if best_ckpt is not None:
         j_val, sel_round, sel_bank, sel_motif = best_ckpt
-        print(f"deploying VAL-selected checkpoint: round {sel_round} "
-              f"(val j={j_val:.3f}, skills={len(sel_bank)}) ...")
+        print(f"deploying VAL-QUALITY-selected checkpoint: round {sel_round} "
+              f"(val quality={j_val:.3f}, skills={len(sel_bank)}) ...")
         if args.paired_final:
             def _arm(task):
                 inst, seed, arm = task
