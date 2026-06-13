@@ -422,6 +422,16 @@ def _ledger_case_diversity(ledger: dict[str, Any]) -> int | None:
 # narrow (dev round 3's inverted epistemics).
 BUCKET_TRUST_MIN_KINDS = 2
 
+# M28 (DISABLED -- recorded negative result). The cross-bucket-generalist
+# rescue below was meant to keep one_peer trusted when its single os anchor
+# (II-13) drifts to failure. The same-window A/B + draw2 forensics disproved
+# it: it ballooned os-trusted candidates from 2 to 9 (rescuing of-overfit
+# staged_* earned on just 2 cases), diluting retrieval so it picked an
+# of-overfit org over the os-direct-trusted one_peer -> gen crashed to 4.2%.
+# Same shape as M27: a plausible fix that hurt. Kept behind a default-off
+# flag as documentation of the negative result.
+_M28_CROSS_BUCKET_RESCUE = False
+
 
 def _bucket_single_anchor(ledger: dict, bucket: str) -> bool:
     """True if the bucket's evidence comes from <=1 distinct case.
@@ -476,10 +486,12 @@ def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) ->
     # M22: graded slots compare against the bucket's pooled all-org mean
     pool = ledger.get(f"__pool__:{bucket}")
     if _slot_passes(ledger.get(bucket), pool) is not True:
-        # M28: single-anchor bucket failure is unreliable; a cross-bucket
-        # generalist is not vetoed by it (deploy via Modify downstream).
+        # M28 cross-bucket rescue (default OFF -- see flag note above; it
+        # diluted retrieval and hurt). When enabled, a single-anchor bucket
+        # failure does not veto a cross-bucket generalist.
         if (
-            kind
+            _M28_CROSS_BUCKET_RESCUE
+            and kind
             and _bucket_single_anchor(ledger, bucket)
             and _cross_bucket_generalist(ledger, exclude=bucket)
         ):

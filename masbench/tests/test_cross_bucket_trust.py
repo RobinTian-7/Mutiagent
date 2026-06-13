@@ -1,16 +1,26 @@
-"""M28: cross-bucket generalist trust survives single-anchor failure.
+"""M28 (DISABLED -- recorded negative result): cross-bucket generalist trust.
 
-hi-power forensics: at n=5 the os bucket has one training anchor (II-13);
-its verdict swings 0..1.0 across drift windows. A single-anchor failure
-must not veto a CROSS-BUCKET GENERALIST (e.g. one_peer holds of=0.67 over
-3 cases every window). A non-generalist (staged_pair_gather: of single-case
-em0) is NOT rescued -- the distinction is structural, not name-based.
+M28 tried to keep one_peer trusted when its single os anchor (II-13) drifts
+to failure. The same-window A/B + draw2 forensics DISPROVED it: it ballooned
+os-trusted candidates 2->9 (rescuing of-overfit staged_* on 2 cases),
+diluting retrieval so an of-overfit org beat the os-direct-trusted one_peer
+and gen crashed to 4.2%. It ships DISABLED (flag default False). These tests
+pin (a) that it ships disabled and (b) what the rescue logic did when on, so
+the negative result is documented and re-checkable.
 """
 
 from __future__ import annotations
 
+import pytest
+
 from exp_graph.mas.schemas import SkillCard
+import masbench.transfer as T
 from masbench.transfer import skill_trusted_for
+
+
+@pytest.fixture
+def enable_m28(monkeypatch):
+    monkeypatch.setattr(T, "_M28_CROSS_BUCKET_RESCUE", True)
 
 
 def _card(evidence):
@@ -24,51 +34,40 @@ def _card(evidence):
     )
 
 
-def test_generalist_rescued_on_single_anchor_os_failure():
-    # of: 3 cases, 0.67 (diverse-earn) ; os: single anchor II-13, failed 0/10
+def test_m28_ships_disabled():
+    assert T._M28_CROSS_BUCKET_RESCUE is False, "M28 must ship disabled (harmful)"
+
+
+def test_disabled_does_not_rescue():
+    # default behavior: single-anchor os failure DOES veto, even a generalist
+    card = _card({
+        "of": {"n": 30, "em_sum": 20.0, "cases": ["I-01", "I-04", "I-07"]},
+        "os": {"n": 10, "em_sum": 0.0, "cases": ["II-13"]},
+        "os#lossless-scalar": {"n": 10, "em_sum": 0.0, "cases": ["II-13"]},
+    })
+    assert skill_trusted_for(card, "os", "lossless-scalar") is False
+
+
+def test_generalist_rescued_when_enabled(enable_m28):
     card = _card({
         "of": {"n": 30, "em_sum": 20.0, "cases": ["I-01", "I-04", "I-07"]},
         "of#lossless-scalar": {"n": 20, "em_sum": 10.0, "cases": ["I-01", "I-04", "I-07"]},
         "os": {"n": 10, "em_sum": 0.0, "cases": ["II-13"]},
         "os#lossless-scalar": {"n": 10, "em_sum": 0.0, "cases": ["II-13"]},
     })
-    # os single-anchor failure does NOT veto the of-generalist
     assert skill_trusted_for(card, "os", "lossless-scalar") is True
-    assert skill_trusted_for(card, "os", "lossless-composite") is True
 
 
-def test_non_generalist_not_rescued():
-    # of single case em0 -> NOT a generalist; os single anchor failed
+def test_non_generalist_not_rescued_even_when_enabled(enable_m28):
     card = _card({
         "of": {"n": 1, "em_sum": 0.0, "cases": ["I-07"]},
         "of#lossless-scalar": {"n": 1, "em_sum": 0.0, "cases": ["I-07"]},
     })
     assert skill_trusted_for(card, "os", "lossless-scalar") is False
-    assert skill_trusted_for(card, "os", "lossless-composite") is False
 
 
-def test_no_kind_no_rescue():
-    # the rescue is kind-scoped (deployment slots); bare bucket query unaffected
-    card = _card({
-        "of": {"n": 30, "em_sum": 20.0, "cases": ["I-01", "I-04", "I-07"]},
-        "os": {"n": 10, "em_sum": 0.0, "cases": ["II-13"]},
-    })
-    assert skill_trusted_for(card, "os", None) is False
-
-
-def test_multi_case_os_failure_still_vetoes():
-    # if os itself were multi-anchor (not the n=5 reality) a real failure
-    # there should still veto -- rescue is ONLY for single-anchor buckets
-    card = _card({
-        "of": {"n": 30, "em_sum": 20.0, "cases": ["I-01", "I-04", "I-07"]},
-        "os": {"n": 20, "em_sum": 2.0, "cases": ["II-13", "II-20"]},
-        "os#lossless-scalar": {"n": 20, "em_sum": 2.0, "cases": ["II-13", "II-20"]},
-    })
-    assert skill_trusted_for(card, "os", "lossless-scalar") is False
-
-
-def test_generalist_with_passing_os_unchanged():
-    # when os passes directly, behavior is the ordinary direct-trust path
+def test_os_direct_pass_unaffected_by_flag():
+    # os directly passes -> trusted regardless of the flag (the real path)
     card = _card({
         "of": {"n": 30, "em_sum": 20.0, "cases": ["I-01", "I-04", "I-07"]},
         "os": {"n": 8, "em_sum": 8.0, "cases": ["II-13"]},
