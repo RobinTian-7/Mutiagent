@@ -35,6 +35,7 @@ DRAWS = [
     ("dev-17 (181-188)",   "round_31/dev17_supremacy_draw4_PASS.json", "sup"),
     ("dev-18 (191-198)",   "round_32/dev18_supremacy_draw5.json", "sup"),
     ("hi-power (201-224)", "hipower_gen/beats_gen_24seed_n5.json", "beats"),
+    ("m27-f1 (231-238)",   "m27_ab/factor1_n5.json", "beats"),
 ]
 
 
