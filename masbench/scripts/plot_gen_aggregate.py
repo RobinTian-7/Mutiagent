@@ -34,6 +34,7 @@ DRAWS = [
     ("dev-16 (171-178)",   "round_29/dev16_supremacy_draw3.json", "sup"),
     ("dev-17 (181-188)",   "round_31/dev17_supremacy_draw4_PASS.json", "sup"),
     ("dev-18 (191-198)",   "round_32/dev18_supremacy_draw5.json", "sup"),
+    ("hi-power (201-224)", "hipower_gen/beats_gen_24seed_n5.json", "beats"),
 ]
 
 
@@ -65,9 +66,21 @@ for label, f, kind in DRAWS:
     both = pb["select"]["passed"] and pb[fkey]["passed"]
     rows.append((label, gen_pct, ds, cs, df, cf, both))
 
-pool_sel = stats(all_sel)
-pool_fix = stats(all_fix)
 n_pairs = len(all_sel)
+n_draws = len(rows)
+
+
+def pool_draw(idx):
+    # draw-weighted (each draw = 1 vote) so the 72-pair hi-power draw does
+    # not get 3x the weight of a 24-pair draw -- fairer than pair-pooling.
+    vals = [r[idx] for r in rows]  # already in pp
+    m = sum(vals) / len(vals)
+    sd = math.sqrt(sum((x - m) ** 2 for x in vals) / (len(vals) - 1))
+    return m, 1.96 * sd / math.sqrt(len(vals))
+
+
+pool_sel = pool_draw(2)
+pool_fix = pool_draw(4)
 
 # ---------- Figure 1: forest plot ----------
 fig, axes = plt.subplots(1, 2, figsize=(13, 6), sharey=True)
@@ -92,7 +105,7 @@ for ax, (title, col, didx, cidx, pool) in zip(
     # pooled diamond
     pm, pci = pool
     ax.errorbar(pm, 0, xerr=pci, fmt="D", color="black", ms=10, capsize=4)
-    ax.text(pm, -0.55, f"pooled {pm:+.1f}pp\n(n={n_pairs} pairs)",
+    ax.text(pm, -0.55, f"pooled {pm:+.1f}pp\n(draw-weighted, {n_draws} draws)",
             ha="center", va="top", fontsize=9, fontweight="bold")
     ax.set_title(title, fontsize=12)
     ax.set_xlabel("paired delta (percentage points)")
@@ -102,8 +115,8 @@ for ax, (title, col, didx, cidx, pool) in zip(
 axes[0].set_yticks(ys + [0])
 axes[0].set_yticklabels(labels + ["POOLED"])
 axes[0].set_ylim(-1.4, len(rows) + 0.6)
-fig.suptitle("gen-mode self-evolution vs strongest baselines: 9 independent "
-             "draws + pooled (216 paired runs)", fontsize=13, fontweight="bold")
+fig.suptitle("gen-mode self-evolution vs strongest baselines: 10 independent "
+             f"draws + pooled ({n_pairs} paired runs)", fontsize=13, fontweight="bold")
 fig.tight_layout(rect=(0, 0, 1, 0.96))
 fig.savefig(os.path.join(FIGS, "gen_forest.png"), dpi=140)
 print("wrote docs/figs/gen_forest.png")
@@ -133,7 +146,7 @@ ax.legend(handles=[
     Patch(color="#b3372b", label="missed >=1 arm"),
     plt.Line2D([0], [0], color="#666", ls="--", label="~50% threshold"),
 ], loc="lower right", fontsize=9)
-ax.set_ylim(28, 68)
+ax.set_ylim(6, 68)
 fig2.tight_layout()
 fig2.savefig(os.path.join(FIGS, "gen_strength.png"), dpi=140)
 print("wrote docs/figs/gen_strength.png")
