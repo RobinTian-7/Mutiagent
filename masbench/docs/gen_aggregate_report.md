@@ -1,5 +1,7 @@
 # gen 模式自进化 vs 最强 baseline:10 抽签聚合报告
 
+> **⚠️ 本报告的 pilot 估计已被 N=24 预注册 meta-analysis 推翻(2026-06-13)**:下文的 pilot 聚合(gen 对 fixed +10.86pp / 对 select +5.05pp)是**幸存者偏差**(11 抽签含 5 个开发期挑出来的成功 draws)+ **judge 不一致**(`oracle_fixed` vs `fixed_best_on_train`)的产物。无偏的预注册 24 抽签 meta(见 `selfevolve_metaanalysis_report.md`)显示真实效应 **gen−fixed −2.43pp(p=0.73)、gen−select −6.25pp(p=0.93)——无优势**。gen 对冷启动 **+26.56pp(p<1e-4)** 的压制稳健成立。下文保留作过程记录,不再作为 select/fixed 优势的证据。
+
 > **诚实更正(2026-06-13)**:本报告早先版本基于 9 次抽签报告"gen 显著压制 select(p=0.042)和 fixed(p<0.0001)"。第 10 次抽签(高功效,72 配对)出现 evolved 11.1% 的历史低点,**把两个聚合优势都拉回统计不显著**。下文是更正后的完整图景。更多数据推翻初步显著性——这正是诚实分析该有的样子。
 
 ## 一句话结论

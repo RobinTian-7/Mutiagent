@@ -1,0 +1,517 @@
+{
+  "mode": "graph_generate",
+  "n_agents": 5,
+  "rounds": 5,
+  "train_cases": [
+    "I-01",
+    "I-02",
+    "I-04",
+    "I-06",
+    "I-07",
+    "I-08",
+    "II-13"
+  ],
+  "test_cases": [
+    "II-15",
+    "II-17",
+    "II-19"
+  ],
+  "train_seeds": [
+    1,
+    2
+  ],
+  "val_seeds": [
+    3
+  ],
+  "eval_seeds": [
+    17546,
+    75430,
+    19263,
+    71737,
+    10928,
+    94533,
+    17127,
+    68382
+  ],
+  "fixed_topologies": [
+    "tree",
+    "mesh_star",
+    "one_peer_exponential_dag_star",
+    "chain"
+  ],
+  "fixed_best_topology": "one_peer_exponential_dag_star",
+  "fixed_train_means": {
+    "tree": 0.2857142857142857,
+    "mesh_star": 0.42857142857142855,
+    "one_peer_exponential_dag_star": 0.5714285714285714,
+    "chain": 0.5
+  },
+  "n_pairs": 24,
+  "dropped_pairs": 0,
+  "arm_means": {
+    "evolved": 0.4583333333333333,
+    "select": 0.4583333333333333,
+    "graphgen": 0.16666666666666666,
+    "fixed": 0.375
+  },
+  "per_baseline": {
+    "select": {
+      "delta": 0.0,
+      "evolved_only_wins": 4,
+      "baseline_only_wins": 4,
+      "passed": false
+    },
+    "graphgen": {
+      "delta": 0.29166666666666663,
+      "evolved_only_wins": 7,
+      "baseline_only_wins": 0,
+      "passed": true
+    },
+    "fixed": {
+      "delta": 0.08333333333333331,
+      "evolved_only_wins": 5,
+      "baseline_only_wins": 3,
+      "passed": true
+    }
+  },
+  "rounds_log": [
+    {
+      "round": 1,
+      "n_skills": 17,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.4166666666666667,
+        "j_after": 0.4166666666666667,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0"
+      ],
+      "rejected_skill_ids": []
+    },
+    {
+      "round": 2,
+      "n_skills": 17,
+      "gate": {
+        "accepted": false,
+        "j_before": 0.3333333333333333,
+        "j_after": 0.5,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_peer_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:star_sink_aggregation__a5__arr0"
+      ],
+      "rejected_skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_peer_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:star_sink_aggregation__a5__arr0"
+      ]
+    },
+    {
+      "round": 3,
+      "n_skills": 17,
+      "gate": {
+        "accepted": false,
+        "j_before": 0.3333333333333333,
+        "j_after": 0.4166666666666667,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:peer_gather_star_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_with_feedback__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_reduce_to_sink__a5__arr0"
+      ],
+      "rejected_skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:peer_gather_star_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_with_feedback__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_reduce_to_sink__a5__arr0"
+      ]
+    },
+    {
+      "round": 4,
+      "n_skills": 17,
+      "gate": {
+        "accepted": false,
+        "j_before": 0.3333333333333333,
+        "j_after": 0.5,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:peer_to_sink_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_exchange_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:star_aggregation_to_sink__a5__arr0"
+      ],
+      "rejected_skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:peer_to_sink_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_exchange_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:star_aggregation_to_sink__a5__arr0"
+      ]
+    },
+    {
+      "round": 5,
+      "n_skills": 21,
+      "gate": {
+        "accepted": true,
+        "j_before": 0.4166666666666667,
+        "j_after": 0.4166666666666667,
+        "epsilon": 0.08333333333333333,
+        "n_samples": 12,
+        "mode": "generation_ratchet"
+      },
+      "skill_ids": [
+        "silo__cf_accuracy_peer_star",
+        "silo__cf_avoid_chain",
+        "silo__cf_avoid_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_avoid_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_avoid_mesh_star",
+        "silo__cf_avoid_one_peer_exponential_dag_star",
+        "silo__cf_avoid_tree",
+        "silo__cf_budget_tree",
+        "silo__cf_middle_ground_mesh_star",
+        "silo__cf_topology_chain",
+        "silo__cf_topology_generated:peer_broadcast_star_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregate_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregated_tree__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_to_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_aggregation_with_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_boundary_exchange__a5__arr0",
+        "silo__cf_topology_generated:staged_local_aggregation__a5__arr0",
+        "silo__cf_topology_generated:staged_pair_gather__a5__arr0",
+        "silo__cf_topology_generated:staged_star_sink__a5__arr0",
+        "silo__cf_topology_generated:staged_tree_aggregation__a5__arr0",
+        "silo__cf_topology_generated:star_sink_with_feedback__a5__arr0"
+      ],
+      "rejected_skill_ids": []
+    }
+  ],
+  "n_skills": 21,
+  "machinery_ok": true,
+  "stable_rounds_ok": null,
+  "criteria": {
+    "delta_min": 0.05,
+    "win_margin": 2
+  },
+  "passed": false,
+  "pairs": [
+    {
+      "case_id": "II-15",
+      "seed": 17546,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 75430,
+      "evolved": 0.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 19263,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 71737,
+      "evolved": 0.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 10928,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 94533,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 1.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 17127,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 1.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-15",
+      "seed": 68382,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 17546,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 75430,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 19263,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 71737,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 10928,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 94533,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 17127,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-17",
+      "seed": 68382,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 17546,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 1.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 75430,
+      "evolved": 0.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 19263,
+      "evolved": 0.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 71737,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 10928,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 94533,
+      "evolved": 1.0,
+      "select": 0.0,
+      "graphgen": 1.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 17127,
+      "evolved": 1.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 0.0
+    },
+    {
+      "case_id": "II-19",
+      "seed": 68382,
+      "evolved": 0.0,
+      "select": 1.0,
+      "graphgen": 0.0,
+      "fixed": 1.0
+    }
+  ]
+}
