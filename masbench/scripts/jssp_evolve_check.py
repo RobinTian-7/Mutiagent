@@ -60,6 +60,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--delta-min", type=float, default=0.05)
     p.add_argument("--win-margin", type=int, default=2)
     p.add_argument("--max-runs", type=int, default=400)
+    p.add_argument("--paired-final", action="store_true",
+                   help="v4: the decisive verdict comes from a SAME-WINDOW "
+                        "paired eval -- the VAL-selected checkpoint and a "
+                        "FRESH cold arm run interleaved in one pool, so "
+                        "provider drift hits both arms equally (the "
+                        "start-of-run baseline is reported as diagnostics "
+                        "only). Mirrors the frozen beats judge's design.")
     p.add_argument("--out", default="runs/jssp_evolve_check")
     return p.parse_args()
 
@@ -181,33 +188,56 @@ def main() -> int:
     machinery_ok = len(bank) > 0
     passed = machinery_ok and all(pt["dominates"] for pt in tail)
 
-    # v3: beats-style FINAL deployment of the VAL-selected checkpoint,
-    # paired against the same baseline rows under the v2 pairing rules.
+    # v3: beats-style FINAL deployment of the VAL-selected checkpoint.
+    # v4 (--paired-final): the checkpoint and a FRESH cold arm run
+    # INTERLEAVED in one pool -- same-window pairing neutralizes the
+    # 0<->50pp schedule-validity drift that ate every cross-window margin.
     checkpoint_out: dict | None = None
     if best_ckpt is not None:
         j_val, sel_round, sel_bank, sel_motif = best_ckpt
         print(f"deploying VAL-selected checkpoint: round {sel_round} "
               f"(val j={j_val:.3f}, skills={len(sel_bank)}) ...")
-        ck_scores = eval_grid(sel_bank, sel_motif)
+        if args.paired_final:
+            def _arm(task):
+                inst, seed, arm = task
+                bk, mt = (sel_bank, sel_motif) if arm == "ck" else (SkillBank(), None)
+                row = _run_one(inst, eval_cfg, objective=objective, skill_bank=bk,
+                               seed=seed, llm_client=client, motif_stats=mt)
+                return (float(row.get("ExactMatchRate", 0.0)),
+                        float(row.get("MeanPrimaryMetric", 0.0)))
+            tasks = [(inst, seed, arm) for (inst, seed) in pairs for arm in ("ck", "cold")]
+            with ThreadPoolExecutor(max_workers=min(args.workers, len(tasks))) as ex:
+                flat = list(ex.map(_arm, tasks))
+            ck_scores = flat[0::2]
+            cold_scores = flat[1::2]
+        else:
+            ck_scores = eval_grid(sel_bank, sel_motif)
+            cold_scores = base
         ck_em = sum(s for s, _q in ck_scores) / len(ck_scores)
         ck_q = sum(qq for _s, qq in ck_scores) / len(ck_scores)
+        cb_em = sum(s for s, _q in cold_scores) / len(cold_scores)
+        cb_q = sum(qq for _s, qq in cold_scores) / len(cold_scores)
         wins = losses = 0
-        for (s, sq), (b, bq) in zip(ck_scores, base):
+        for (s, sq), (b, bq) in zip(ck_scores, cold_scores):
             if s != b:
                 wins, losses = wins + (s > b), losses + (s < b)
             elif abs(sq - bq) > 0.05:
                 wins, losses = wins + (sq > bq), losses + (sq < bq)
         ck_pass = (
-            (ck_em >= base_em + args.delta_min) or (ck_q >= base_q + args.delta_min)
+            (ck_em >= cb_em + args.delta_min) or (ck_q >= cb_q + args.delta_min)
         ) and ((wins - losses) >= args.win_margin)
         checkpoint_out = {
             "round": sel_round, "val_j": j_val, "n_skills": len(sel_bank),
+            "paired_same_window": bool(args.paired_final),
             "exact_match": ck_em, "quality": ck_q,
-            "delta_em": ck_em - base_em, "delta_quality": ck_q - base_q,
+            "cold_exact_match": cb_em, "cold_quality": cb_q,
+            "delta_em": ck_em - cb_em, "delta_quality": ck_q - cb_q,
             "wins": wins, "losses": losses, "passed": ck_pass,
         }
-        print(f"checkpoint deployment: em={ck_em * 100:.1f}% q={ck_q * 100:.1f}% "
-              f"(dQ={100 * (ck_q - base_q):+.1f}pp wins={wins} losses={losses}) "
+        print(f"checkpoint{' (same-window paired)' if args.paired_final else ''}: "
+              f"em={ck_em * 100:.1f}% q={ck_q * 100:.1f}% vs cold "
+              f"em={cb_em * 100:.1f}% q={cb_q * 100:.1f}% "
+              f"(dQ={100 * (ck_q - cb_q):+.1f}pp wins={wins} losses={losses}) "
               f"{'PASS' if ck_pass else 'FAIL'}")
 
     report = {

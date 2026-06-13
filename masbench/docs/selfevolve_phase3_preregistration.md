@@ -431,6 +431,26 @@ Offline fake = all-zero FAIL by construction (verified).
   val instances x 3 derived seeds = n_samples 6). Suites 303/271 green.
 - ATTEMPT 2 (registered): SAME drawn split and seeds (no re-roll, per
   the no-re-rolling rule), fresh empty caches, round-33 code.
+- ATTEMPT 2 RESULT (2026-06-12): **ORIGINAL FORMAL ACCEPTANCE MET** --
+  stable_gen exit 0 (base 8.3; 41.7*/41.7*/41.7*/50.0*/54.2*, all five
+  dominate) AND stable_refine exit 0 (base 20.8; 50.0*/45.8*/37.5*) on
+  the never-used registered split+seeds; M24 verified end-to-end. The
+  AMENDED beats battery 2/4: beats deficits sit inside drift width at
+  registered power (9-draw evidence); no new mechanism (II-19 0/8 =
+  instruction lottery on the winning policy class). Attempt 3 held
+  pending operator decision.
+- JSSP REOPENED (operator 2026-06-12: convincing positive data required
+  before stopping). jssp judge v4 (registered before v9): the decisive
+  verdict moves to a SAME-WINDOW PAIRED final -- the VAL-selected
+  checkpoint and a FRESH cold arm run INTERLEAVED in one pool (the
+  frozen beats judge's own design), neutralizing the 0<->50pp
+  schedule-validity drift that ate every cross-window margin (v6 won
+  r1/r2 then 'lost' to later windows; v7/v8 baselines moved 6.7->21.7
+  on the same grid). Curve verdict stays reported; exit 0 = curve OR
+  paired-checkpoint pass. POWER: new 12-instance 4x2 pool
+  (gen_jssp_instances seed 19) -> TRAIN 8 / TEST 4, 8 eval seeds = 32
+  pairs. JSSP v9 (registered): this configuration, mini architect,
+  5 rounds, eval seeds 91-98.
 
 ## Method-change ground rules (from the operator brief)
 
