@@ -1475,11 +1475,19 @@ def run_evolution(
     portfolio = _portfolio_topologies(cfg)
     n_portfolio_rows = 0
     if portfolio:
+        # M27: build named-topology trust on more than the 2 train seeds
+        # (single-os-anchor fragility). Derived seeds mirror M5's gate
+        # expansion (s + 1009*k); factor 1 -> exactly train_seeds (no-op).
+        _pf_raw = os.environ.get("MASBENCH_PORTFOLIO_SEED_FACTOR", "").strip()
+        _pf = int(_pf_raw) if _pf_raw else int(getattr(cfg, "portfolio_seed_factor", 1) or 1)
+        portfolio_seeds = [
+            s + 1009 * k for k in range(max(1, _pf)) for s in train_seeds
+        ]
         portfolio_rows = _collect_portfolio_rows(
             train_instances,
             cfg,
             topologies=portfolio,
-            seeds=train_seeds,
+            seeds=portfolio_seeds,
             llm_client=client,
             workers=workers,
             progress=progress,

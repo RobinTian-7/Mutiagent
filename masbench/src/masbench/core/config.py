@@ -72,6 +72,14 @@ class RunConfig:
     # train-time VERIFIED recipe search on unanchored bucket#slots. 0 = off.
     # Env: MASBENCH_RECIPE_BUDGET.
     recipe_search_budget: int = 18
+    # Phase-3 M27 (hi-power forensics): portfolio (named-topology) evidence
+    # is collected on train_seeds only -- at n=5 the sole os anchor II-13
+    # gives each topology just len(train_seeds)=2 evaluations, so one bad
+    # provider-drift window flips one_peer's os trust to 0 and gen falls
+    # back to a weak org. This factor derives extra portfolio seeds
+    # (s + 1009*k) so trust is built on len(train_seeds)*factor samples.
+    # 1 = off, byte-identical to before (CF unaffected: CF never uses it).
+    portfolio_seed_factor: int = 1
     # Phase-3 M20: run budget for train-time instruction-EXEMPLAR
     # verification (architect writes per-step instructions for the bucket
     # champion's structure on a train anchor; executed on verify seeds; a
