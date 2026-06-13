@@ -71,3 +71,26 @@ inherent property of pilot-based power analysis, not a deviation.
 
 Est. 39 × ~$1.14 = $44.46 → total ~$140.63. Cap raised $110 → **$142** (operator
 approved 2026-06-13). `budget_guard.py --cap-usd 142` gates launches.
+
+## Amendment 1 — budget-driven N truncation 39 → 24 (2026-06-13, BEFORE resuming)
+
+Real per-complete-draw cost measured **$1.77** (draws 01/14/27 = $1.74/$1.77/$1.80,
+σ≈0.03), vs the $1.14 pilot estimate. The pilot estimate used draw2, which was
+M28-crashed/staged (sparse messages) → non-representative of standard `one_peer`
+message-heavy replay. N=39 truly needs ~$168, over the $142 cap.
+
+**Operator decision (2026-06-13): hold $142, truncate to N=24** (no budget raise).
+
+- **Budget-driven, NOT outcome-driven.** N is fixed by $142 / $1.77, not by any
+  result. The 3 complete draws (01,14,27) were NOT unblinded at this amendment —
+  only their format and token-cost were inspected, never their deltas. Not
+  optional-stopping, not p-hacking; N is still pre-specified before unblinding.
+- **Power impact:** N=24 ≥ 22 → primary **H1 (gen vs fixed) keeps ~80% power**.
+  Secondary **H2 (gen vs select) needs N=39 → underpowered (~60%) at N=24**, reported
+  as such; the select verdict is explicitly NOT a powered confirmatory result.
+- **Locked draw set:** the contiguous prefix **draw01–draw24** (`p3_meta_draws.json`).
+  draw27 (completed during the cost-halt) falls OUTSIDE the N=24 prefix and is
+  EXCLUDED to keep the prefix unbiased; its tokens are sunk. Partial draws 02/15/16
+  (inside 01–24, killed mid-run) are re-run; 28/29 are discarded (outside the set).
+- Decision rule, aggregation method, and no-optional-stopping are UNCHANGED.
+  Unblinding only after all 24 draws complete. Projected total ~$140.6/$142.
