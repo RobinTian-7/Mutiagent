@@ -423,10 +423,45 @@ def _ledger_case_diversity(ledger: dict[str, Any]) -> int | None:
 BUCKET_TRUST_MIN_KINDS = 2
 
 
+def _bucket_single_anchor(ledger: dict, bucket: str) -> bool:
+    """True if the bucket's evidence comes from <=1 distinct case.
+
+    At n=5 the os bucket has exactly one learnable training anchor (II-13),
+    so its aggregate verdict is one case's draw -- which swings 0..1.0
+    across provider-drift windows (measured: same one_peer 0/10 one window,
+    8/8 another). A single-anchor verdict is therefore not reliable enough
+    to VETO a structure on its own.
+    """
+    return slot_case_diversity(ledger.get(bucket)) <= 1
+
+
+def _cross_bucket_generalist(ledger: dict, *, exclude: str) -> bool:
+    """True if the org diverse-earns (>=2 cases, passing) in another bucket.
+
+    M28: such an org is a GENERAL strong structure (e.g. one_peer holds
+    0.67 across 3 'of' cases in every window). staged_pair_gather, by
+    contrast, is single-case em0 in 'of' -- not general -- so it is NOT
+    rescued. The distinction is structural, not name-based.
+    """
+    for key, stats in ledger.items():
+        if "#" in key or key.startswith("__pool__") or key == exclude:
+            continue
+        if (
+            _slot_passes(stats, ledger.get(f"__pool__:{key}")) is True
+            and slot_case_diversity(stats) >= 2
+        ):
+            return True
+    return False
+
+
 def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) -> bool:
     """Trust = measured competence at the finest available granularity.
 
-    1. The bucket aggregate must pass (sanity floor).
+    1. The bucket aggregate must pass (sanity floor) -- UNLESS the bucket is
+       a single-anchor bucket whose verdict is unreliable AND the org is a
+       cross-bucket generalist (M28): then a single-anchor failure does not
+       veto, and deployment proceeds via Modify (rewrite the proven general
+       structure for this task).
     2. Direct kind evidence decides when it exists (pass -> trust,
        well-measured fail -> no trust).
     3. Extrapolation to an UNMEASURED kind requires breadth: >=
@@ -441,6 +476,14 @@ def skill_trusted_for(skill: SkillCard, bucket: str, kind: str | None = None) ->
     # M22: graded slots compare against the bucket's pooled all-org mean
     pool = ledger.get(f"__pool__:{bucket}")
     if _slot_passes(ledger.get(bucket), pool) is not True:
+        # M28: single-anchor bucket failure is unreliable; a cross-bucket
+        # generalist is not vetoed by it (deploy via Modify downstream).
+        if (
+            kind
+            and _bucket_single_anchor(ledger, bucket)
+            and _cross_bucket_generalist(ledger, exclude=bucket)
+        ):
+            return True
         return False
     sub = {
         key.split("#", 1)[1]: _slot_passes(stats, pool)
