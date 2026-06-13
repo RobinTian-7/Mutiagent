@@ -1,0 +1,450 @@
+{
+  "budget_usd": 40.0,
+  "blended_usd_per_mtok": 0.2625,
+  "note": "tokens from diag eval_runs.jsonl rows + ~2500 tok per graph_generate planner call (planner-side calls are not inside row token counts)",
+  "entries": [
+    {
+      "round": "dev_round1",
+      "date": "2026-06-09",
+      "est_usd": 0.31,
+      "tokens_mtok": 1.03,
+      "gen_calls": 54,
+      "verdict": "FAIL delta=-16.7pp (empty 54.2 evolved 37.5, wins 5/9)"
+    },
+    {
+      "round": "dev_round2",
+      "date": "2026-06-09",
+      "est_usd": 0.46,
+      "tokens_mtok": 1.58,
+      "gen_calls": 60,
+      "verdict": "PASS delta=+25.0pp (empty 12.5 evolved 37.5, wins 8/2; II-13 25->75, II-14 0->0)"
+    },
+    {
+      "round": "dev_round3_A",
+      "date": "2026-06-09",
+      "est_usd": 0.63,
+      "tokens_mtok": 2.19,
+      "gen_calls": 84,
+      "verdict": "PASS delta=+11.1pp (empty 25.0 evolved 36.1, wins 8/4; I-09 42/42, II-13 33->67, II-14 0/0)"
+    },
+    {
+      "round": "dev_round3_B_partial_discarded",
+      "date": "2026-06-09",
+      "est_usd": 0.18,
+      "note": "user paused mid-run; 30 evidence runs spent, no report produced; B will re-run from scratch on resume"
+    },
+    {
+      "round": "dev_round3_B_nogate",
+      "date": "2026-06-09",
+      "est_usd": 0.55,
+      "tokens_mtok": 1.91,
+      "gen_calls": 72,
+      "verdict": "FAIL delta=-2.8pp; gate-off admitted 4th skill (avoid_tree, legitimately earned in B's own sample); deployed policy unchanged (36/36 peer_star); A/B swing driven by empty-arm I-09 rerun noise 42<->67"
+    },
+    {
+      "round": "dev_round3_C_gen",
+      "date": "2026-06-09",
+      "est_usd": 0.27,
+      "tokens_mtok": 0.83,
+      "gen_calls": 80,
+      "verdict": "gate REJECTED generated-evidence bank (j 0->0.333) = protective event; paired eval crashed 32/72 on APIConnectionError (infra), no verdict; retry layer added"
+    },
+    {
+      "round": "confirmatory1_refine",
+      "date": "2026-06-10",
+      "est_usd": 0.42,
+      "verdict": "PASS delta=+35.0pp (empty 15 evolved 50, wins 10/3; II-15 10->80, II-19 20->20); 20/20 peer_star replay; evolved x2.2 tokens"
+    },
+    {
+      "round": "confirmatory1_gen",
+      "date": "2026-06-10",
+      "est_usd": 0.3,
+      "verdict": "PASS delta=+40.0pp (empty 10 evolved 50, wins 9/1; II-15 0->70, II-19 20->30); 20/20 replay of self-generated staged_aggregate_to_sink; ~cost-parity x1.09 tokens"
+    },
+    {
+      "round": "confirmatory2_refine_partial_discarded",
+      "date": "2026-06-10",
+      "est_usd": 0.13,
+      "note": "user paused at evidence phase (30 runs); no eval started, no report produced; attempt 2 NOT consumed -- re-run from scratch with the SAME recorded seeds on resume"
+    },
+    {
+      "round": "confirmatory2_refine",
+      "date": "2026-06-10",
+      "est_usd": 0.42,
+      "verdict": "PASS delta=+40.0pp (empty 10 evolved 50, wins 10/2; II-15 0->80, II-19 20->20); 20/20 peer_star replay; gate STRICT improve j 0.333->0.0"
+    },
+    {
+      "round": "confirmatory2_gen",
+      "date": "2026-06-10",
+      "est_usd": 0.3,
+      "verdict": "PASS delta=+25.0pp (empty 10 evolved 35, wins 7/2; II-15 0->70, II-19 20->0); 20/20 staged_aggregate_to_sink replay; x1.12 tokens"
+    },
+    {
+      "round": "p2_scout",
+      "date": "2026-06-10",
+      "est_usd": 0.45,
+      "verdict": "III@n5 no dynamic range (4 floors, 1 ceiling); n=10: II-13 (sel 0/gen 50) and II-16 (sel 50/gen 0) reserved per pre-registered rule (opposite-direction org-sensitivity); I-02/I-04@n10 gen=100 ceilings; II-19@n10 floor"
+    },
+    {
+      "round": "p2_dev_round1_aborted",
+      "date": "2026-06-10",
+      "est_usd": 0.47,
+      "note": "network outage (112 conn errors; user re-login) killed paired eval; NO verdict. Salvaged mechanism data: explore added generated:staged_tree_aggregation(loss 0)+staged_aggregate_to_sink(0.5) to bank (9 skills); BUG found: n=1 explored design at loss 0 anchored dominance -> avoid skills for ALL named topologies incl the winner; round-2 explore was outage-fallback"
+    },
+    {
+      "round": "p2_dev_round2",
+      "date": "2026-06-10",
+      "est_usd": 0.7,
+      "verdict": "PASS vs ALL baselines: evolved 62.5 vs select 25.0(+37.5,7:1) graphgen 18.8(+43.8,8:1) fixed=peer_star 37.5(+25.0,6:2); 16 pairs 0 dropped; gate REJECTED round-2 update (j 0->0.5, 2nd real firing); avoid pollution GONE; hot explore produced 4 distinct designs across rounds; evolved cost ~= select (x1.03 tok)"
+    },
+    {
+      "round": "p2_dev_round3",
+      "date": "2026-06-10",
+      "est_usd": 0.9,
+      "verdict": "PASS vs ALL (R=3): evolved 37.5 vs 18.8/18.8/18.8 (4:1 each); bank grew 7->8->9 all accepted; evolved replayed SELF-GENERATED tree_reduce_to_sink 16/16 at 9.1k tok/run = x0.39 of select (60% cheaper); I-09 75% carried, II-16@n5 0% (honest)"
+    },
+    {
+      "round": "p2_confirmatory1_refine_FAIL",
+      "date": "2026-06-10",
+      "est_usd": 1.42,
+      "verdict": "FAIL (attempt 1 of 3 consumed): evolved 0.0% on reserved n=10 vs select 17.6/graphgen 17.6/fixed=chain 11.8 (0:3,0:3,0:2). ROOT CAUSE: exp_graph SkillBank._retrieval_sort_key sorts mean_rmse ASC assuming CF loss semantics, but silo rows bridge SUCCESS into that field -> retrieval returns WORST-FIRST; replay deployed a train-loss-1.0 design 20/20. n=5 dev rounds masked it via motif-prior rescue."
+    },
+    {
+      "round": "p2_confirmatory1_curve_killed",
+      "date": "2026-06-10",
+      "est_usd": 1.1,
+      "note": "curve part killed mid-flight (1 evolution of ~5 done, ~85 n=10 runs est) -- measuring a known-broken retrieval is moot; estimate from run counts"
+    },
+    {
+      "round": "p2_screen_fix",
+      "date": "2026-06-10",
+      "est_usd": 0.21,
+      "verdict": "SCREEN(not verdict): post-fix evolved 100% vs select 0% on I-04@n10 (4:0); replayed loss-best design"
+    },
+    {
+      "round": "p2_confirmatory2_refine_FAIL",
+      "date": "2026-06-10",
+      "est_usd": 0.82,
+      "verdict": "FAIL (attempt 2 of 3 consumed): evolved 0.0% vs select 25/graphgen 18.8/fixed=chain 25 (16 pairs, 4 timeout-drops). Retrieval fix WORKED (replayed loss-0 staged_aggregation_tree) but: (a) train pool I-01..I-09 = aggregation paradigm only, reserved II-13/II-16 = sequential chain paradigm -> bank cannot represent the winning org; (b) graph_max_steps=4 makes ~9-step chains INEXPRESSIBLE at n=10 for ALL generation arms while named chain compile is uncapped"
+    },
+    {
+      "round": "p2_confirmatory2_curve_crashed",
+      "date": "2026-06-10",
+      "est_usd": 1.0,
+      "note": "curve died on ONE 120s LLMTimeoutError (no per-run isolation in curve eval; fixed in pipeline + test). Partial spend estimate"
+    },
+    {
+      "round": "p2_confirmatory2_gen_FAIL",
+      "date": "2026-06-10",
+      "est_usd": 0.78,
+      "verdict": "gen mode FAIL: evolved 11.8 vs select 5.9(2:1, margin<2)/graphgen 5.9(2:1)/fixed=CHAIN 23.5(2:4) -- chain named topology beats generation arms on chain-paradigm tasks (step-cap expressiveness analysis confirmed)"
+    },
+    {
+      "round": "p2_screen_bundle",
+      "date": "2026-06-10",
+      "est_usd": 0.19,
+      "verdict": "SCREEN caught probe-inversion BEFORE attempt 3: probe picked cheapest-not-best (success term cancels in _objective_score when raw success stuffed into mean_rmse); evolved 0% vs select 20% on II-13/16@n5; root-fixed _probe_row via primary_loss bridge (exp-graph 265 green)"
+    },
+    {
+      "round": "p2_screen_bundle2",
+      "date": "2026-06-10",
+      "est_usd": 0.15,
+      "verdict": "SCREEN: probe mechanism now ranks correctly but 1-seed probe is a Bernoulli gate -- per-case rejection of reliable replays, lucky fresh designs deployed; evolved 10 vs select 70. Probe route fails screening; NOT taken to attempt 3"
+    },
+    {
+      "round": "p2_close",
+      "date": "2026-06-10",
+      "est_usd": 0.0,
+      "verdict": "PHASE-2 GOAL FORMALLY UNREACHABLE: 2/3 confirmatory attempts consumed, both FAIL; even attempt-3 PASS gives 1<2 required. Attempt 3 left UNCONSUMED (no screened configuration could change the verdict; spending it would be number-chasing). Final report written."
+    },
+    {
+      "round": "p3_dev1_refine",
+      "date": "2026-06-11",
+      "est_usd": 0.85,
+      "verdict": "STABLE JUDGE PASS (dev split 1, refine): base 20.8%, curve r1=20.8(gate REJECTED bank on 3-sample binary val, j 0.0->0.33)/r2=41.7*(+20.8pp,8:3)/r3=37.5*(+16.7pp,8:4). M1 trust gate deployed one_peer_exponential via II-13-earned os trust: II-15 44->88%, II-16 6->25%. r3 wobble = champion flip by 1-row lucky explore org (M4 LCB needed). Tokens 2.81M"
+    },
+    {
+      "round": "p3_dev1_gen",
+      "date": "2026-06-11",
+      "est_usd": 0.44,
+      "verdict": "FAIL (old method, complete): gate false-rejected the bank ALL THREE rounds (j 0.0->0.333 each; skills=0x3; curve 8/12/21% = cold noise). ROOT CAUSE refined: not pure noise -- staged_aggregate_to_sink is kind-bimodal (train: vote 1.00 n5, count 0.17 n6; bucket mean 0.55 earned trust) and deterministically failed the count-kind val case I-02 every round -> M6 contradiction-triggered kind refinement. Earlier 'SIGKILLED' claim was wrong (phantom harness notification); run completed normally"
+    },
+    {
+      "round": "p3_dev2_earlystop",
+      "date": "2026-06-11",
+      "est_usd": 0.52,
+      "verdict": "EARLY STOP after r1 forensics (refine r1 4.2 vs base 29.2): (a) M1+M5 behaved correctly -- no os trust earnable (ALL orgs 0/2 on sole os train case II-12) -> correct abstention on all 24 pairs, DAGs hash-identical to cold; (b) the -25pp is PROVIDER TIME-DRIFT (II-13: same deterministic DAG+seeds, cold@02:40 5/8 vs evolved@03:05 0/8, p~4e-4) -> power must come from MORE CASES not more seeds; (c) split structurally unwinnable (all-os test, unlearnable os train) -> confirmatory pool amended to 10I+2II shape (prereg). Stopped to fund round-3 pilot of the confirmatory shape"
+    },
+    {
+      "round": "p3_dev3",
+      "date": "2026-06-11",
+      "est_usd": 1.9,
+      "verdict": "BOTH MODES FAIL on the 10I+2II pilot (refine 18.8/18.8/15.6 vs base 21.9; gen 9.4/3.1/9.4 vs base 0.0). Forensics: (a) M6 inverted epistemics -- contradiction-demotion only hits well-measured veterans while sparse one-kind generated orgs keep bucket trust and harmed I-09 (evo 0.67 vs cold 0.88) -> M8; (b) lexicographic tails make level-I test kinds (topk/stats) DISJOINT from train kinds -> of-side exact-kind transfer impossible by construction; the only demonstrated carrier is seq-kind II->II; (c) 3rd & largest same-policy time-drift: cold baseline 21.9% (02:56) vs 0.0% (03:24) on identical grid. HYGIENE NOTE: M7 was committed mid-driver; gen judge imported newer code than refine (modes internally consistent). tokens->1.9usd"
+    },
+    {
+      "round": "p3_dev4",
+      "date": "2026-06-11",
+      "est_usd": 0.93,
+      "verdict": "DECISION DATA: refine on untuned seq floors {II-17,II-18,II-20} = 0.0% x3 rounds, 0 wins in 72 evolved evals (banks deployed fine, gates accepted, gate j even improved 0.111->0.0 on val) -- earned seq trust does NOT create capability the executor lacks; floors are model-capability floors at n=5. gen mode crashed at baseline on ONE sporadic 120s LLMTimeoutError through the frozen no-isolation eval pool -> retry layer now gives timeouts exactly one bounded retry. M7 classifier live: 10/10 cases LLM-classified, ~80% agreement with hand labels, disagreements conservative (toward abstention)"
+    },
+    {
+      "round": "p3_scout_n10",
+      "date": "2026-06-11",
+      "est_usd": 0.35,
+      "verdict": "n=10 dynamic-range scout: ALL ZERO -- coldgen AND one_peer_exponential 0.00 on II-13/14/17/18/20 x3 seeds (even II-13, winnable at n=5, is 0 at n=10). n=10 deepens the capability floor; no usable range for the cold-gen-baseline judge. Honest-geometry enumeration now closed: the only winnable shape is the dev-burned {II-13 train anchor + II-15/16 headroom tests}. Path = method-final validation on the dev-1 split (current code M1-M8, both modes) then honest-boundary report"
+    },
+    {
+      "round": "budget_raise",
+      "date": "2026-06-11",
+      "est_usd": 0.0,
+      "verdict": "operator raised cap 40->60 USD; directive: explore until SUCCESS (stable dominance both modes) or budget exhaustion; wins must flow through evolved-skills->planner->organization pathway (per-win provenance audit added to round reports)"
+    },
+    {
+      "round": "p3_dev5",
+      "date": "2026-06-11",
+      "est_usd": 1.43,
+      "verdict": "BOTH MODES FAIL on known-signal split with fresh seeds 51-58 -- ROOT CAUSE SINGLE AND CLEAN: 72/72 abstentions in BOTH modes (provenance audit; zero skills-driven deployments; curves = cold+/-drift). M7 LLM classifier read II-13 as kind=max (defensible reading of 'longest palindrome length') while II-15/16/19 read seq -> II-13-earned trust trapped in os#max, unreachable. Dev-1's PASS happened under regex keys where anchor+targets shared seq. POSITIVE findings: M5/M8 verifiably fixed gen's gate triple-reject (skills deployed all rounds); ratchet fired correctly once. -> M12 needs_lossless binary trust key + M11 structural-hash ledger identity + M13 skill content redesign + M9 instruction injection, one cohesive round"
+    },
+    {
+      "round": "p3_screen8_9",
+      "date": "2026-06-11",
+      "est_usd": 1.52,
+      "verdict": "Screens r8 (M9/11/12, seeds 61-63): all abstain -- routing FIXED but no org cleared the trust bar on the lone os anchor at those seeds -> M10. Screens r9 (M10, seeds 71-73): A-refine PASS +33.3pp (3:0) and B-refine PASS +22.2pp (2:0) -- FLOORS II-17/II-18 cracked by one_peer_exp replay WITH M9-rewritten instructions (instr=True on all deployed rows; dev-4 verbatim replay was 0/72 there). A-gen 0%: M10 verified 3 recipes (I-01, I-03, II-13-after-feedback) but minister-card trigger specificity pushed recipe cards out of the top-3 seeded slots -> trigger parity fix (agent_counts+condition_key; LCB decides)"
+    },
+    {
+      "round": "p3_dev6",
+      "date": "2026-06-11",
+      "est_usd": 2.22,
+      "verdict": "GEN MODE STABLE JUDGE FIRST-EVER PASS (exit 0): base 8.3%, curve 4.2/29.2*(+20.8pp,5:0)/37.5*(+29.2pp,7:0) rising, ZERO losses; THESIS LOOP CLOSED: II-13 train-verified recipe (longest_palindrome_cross_boundary) replayed cross-case onto II-15 -> 15/16 (94%); II-17 same recipe failed but cold=0 -> do-no-harm. refine FAIL with NEW failure mode: r2 +20.8pp (7:2, staged_merge_with_feedback 7/8 on II-19) then r3 reshuffle to staged_boundary_merge (0/8) -- deployment-layer round-to-round instability among near-tied candidates (bank 13->15 explore influx; gen's bank froze at 10 -> stable). ALSO: deployed rows instr=0 -- instructions dropped somewhere in card->seed->compile chain. -> round-10: replay-first selection, sticky ranking (LCB+hash deterministic, motif displaces only with margin), rewrite retry+logging, instruction-drop fix, explicit Preserve/Modify/Avoid action field"
+    },
+    {
+      "round": "p3_dev7",
+      "date": "2026-06-11",
+      "est_usd": 2.35,
+      "verdict": "BOTH MODES STABLE PASS (first time, exit 0 x2): refine 45.8/45.8/62.5 vs 16.7 (r3 +45.8pp 13:2, ALL rounds dominate, rising); gen 25.0x3 vs 8.3 (+16.7pp, 5:1/4:0/5:1, bank frozen at 10). Round-10 deployment-stability fixes decisive (same split as dev-6 where refine r3 had collapsed). Next: tiered fallback + first 4-arm fixed-best battle per operator bar raise"
+    },
+    {
+      "round": "budget_raise_100",
+      "date": "2026-06-11",
+      "est_usd": 0.0,
+      "verdict": "operator raised cap 60->100; priorities: STABLE evolution (esp. gen mode), other benchmarks may corroborate; ultimate goal = evolve stably beats the BEST baseline"
+    },
+    {
+      "round": "p3_dev8",
+      "date": "2026-06-11",
+      "est_usd": 4.13,
+      "verdict": "FIRST fixed-best battle + gen 5-round hypothesis. beats_refine FAIL: evolved 33.3 vs fixed=one_peer_exp 41.7 (-8.3pp 1:3) and select 45.8, while crushing coldgen +33.3 (8:0) -> unconditional Modify (instruction rewrite) adds noise where bare structure already works (B-screen showed it creates capability where bare fails) -> M14 evidence-conditioned Preserve/Modify. gen5 stable FAIL but r4 spike +20.8 proves late-round learning with new gen-explore (bank 10->14 grows; r5 variance returns). beats_gen FAIL 0.0 == coldgen pairwise (0:0): evolved abstained throughout -- STRUCTURAL GAP: gen-mode evidence lacks named aggregation orgs (only chain portfolio), so no generalist can earn breadth trust and tier-2 has nothing to deploy -> portfolio parity fix. Ratchet gate correctly REJECTED a degrading r5 update in beats_gen (j .111->.333). JSSP integration completed+committed in parallel (b4e8c3e)"
+    },
+    {
+      "round": "p3_dev9",
+      "date": "2026-06-11",
+      "est_usd": 5.47,
+      "verdict": "M14/M15 re-battle. STABLE_GEN 5-ROUND PASS exit 0 (operator priority delivered): base 12.5, ALL 5 rounds dominate +25.0/+12.5/+16.7/+20.8/+20.8, losses<=1, bank 18->26 steady -- M15 anchors gen from r1. 4-arm: gen -33.3pp(0:8) -> +0.0pp(2:2) vs fixed (abstention bleed eliminated); refine -8.3 -> -4.2pp(2:3). select 50.0 vs fixed 45.8 = SAME-POLICY arm noise ~4pp (margin context). Forensics: all 48 deployments = preserve verbatim one_peer_exp (M14 worked) -> II-15 0.88 kept BUT floors II-17 0.00 -- M14 traded screen-B's Modify-cracked floors for II-15 protection. Distinguisher found: ANSWER SHAPE (scalar II-13/15 vs composite array II-17/19) -> M16 third mechanistic bit, slot key bucket#(lossy|lossless)-(scalar|composite)"
+    },
+    {
+      "round": "p3_dev10_INVALID",
+      "date": "2026-06-11",
+      "est_usd": 2.66,
+      "verdict": "INFRA FAILURE, measurements DISCARDED (no method conclusions drawn): arm-agnostic '431 Request headers are too large' failures poisoned all arms (beats_refine: all four arms exactly equal at 21.4% with dropped pairs; stable_gen crashed through the frozen no-isolation eval pool; even bank-free select/coldgen arms hit 431s -> NOT prompt size). ROOT CAUSE: proxy/LB session cookies accumulated in httpx's default persistent jar across thousands of calls per process until the Cookie header tripped request limits. FIX: _NoCookieHTTPClient pins the cookies property to a fresh empty jar (httpx re-wraps cookies= args, so a Cookies subclass cannot opt out); OPENAI_KEEP_COOKIES=1 restores default. beats_gen killed mid-run to stop spend on a poisoned measurement. dev-10 to be rerun as dev-10b on the cookie-fixed client"
+    },
+    {
+      "round": "p3_dev10b",
+      "date": "2026-06-11",
+      "est_usd": 4.13,
+      "verdict": "CLEAN measurements (431 zero-recurrence, cookie fix verified). M16 NET NEGATIVE as shipped: stable_gen FAIL 20.8/16.7/0/8.3/8.3 (dev-9 was 5x dominate); beats_refine vs fixed worsened -4.2 -> -16.7 (2:6); beats_gen vs fixed +0.0 (1:1). FORENSICS: composite slots starved -- all-scalar train pool means no org ever has composite evidence AND os bucket has only 1 measurable sub-slot so M8 breadth (>=2) never fires -> 16/24 abstentions, the Modify path never ran. II-15 0.5<->1.0 swings = drift (same deployment). FIX M16b: shape axis extrapolates (sibling slot verdict, action auto-MODIFY), losslessness axis never does"
+    },
+    {
+      "round": "p3_dev10c_partial_paused",
+      "date": "2026-06-11",
+      "est_usd": 0.46,
+      "tokens_mtok": 1.74,
+      "note": "operator directive: pause all non-resumable tests, build resume layer (M18), resume from archive. 120 evidence rows + 68 planner calls spent in first 5 min before SIGTERM; evcache/feature caches preserved in runs/p3_dev10c -> most of this spend REPLAYS on resume instead of being repurchased (M18 eval cache additionally covers deployment-phase rows going forward)"
+    },
+    {
+      "round": "p3_dev10c_resumed",
+      "date": "2026-06-12",
+      "est_usd": 4.68,
+      "tokens_mtok": 17.83,
+      "note": "incremental over the ledgered partial (all-rows total $5.14 minus $0.46; replayed rows re-dumped to diag may slightly overcount = conservative)",
+      "verdict": "M16b VALIDATED. stable_gen PASS exit 0, STRONGEST CURVE TO DATE: base 12.5, 5/5 dominate +16.7(6:2)/+37.5(9:0)/+25.0(6:0)/+50.0(12:0)/+45.8(11:0), zero losses after r1, bank 14->24 all gates accepted. beats_refine PASS exit 0 = FIRST-EVER 4-arm unconditional win: evolved 58.3 vs select 41.7(+16.7,4:0) coldgen 8.3(+50,12:0) fixed=one_peer_exp 45.8(+12.5,4:1); margin carried by II-19 Modify path (0.75 vs fixed 0.38, instr4 on every deployed row). beats_gen FAIL on select arm only: vs fixed +37.5(10:1 PASS) coldgen +29.2(8:1 PASS) select +4.2pp(4:3) -- the 2 lost II-15 pairs are same-policy verbatim one_peer vs one_peer = measured ~4pp arm drift, not mechanism. ZERO evolved-row abstentions across all 3 runs (dev-10b starvation gone); II-17/19 deploy Modify+instr4, II-15 preserve-verbatim. M18 resume validated live (0.0s replay of killed leg's rows)"
+    },
+    {
+      "round": "p3_dev11_stable_refine_DIAGNOSTIC",
+      "date": "2026-06-12",
+      "est_usd": 1.46,
+      "tokens_mtok": 5.57,
+      "verdict": "stable_refine FAIL 4.2/0.0/4.2 vs base 8.3 on round-18 code -- but DIAGNOSTIC not clean (cross-run evalcache seeding transplanted stable_gen's verified II-13 recipe + replayed 3/24 baseline rows). MECHANISM EXPOSED (real, would recur in any run whose own recipe search verifies): silo__recipe_longest_palindrome_cross_boundary earned kind-wide lossless-scalar trust from its own 2-row single-case verification, won retrieval LCB (0+0.5/sqrt2=0.35 beats multi-case generalists), M16b shape-extrapolated it onto composite slots -> deployed on ALL test cases every round (70/72 rows), displacing one_peer (which scored 58.3% in beats_refine same hour). THIRD defect: card stores 5 instruction-bearing steps but deployed spec = 4 bare steps (instr0) -- stored instructions stripped + step truncated in replay compile. -> M19a case-diversity LCB, M19b single-case-no-extrapolation, M19c replay fidelity, M19d seeding hygiene (no cross-run recipe|/evalcache)"
+    }
+    ,{
+      "round": "p3_dev12_stable_refine_screen",
+      "date": "2026-06-12",
+      "est_usd": 1.29,
+      "tokens_mtok": 4.92,
+      "verdict": "PASS exit 0 on M19 code (fresh seeds 131-138): base 8.3, curve 45.8*/62.5*/45.8* ALL dominate, r3 9:0, gates accepted, bank 8->12. The dev-11 broken cell (4.2/0.0/4.2) fully recovered. Forensics: one_peer champion 72/72 evolved rows; II-15 preserve-verbatim 0.88-1.00 vs base 0.25; II-17/19 sibling-extrapolated via M19b GLOBAL-diversity gate -> Modify instr4 every row, II-19 0.50-0.88 vs base 0.00; II-17 floor all arms. No recipe verified live at these seeds (banks recipe-free) -> M19a/M19c guards remain offline-validated, exercised when a recipe next verifies. stable_refine cell now PASS on current code"
+    }
+    ,{
+      "round": "p3_dev12b_grid",
+      "date": "2026-06-12",
+      "est_usd": 3.94,
+      "tokens_mtok": 15.02,
+      "verdict": "FULL FOUR-CELL SWEEP on M19 code, seeds 131-138 (with dev-12): ALL PASS. stable_gen exit 0: 5/5 dominate +41.7/+37.5/+45.8/+45.8/+37.5, losses<=1, bank 15->21. beats_refine exit 0: evolved 45.8 vs select 37.5(+8.3,2:0)/coldgen 8.3(+37.5,11:2)/fixed=ONE_PEER 37.5(+8.3,5:3). beats_gen exit 0 FIRST EVER: evolved 50.0 vs select 37.5(+12.5,6:3)/coldgen 8.3(+41.7,11:1)/fixed=ONE_PEER 41.7(+8.3,4:2) -- select gap closed AND fixed_best drew the strong topology this time. Provenance 100%: all deployments one_peer from bank, II-15 preserve instr0, II-17/19 Modify instr4, zero abstentions, zero recipe hijacks; II-19 = margin-maker both 4-arm runs (0.62-0.75 vs 0.25-0.38). II-17 floor all arms. Both modes x both judges PASS at one fresh draw -- dev-grid milestone reached; next gate = confirmatory (SHAPE v3 pending operator veto window)"
+    }
+    ,{
+      "round": "p3_dev13_resweep",
+      "date": "2026-06-12",
+      "est_usd": 5.25,
+      "tokens_mtok": 20.01,
+      "verdict": "THIRD-DRAW re-sweep (seeds 141-148): 3 of 4 cells PASS. stable_gen exit 0 (base 20.8; 62*/38*/50*/58*/46* all dominate); stable_refine exit 0 (base 29.2; 58*/46*/54*); beats_refine exit 0 THIRD CONSECUTIVE DRAW (evolved 54.2 vs select 41.7 +12.5 4:1 / coldgen 0.0 +54.2 13:0 / fixed=one_peer 45.8 +8.3 3:1). beats_gen FAIL on select arm only AGAIN: -4.2pp 2:3 (vs fixed=chain +20.8 5:0 PASS, coldgen +29.2 8:1 PASS). FORENSICS: II-19 deployed the IDENTICAL policy class both draws (one_peer steps4 instr4) scoring 6/8 (dev-12b) vs 1/8 (dev-13) -- gen-vs-select differential sits within provider-drift width; across 3 draws: -4.2/+12.5/-4.2 (mean ~+4.2pp, BELOW the +5pp bar). Honest reading: gen reliably beats fixed (3/3 draws) and coldgen (3/3) but its edge over the select arm (same bank replayed) is below judge threshold at this power. Modify-instruction rewrite is a fresh stochastic draw per deployment -> M20 candidate: train-time instruction memoization"
+    },
+    {
+      "round": "p3_jssp_corroboration",
+      "date": "2026-06-12",
+      "est_usd": 0.56,
+      "tokens_mtok": 2.13,
+      "verdict": "JSSP (6 synthetic 5x3 instances, gen mode, 3 rounds): judge-neutral FAIL on exact-match (baseline em 0.0, evolved em 0.0 -- no valid schedule ever matches the greedy-heuristic UB at n=5/gpt-4o-mini = capability floor, mirroring Silo's floor finding) BUT quality 0.0% -> 6.4-7.2% across all 3 rounds: cold pipeline produces ZERO valid schedules; evolved organizations produce some valid schedules every round (machinery transfers; bank 7->9 gates accepted). Corroboration value: the learner machinery (evidence->ledger->gate->deploy) runs unmodified on a different benchmark and moves quality off absolute zero; dominance claim: NO (honest)"
+    }
+    ,{
+      "round": "p3_dev14_gen_supremacy_v1",
+      "date": "2026-06-12",
+      "est_usd": 1.97,
+      "tokens_mtok": 7.5,
+      "verdict": "FIRST gen-supremacy measurement (additive judge, operator ultimate-goal stack; seeds 151-158): PASS exit 0 -- gen 50.0% vs coldgen 16.7 (+33.3, 9:1 PASS) / select 41.7 (+8.3, 3:1 PASS) / per-case ORACLE fixed 29.2 (+20.8, 5:0 PASS); gen vs full-strength independent refine 50.0=50.0 (4:4, non-gating). Oracle picks this draw: II-15 mesh_star, II-17 chain, II-19 chain. CAVEAT (honest): M20 exemplar phase was a SILENT NO-OP this run (champion pick hit spec-less cf cards and skipped without traces) -> dev-14 measures the M19-effective baseline = the BEFORE arm of the M20 A/B; gen evolution 5/5 gates accepted, bank 16->24; zero infra errors"
+    }
+    ,{
+      "round": "p3_dev15_supremacy_draw2",
+      "date": "2026-06-12",
+      "est_usd": 1.6,
+      "tokens_mtok": 6.1,
+      "verdict": "Supremacy draw 2 (seeds 161-168): GATING STACK ALL PASS AT STRENGTH -- gen 54.2 vs coldgen 20.8 (+33.3, 8:0) / select 37.5 (+16.7, 5:1) / ORACLE fixed 41.7 with STRONG picks one_peer x2+chain (+12.5, 5:2). Overall verdict honestly FAIL via machinery_ok: the refine arm collapsed to an empty bank (all 3 refine rounds gate-rejected at byte-identical j 0.44->0.67). TRIPLE ROOT CAUSE FOUND: (1) evolve.py missing `import json` -> every M20 exemplar rewrite died with swallowed NameError (test had mocked the function under test -- de-mocked regression added); (2) eval cache froze evolution-internal rows: rejected round resets chain to empty -> identical inputs -> cached replay -> permanently trapped (M18b: cache now deployment-rows-only); (3) supremacy chain now incumbent-preserving (rejected updates never deploy but accepted incumbents persist). Also logged: empty-bank select_then_refine eval path deploys degenerate 2-step orgs scoring 0/24 while interleaved coldgen scored 20.8 -- unreachable once chain preserves incumbents; tracked for offline repro"
+    }
+    ,{
+      "round": "p3_jssp_v3_easy_m21",
+      "date": "2026-06-12",
+      "est_usd": 0.44,
+      "tokens_mtok": 1.5,
+      "verdict": "FAIL/neutral with a decisive forensic: r3 'dominated' (q 13.5 vs cold 0.0, 2:0 via v2 quality pairing) but mechanism-purity audit KILLED it -- ALL eval rows in ALL rounds abstained (cold tier); r3's lift was the drift window recovering, not skills (cold baseline q collapsed 23.2->0.0 between draws = 5th drift record, JSSP validity fragile). ROOT: M21 graded credit accrues but the trust BAR stayed absolute 0.5 (designed for binary EM) -- no schedule org ever averages 0.5, orgs clearly better than cold (0.3 vs 0.05) earn nothing, permanent abstention. -> M22 currency-aware comparative bar"
+    }
+    ,{
+      "round": "p3_jssp_v4_m22",
+      "date": "2026-06-12",
+      "est_usd": 0.64,
+      "tokens_mtok": 2.0,
+      "verdict": "Judge PASS exit 0 (0/0/+28.3*/+11.2*/+11.2* quality curve) but DISCARDED by mechanism-purity audit: every eval row again abstained (cold tier) -- the lift is eval-window drift, not skills. DECISIVE LEDGER EVIDENCE that M22 plumbing works AND abstention is CORRECT: pool os-seg n=150 mean 0.075; best org mesh_star mean 0.125 < pool+0.15 -- no org demonstrated a real organizational margin because 4o-mini's schedule validity at 4x3 sits on the noise floor (best org 12.5% train quality). Do-no-harm verified live a third time: the learner refuses trust it cannot demonstrate. -> JSSP v5 at 3x2 grid (smoke had shown 71% quality at this scale = room for orgs to differentiate)"
+    }
+    ,{
+      "round": "p3_dev16_supremacy_draw3",
+      "date": "2026-06-12",
+      "est_usd": 1.88,
+      "tokens_mtok": 6.6,
+      "verdict": "First ALL-PARTS-FUNCTIONAL supremacy draw: honest FAIL. gen 33.3 vs coldgen 8.3 (+25.0, 7:1 PASS) / select 29.2 (+4.2, 2:1 FAIL) / oracle 41.7 (-8.3, 0:2 FAIL); full-strength refine 45.8 BEAT gen (1:4). Infra wins: M18b+incumbent chain fixed the refine arm (3/3 gates accepted, bank 10->13->15, real deployment); M20 exemplars verified live r1 (chain<-I-04 em1.0, peer_star<-II-13 em1.0) and correctly skipped after. MECHANISM FINDING (the A/B answered): anchoring WORKED as variance reduction (II-19 instruction sets 6-7 distinct -> 3 with one dominant 6/8) but the dominant set is BAD (1/6) -- II-13's SCALAR exemplar anchored II-19's COMPOSITE rewrite onto a stably-bad point; gen II-19 fell 0.75 (unanchored dev-15) -> 0.125. -> M20b slot-exact anchoring (anchors honor the M16 slot granularity; cross-slot cases rewrite freely)"
+    }
+    ,{
+      "round": "p3_jssp_v5_tiny",
+      "date": "2026-06-12",
+      "est_usd": 0.46,
+      "tokens_mtok": 1.6,
+      "verdict": "Honest FAIL/NEUTRAL completing the difficulty-scan picture: at 3x2 the executor CAN schedule (cold baseline quality 52.5%) but organizations no longer differentiate -- the whole field swims, no org clears pool+0.15, learner correctly abstains (4th live do-no-harm verification). Evolved-arm quality 26-49% below cold's 52.5% = same-policy drift on the shared cold path (all rows abstained). Scan so far: 5x3 everyone drowns / 4x3 noise floor (best org 12.5%) / 3x2 everyone swims -- the JSSP org-sensitivity band at gpt-4o-mini is razor thin. v6 probes the last gap (4x2)"
+    }
+    ,{
+      "round": "p3_dev17_supremacy_draw4",
+      "date": "2026-06-12",
+      "est_usd": 1.84,
+      "tokens_mtok": 6.5,
+      "verdict": "FIRST FULLY-VALID SUPREMACY PASS exit 0 (all parts functional, M20b code, seeds 181-188): gen 62.5 (highest ever) vs coldgen 20.8 (+41.7, 11:1) / select 45.8 (+16.7, 5:1) / per-case oracle 37.5 (+25.0, 7:1) ALL GATING PASS, and gen BEAT full-strength refine 54.2 (+8.3, 3:1) for the first time (operator aspirational goal). Mechanism audit clean: II-15 gen 8/8 preserve-verbatim; II-17 FLOOR CRACKED IN-JUDGE first time (gen 2/8 with free-rewrite instr4 while oracle/select/cold/refine ALL 0.00 -- only the instruction path scores); II-19 recovered 0.125 -> 0.62 (M20b cross-slot anchor removal validated); refine arm healthy (3/3 gates, bank 14, 54.2); exemplars verified r1 and anchored nothing cross-slot (as designed). Supremacy tally: d14 hollow-pass / d15 machinery-fail / d16 honest-fail / d17 FULL PASS"
+    }
+    ,{
+      "round": "p3_jssp_v6_4x2_control",
+      "date": "2026-06-12",
+      "est_usd": 0.66,
+      "tokens_mtok": 2.3,
+      "verdict": "BREAKTHROUGH inside a FAIL: TRUST FLOWED ON JSSP FOR THE FIRST TIME -- every eval row kind-tier DEPLOYED (zero abstentions; M22 comparative bar unlocked at 4x2 where baseline quality 6.7% = a real org-sensitivity band). Curve: r1/r2 DOMINATE (+14.0pp quality, 3:1, identical replayed deployment) then r3-r5 decay (14/0/8.4) -> last-2-rounds rule FAIL. The decay is the known late-round deployment-instability disease (Silo dev-6 analog); the registered cure exists (v3 VAL-selected checkpoint). v7 (gpt-4o architect, same grid) launched as the M23 shot"
+    }
+    ,{
+      "round": "p3_jssp_v7_m23_4o_architect",
+      "date": "2026-06-12",
+      "est_usd": 0.8,
+      "tokens_mtok": 2.0,
+      "verdict": "M23 shot (gpt-4o architect, mini workers, same 4x2 grid): honest FAIL with a CLEAN NEGATIVE CONTROL -- all rows abstained (trust did not flow this draw; same-grid cold quality swung 6.7 <-> 20.7 between draws = the drift band is wider than the +0.15 trust margin; 4o's train orgs cleared nothing). Conclusion: at 4x2 the binding constraint is signal/noise of schedule validity, NOT architect intelligence -- strengthens the Silo attribution (where design matters the system wins; where it does not, more design IQ does not help). JSSP endgame: v8 = val-checkpoint deployment (script v3) on the trust-flowing config, then freeze JSSP to protect the confirmatory reserve"
+    }
+    ,{
+      "round": "p3_dev18_supremacy_draw5_v3ckpt",
+      "date": "2026-06-12",
+      "est_usd": 1.9,
+      "tokens_mtok": 6.7,
+      "verdict": "Draw 5, v3 VAL-checkpoint first live use (gen deployed r4 j=0.444, refine r2 j=0.333 -- mechanism worked). Honest FAIL on the one flickering cell: gen 45.8 vs coldgen 8.3 (+37.5, 11:2 PASS) / oracle 37.5 (+8.3, 4:2 PASS) / select 41.7 (+4.2, 2:1 FAIL); refine 50.0 (-4.2, 1:2). FIVE-DRAW TALLY: vs cold 5/5 PASS, vs oracle 4/5, vs select rule-pass 3/5 but delta POSITIVE 5/5 (mean ~+10pp, band +/-8pp vs the +5pp bar at 24 pairs) -- the select margin is a structural power limit, not a mechanism gap. Next: confirmatory decision per standing approval"
+    }
+    ,{
+      "round": "p3_jssp_v8_FINAL_freeze",
+      "date": "2026-06-12",
+      "est_usd": 0.71,
+      "tokens_mtok": 2.3,
+      "verdict": "JSSP FINAL run (val-checkpoint judge v3), honest FAIL both verdicts; JSSP FREEZES per registered plan. Trust flowed AGAIN (all eval rows kind-tier DEPLOYED -- 2/2 reproducible at 4x2 under M22) but this draw's cold window was strong (q 21.7%) and val signal was zero all rounds (j=1.0 -> checkpoint selection had nothing to select on). FROZEN JSSP STORY: (1) machinery+epistemics generalize zero-modification; (2) 4 correct abstentions across difficulty scan with ledger evidence; (3) trust flows reproducibly in the org-sensitivity band; (4) v6 measured real early-round dominance (+14pp, 3:1); (5) 4o-architect negative control; (6) honest boundary: drift band exceeds organizational margins at mini-executor scale -- organizational dominance not stably detectable. CONFIRMATORY ATTEMPT 1 drawn and registered (cases I-01,02,03,05,06,07,08 + II quartet; seeds 25235..98239; RNG seed 20260612 recorded)"
+    }
+    ,{
+      "round": "p3_CONFIRMATORY_attempt1_FAIL",
+      "date": "2026-06-12",
+      "est_usd": 4.7,
+      "tokens_mtok": 16.4,
+      "verdict": "ATTEMPT 1 of 3 CONSUMED: all four cells FAIL with a SINGLE mechanistic root cause -- the bucket-BLIND even/odd train/val carve sent the os anchor II-13 (sorted index 7 in the 8-case confirmatory train pool vs index 6 in dev's 7-case pool) to the VAL side: ZERO os evidence collected, zero os trust, 100% abstention in every cell (verified: all evolved eval rows cold-tier; final banks carry ONLY of-bucket slots; II-13 appears exclusively in gate phases). Classifications identical to dev (not drift, not classifier). The evolved arms ran the cold path everywhere; their below-cold means are same-policy drift. Dev results had ridden the lucky parity. -> M24 bucket-stratified anchor-preserving carve (singleton buckets land in BOTH train and val; benchmark-agnostic classifier bucket, no case names); suites 303 green. Attempt 2 = SAME registered split+seeds (no re-roll), round-33 code"
+    }
+    ,{
+      "round": "p3_CONFIRMATORY_attempt2",
+      "date": "2026-06-12",
+      "est_usd": 6.97,
+      "tokens_mtok": 24.4,
+      "verdict": "ATTEMPT 2 of 3 (M24 code, same registered draw): **ORIGINAL FORMAL ACCEPTANCE MET** -- stable_gen exit 0 (base 8.3; 41.7*/41.7*/41.7*/50.0*/54.2*, ALL FIVE dominate) AND stable_refine exit 0 (base 20.8; 50.0*/45.8*/37.5*, all dominate) on the never-used confirmatory split+seeds. M24 verified end-to-end (trust flowed: all evolved rows kind-DEPL, zero abstentions; II-17 floor cracked again 0.12 vs all arms 0). The AMENDED beats battery: beats_gen FAIL (vs select -4.2 2:3, vs fixed +0.0 4:4, vs coldgen +33.3 9:1 PASS), beats_refine FAIL (vs select -20.8, vs fixed -12.5; II-19 instr-draw landed all-bad 0/8 while the same policy class wins elsewhere -- the documented lottery, no new mechanism). The two failing cells' deficits sit inside the provider-drift width at the registered power, as measured across 9 independent draws. Attempt 3 remains; protocol requires a ROOT-CAUSE method change first, and the root cause here is power/drift, not mechanism"
+    }
+    ,{
+      "round": "p3_jssp_v9_paired_12pool",
+      "date": "2026-06-12",
+      "est_usd": 2.0,
+      "tokens_mtok": 7.0,
+      "verdict": "v4 same-window-paired final + 12-instance pool (32 pairs). DIAGNOSTIC GOLD: cross-window curve baseline q 7.0 -> r1 16.0 (+9.0pp, 9:4 DOMINATES) -> decays r2 13.7/r3 11.7/r4 12.1/r5 10.5 -- a REAL r1 peak. But the same-window paired checkpoint scored 8.3 vs cold 8.9 (-0.6, 4:4 FAIL) because the checkpoint was selected by the gate's EM-based j_after, which FLOORS to 1.0 on JSSP (no round discrimination) and thus deployed the DECAYED r5 instead of the r1 peak. Includes ~$0.1 mislaunch waste (wrong pool, killed in 30s). -> M25 (jssp judge v5): checkpoint by VAL QUALITY (train x val seeds) + per-round same-window pairing for a drift-corrected curve"
+    }
+    ,{
+      "round": "p3_jssp_v10_killed_synthetic",
+      "date": "2026-06-12",
+      "est_usd": 0.24,
+      "tokens_mtok": 0.8,
+      "note": "operator: stop synthetic instances, run the REAL benchmark only. v10 (synthetic 12-pool, M25 judge) killed ~1 round in; M25 quality-checkpoint + per-round same-window pairing remain committed and offline-validated. Pivot: her actual M-APPLE-OS instances (TA01/TA02 15x15 fetched + converted, ub 1231/1244) now running through our MAS interface"
+    }
+    ,{
+      "round": "p3_jssp_REAL_mapple_TA",
+      "date": "2026-06-12",
+      "est_usd": 0.94,
+      "tokens_mtok": 2.35,
+      "verdict": "HER ACTUAL BENCHMARK (TA01/TA02 15x15 Taillard, published UB 1231/1244, fetched via fetch_mapple_instances.py): DEFINITIVE FLOOR. Interface fully functional (15 agents, 25 model calls + 60k tokens per run, deployed generated:staged_aggregation topology -- agents genuinely negotiated) but ALL schedules INVALID (quality=None, validator rejects -> 0%); cold AND evolved both 0/0, checkpoint 0/0. Organization cannot help when the executor cannot produce a single legal 15x15 schedule -- this is the executor/reliability bottleneck ALAS (2505.12501) exists to solve via transactional repair, NOT an information-flow (organization) bottleneck. HONEST JSSP CONCLUSION: on her real hard instances our pure-LLM MAS floors (task x executor property); positive organization data exists only in the synthetic org-sensitivity band (v6: trust flowed, +14pp 3:1 early dominance). Deploying ALAS-style tooling would lift the floor but would attribute JSSP results to ALAS, not to our topology-learning method -- declined on thesis-purity grounds"
+    }
+    ,{
+      "round": "p3_hipower_gen_72pairs",
+      "date": "2026-06-13",
+      "est_usd": 2.21,
+      "tokens_mtok": 8.4,
+      "verdict": "RESULT THAT REVISES THE CONCLUSION (honest). High-power gen 4-arm (24 seeds, 72 pairs): evolved 11.1% (HISTORICAL LOW, ~= coldgen 9.7%), vs select -23.6pp (4:21), vs fixed -34.7pp (2:27), all FAIL. ROOT CAUSE (forensic, not a bug): one_peer scored 0/10 on the SOLE os training anchor II-13 this evolution window (transfer_evidence os em_sum=0.0/n10) -> lost os trust -> gen deployed the weak staged_pair_gather/staged_aggregation instead (II-15 0.25 vs one_peer's usual 1.00). IMPACT: adding this valid draw collapses the gen aggregate -- vs select pair-weighted +6.48->-1.04pp (p 0.042->0.73 n.s.), draw-weighted +3.47pp n.s.; vs fixed +13.89->+1.74pp n.s. (draw-weighted +9.03 n.s.). RETRACTS the earlier 'gen significantly stable-dominates select/fixed' claim. The real variance source is now identified as os-trust fragility on a SINGLE training anchor (II-13): when its training-window draw drifts one_peer to 0, the whole os trust collapses and gen falls back to a weak org. This is deeper than 'measurement power' -- it is training-time trust-establishment fragility, structurally tied to the n=5 single-os-anchor pool"
+    }
+    ,{
+      "round": "p3_M27_AB_factor1_vs_4",
+      "date": "2026-06-13",
+      "est_usd": 3.72,
+      "tokens_mtok": 14.2,
+      "verdict": "M27 IS HARMFUL -- same-window A/B disproves the fix and re-locates the root cause. factor1 (standard): evolved 58.3% PASS all 3 arms (vs select +20.8/cold +50/fixed +29.2); one_peer os trust n8/em8.0 (8/8) -> deployed one_peer. factor4 (M27, more seeds): evolved 16.7% FAIL; one_peer os trust n32/em8.0 = 25% (the SAME ~8 absolute successes, just measured over 32 evals) -> below 0.5 -> lost trust -> deployed weak staged_pair_gather. INSIGHT: the problem is NOT sample size -- it is that II-13's TRAINING success rate (drift-suppressed) does not represent one_peer's TEST value; more samples just measure the misleading training signal more precisely and (correctly per the rule, wrongly in effect) drop the strong org. factor1's few-sample luck is what let one_peer through. M27 stays DISABLED (default factor=1, code kept as a recorded negative result). 11-draw standard-gen aggregate (draw-weighted): vs select +5.05pp (t=1.33 p=0.18 n.s., range -24..+21); vs fixed +10.86pp (t=1.80 p=0.073 n.s., range -35..+38). CONVERGED conclusion: gen's real edge over select/fixed is ~+5/+11pp but single-window variance is +/-20pp from the single-os-anchor II-13 training-window lottery; not closeable by seed count; structural at n=5. factor1 58.3% is the 5th co-beat-both draw (round-21/dev-14/15/17/m27-factor1)"
+    },
+    {
+      "round": "p3_M28_draw2_DISPROVES_M28",
+      "date": "2026-06-13",
+      "est_usd": 1.14,
+      "tokens_mtok": 4.3,
+      "verdict": "M28 DISPROVEN (harmful, same as M27) -- second plausible fix shelved by data. draw2 (seeds 241-248): gen 4.2% FAIL, deployed weak staged_aggregation. Offline forensic on the draw2 bank: WITH M28 os-trusted candidates = 9 (M28 rescued of-overfit staged_* earned on just 2 cases); WITHOUT M28 = 2 (one_peer, which DID earn os directly 4/8=0.50 this window, + staged_boundary). M28 diluted retrieval 2->9 so the of-loss sort picked of-overfit staged_aggregation (of 12/12=1.00 on 2 cases) over the os-direct-trusted one_peer -> crash. M28 reverted to default-off flag (code + tests kept as recorded negative result; suite 311 green). DEEPER LESSON: the variance is a COMPOUND fragility (single-anchor trust drift + of-overfit on tiny case pool + retrieval of/os mismatch); patching one exposes the next = whack-a-mole rooted in the n=5 pool size, not a single fixable mechanism"
+    },
+    {
+      "round": "p3_hipower_m28_reverify",
+      "date": "2026-06-13",
+      "est_usd": 2.65,
+      "tokens_mtok": 10.1,
+      "verdict": "M28-on rerun of the crashed config (seeds 201-224): gen 43.1% (vs cold +31.9 P / fixed +9.7 P / select +2.8 F), deployed one_peer -- BUT forensics show M28 did NOT cause this: the final bank's os#lossless-scalar trusted set is EMPTY both WITH and WITHOUT M28 (one_peer os 0/8 failed), so the one_peer deployment came from fallback/eval-state, not M28's rescue. So M28 was net-harmful (crashed draw2 4.2%) and inert here. Two M28-on windows 43.1% vs 4.2% = variance unchanged. CONVERGENCE: two principled fixes (M27 seed-count, M28 cross-bucket) both disproved by data; gen's select/fixed variance is a COMPOUND fragility (single-anchor trust drift + of-overfit on a 2-3 case pool + retrieval of/os mismatch + fallback nondeterminism), all rooted in the n=5 pool. Further single-mechanism patching = whack-a-mole / number-chasing -> STOP. Final standing: coldgen-dominance robust+confirmatory; select/fixed-dominance real (~+5/+11pp, 5/11 draws co-beat both) but not robustly reproducible at n=5"
+    }
+  ],
+  "total_est_usd": 96.17,
+  "budget_cap_usd": 142.0,
+  "budget_note": "operator raised cap 110->142 on 2026-06-13: after M27/M28 disproved (method converged, frozen 575e6093), run the PRE-REGISTERED meta-analysis (docs/selfevolve_metaanalysis_preregistration.md) -- N=39 fresh draws on frozen code + unified beats judge to power both co-primary arms (gen vs fixed N=22, gen vs select N=39) to 80%. This is a confirmatory FINAL test, NOT a method-iteration round; 39 draw seed-blocks locked in runs/p3_meta_draws.json. Est 39 x $1.14 = $44.46 -> total ~$140.63."
+}
