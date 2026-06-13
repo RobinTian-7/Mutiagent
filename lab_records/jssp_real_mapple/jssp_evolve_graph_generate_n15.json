@@ -1,0 +1,91 @@
+{
+  "benchmark": "jssp",
+  "mode": "graph_generate",
+  "n_agents": 15,
+  "train_cases": [
+    "ta01"
+  ],
+  "test_cases": [
+    "ta02"
+  ],
+  "train_seeds": [
+    1,
+    2
+  ],
+  "val_seeds": [
+    3
+  ],
+  "eval_seeds": [
+    21,
+    22
+  ],
+  "n_pairs": 2,
+  "baseline_exact_match": 0.0,
+  "baseline_quality": 0.0,
+  "rounds": [
+    {
+      "round": 1,
+      "exact_match": 0.0,
+      "quality": 0.0,
+      "cold_exact_match": 0.0,
+      "cold_quality": 0.0,
+      "delta_em": 0.0,
+      "delta_quality": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "dominates": false,
+      "n_skills": 6,
+      "gate": {
+        "accepted": true,
+        "j_before": 1.0,
+        "j_after": 1.0,
+        "epsilon": 0.3333333333333333,
+        "n_samples": 3,
+        "mode": "generation"
+      }
+    },
+    {
+      "round": 2,
+      "exact_match": 0.0,
+      "quality": 0.0,
+      "cold_exact_match": 0.0,
+      "cold_quality": 0.0,
+      "delta_em": 0.0,
+      "delta_quality": 0.0,
+      "wins": 0,
+      "losses": 0,
+      "dominates": false,
+      "n_skills": 6,
+      "gate": {
+        "accepted": true,
+        "j_before": 1.0,
+        "j_after": 1.0,
+        "epsilon": 0.3333333333333333,
+        "n_samples": 3,
+        "mode": "generation_ratchet"
+      }
+    }
+  ],
+  "criteria": {
+    "delta_min": 0.05,
+    "win_margin": 2,
+    "stable_rounds": 2
+  },
+  "checkpoint_deployment": {
+    "round": 1,
+    "val_j": 0.0,
+    "n_skills": 6,
+    "paired_same_window": true,
+    "exact_match": 0.0,
+    "quality": 0.0,
+    "cold_exact_match": 0.0,
+    "cold_quality": 0.0,
+    "delta_em": 0.0,
+    "delta_quality": 0.0,
+    "wins": 0,
+    "losses": 0,
+    "passed": false
+  },
+  "machinery_ok": true,
+  "passed": false
+}

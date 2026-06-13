@@ -347,6 +347,49 @@ recorded RNG seeds, fresh empty caches, both modes x both judges, <= 3
 attempts) -- pending operator sign-off on the SHAPE v3 untouched-split
 interpretation.
 
+## JSSP generalization: two honest layers (synthetic band + her real benchmark)
+
+The second-benchmark corroboration (M-APPLE-OS / REALM-Bench,
+arXiv:2502.18836) produced two complementary, honestly-separated results.
+
+**Layer 1 -- synthetic organization-sensitivity band (positive mechanism
+evidence).** The learner core runs benchmark-routed with ZERO Silo-specific
+logic (family from the instance tag; CF byte-identical). Across a
+difficulty scan -- 5x3 (everyone drowns) / 4x3 (noise floor) / 3x2
+(everyone swims) / 4x2 (the band) -- trust flowed reproducibly at 4x2
+(every eval row kind-tier deployed, zero abstentions) and the v6 run
+measured real early-round dominance (quality +14.0pp, 9:4). Four correct
+abstentions across the scan, each backed by ledger evidence (e.g. best org
+0.125 < pool+0.15), demonstrate do-no-harm transferring to a new benchmark.
+Two Silo-isms were found and generalized away in the process (binary trust
+currency -> M21/M22 graded comparative bar; both Silo byte-identical).
+
+**Layer 2 -- her ACTUAL benchmark (honest floor).** Her real instances
+were fetched and converted (fetch_mapple_instances.py: TA01/TA02, 15x15
+Taillard, published UB 1231/1244) and run through our MAS interface at
+n_agents=15. Result: a DEFINITIVE FLOOR. The interface is fully functional
+(15 agents genuinely negotiate: 25 model calls + 60k tokens per run, a
+generated:staged_aggregation topology deployed), but every 15x15 schedule
+is INVALID (validator rejects -> quality 0); cold AND evolved both 0/0.
+Organization cannot help when the executor cannot emit a single legal
+schedule -- this is the executor/reliability bottleneck that ALAS
+(Chang & Geng, arXiv:2505.12501) targets with transactional repair and
+non-circular validation, NOT an information-flow (organization) bottleneck
+of the kind our method optimizes. We deliberately did NOT deploy ALAS-style
+tooling: it would lift the floor but would attribute the result to ALAS,
+not to our topology-learning method (thesis purity). Note the architectural
+convergence worth citing: ALAS's non-circular validation == our held-out
+generation gate; ALAS's local compensation == our do-no-harm abstention --
+same ideas, theirs for execution reliability, ours for organization design.
+
+**Combined conclusion.** Generalization holds where it can: the topology-
+learning machinery and its epistemics transfer zero-modification to a
+different task family, and produce positive organization gains exactly in
+the regime where organization is the bottleneck. On executor-bottlenecked
+hard instances the system correctly produces nothing and knows it. The
+positive-dominance JSSP datum lives in the synthetic band; her real
+hard benchmark is an honest floor by task x executor property.
+
 ## Thesis alignment (operator's ultimate framing)
 
 The system IS the thesis: frozen workers (soldier prompts never learned);
