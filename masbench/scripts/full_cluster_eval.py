@@ -39,7 +39,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--out", default="runs/full_gptoss")
     p.add_argument("--rounds", type=int, default=5)
-    p.add_argument("--k-runs", type=int, default=3)
+    p.add_argument("--k-runs", type=int, default=2)
     p.add_argument("--eval-seeds", nargs="+", type=int, default=[401, 402, 403, 404, 405])
     p.add_argument("--train-seeds", nargs="+", type=int, default=[1, 2])
     p.add_argument("--val-seeds", nargs="+", type=int, default=[3])
