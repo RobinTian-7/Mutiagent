@@ -114,6 +114,15 @@ def main():
 
         # ---- gen: K independent evolution runs, eval held-out each round ----
         for run in range(args.k_runs):
+            # Run-level resume: if every eval cell of this run is already in
+            # results.jsonl, skip the whole run (incl. its expensive evolution).
+            # A run interrupted MID-evolution still re-evolves (the bank is
+            # in-memory, not checkpointed), but FINISHED runs cost nothing on
+            # restart -- so a 24h session that dies can be continued in a new one.
+            if all(("gen", run, rnd, c, s) in done
+                   for rnd in range(1, args.rounds + 1) for c in args.test for s in args.eval_seeds):
+                print(f"[run {run}] all eval cells present -> skip (resume)", flush=True)
+                continue
             bank, motif = SkillBank(), {}
             tseeds = [s + 1000 * run for s in args.train_seeds]  # distinct evolution trajectory per run
             for rnd in range(1, args.rounds + 1):
