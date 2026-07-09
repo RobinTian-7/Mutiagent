@@ -1,3 +1,0 @@
-step_idx,phase,topology,mean_coverage,min_coverage,max_coverage,mean_agent_rmse,median_agent_rmse,best_agent_rmse,worst_agent_rmse,mean_normalized_l1_error,exact_match_agents,full_coverage_agents,vote_top_ratio,vote_rmse,average_rmse,Topology,Agents,Seed,MergeMode,InitMode
--1,initial,star,0.25,0.25,0.25,4.215839851849488,4.221778483677055,4.174805384685614,4.244997055358225,0.7511,0,0,0.25,4.231075513389001,,star,4,1,llm_full_merge,llm_local_solve
-0,after_step,star,0.4375,0.25,1.0,3.388933339564872,4.221778483677055,0.867179335547152,4.244997055358225,0.58895,0,1,0.25,4.231075513389001,0.867179335547152,star,4,1,llm_full_merge,llm_local_solve

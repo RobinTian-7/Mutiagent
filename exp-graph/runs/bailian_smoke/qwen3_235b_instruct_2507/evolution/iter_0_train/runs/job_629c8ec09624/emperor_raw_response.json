@@ -1,8 +1,0 @@
-{
-  "fallback_reason": null,
-  "free_graph_fallback_reason": null,
-  "free_graph_raw_responses": [
-    "{\n  \"candidates\": [\n    {\n      \"candidate_id\": \"candidate_0\",\n      \"expected_tradeoff\": {\n        \"accuracy\": \"medium\",\n        \"cost\": \"low\"\n      },\n      \"fallback_topology\": \"tree\",\n      \"graph_type\": \"temporal_dag\",\n      \"n_agents\": 4,\n      \"name\": \"staged_pairwise_reduce\",\n      \"rationale\": \"Two parallel pairwise merges in step 1 reduce local counts with minimal messages; step 2 consolidates into selected primary 3 via fan-in from both intermediates, ensuring full coverage with only 6 messages.\",\n      \"selected_primary\": 3,\n      \"steps\": [\n        {\n          \"description\": \"pairwise local reduce between disjoint agent pairs\",\n          \"edges\": [\n            [0, 1],\n            [2, 3]\n          ],\n          \"operator_hint\": \"pairwise local reduce\"\n        },\n        {\n          \"description\": \"intermediate reducers forward merged partials to sink 3\",\n          \"edges\": [\n            [1, 3],\n            [3, 3]\n          ],\n          \"operator_hint\": \"star sink\"\n        }\n      ]\n    }\n  ]\n}"
-  ],
-  "raw_response": null
-}

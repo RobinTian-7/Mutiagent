@@ -1,5 +1,0 @@
-average_rmse,best_agent_global_rmse,best_agent_rmse,exact_match_agents,full_coverage_agents,global_exact_match_agents,max_coverage,mean_agent_global_rmse,mean_agent_rmse,mean_coverage,mean_global_normalized_l1_error,mean_normalized_l1_error,median_agent_global_rmse,median_agent_rmse,min_coverage,phase,step_idx,topology,vote_rmse,vote_top_ratio,worst_agent_global_rmse,worst_agent_rmse
-,16.55294535724685,0.0,3,0,0,0.25,16.650671675563643,0.25,0.25,0.75390625,0.015625,16.65827040716311,0.0,0.25,initial,-1,generated:hybrid_reduce_with_audit,16.703293088490067,0.25,16.73320053068151,1.0
-,11.532562594670797,0.0,3,0,0,0.5,14.132728810988256,0.25,0.375,0.62890625,0.0078125,14.19255246172304,0.0,0.25,after_step,0,generated:hybrid_reduce_with_audit,11.532562594670797,0.25,16.61324772583615,1.0
-1.0,1.0,0.0,2,1,0,1.0,10.15873390339575,0.5,0.5625,0.4453125,0.01171875,11.510843943873427,0.5,0.25,after_step,1,generated:hybrid_reduce_with_audit,1.0,0.25,16.61324772583615,1.0
-1.0,1.0,0.0,2,1,0,1.0,10.15873390339575,0.5,0.5625,0.4453125,0.01171875,11.510843943873427,0.5,0.25,after_step,2,generated:hybrid_reduce_with_audit,1.0,0.25,16.61324772583615,1.0

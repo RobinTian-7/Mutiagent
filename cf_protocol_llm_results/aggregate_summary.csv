@@ -1,2 +1,0 @@
-Topology,Agents,MergeMode,Runs,MeanFinalRMSE,StdFinalRMSE,MeanVoteRMSE,MeanAverageRMSE,MeanFinalNormalizedL1Error,ExactMatchRate,MeanTotalSteps,MeanTotalMessages,MeanTotalModelCalls,MeanTotalPromptTokens,MeanTotalCompletionTokens,MeanDeterministicFallbacks,MeanVoteTopRatio,MeanVoteAverageDisagreementRMSE
-mesh,8,llm_full_merge,1,1.5953056133543817,0.0,1.5953056133543817,1.1683321445547923,0.225,0.0,1.0,56.0,9.0,211904.0,63726.0,0.0,0.125,1.0788883167408942

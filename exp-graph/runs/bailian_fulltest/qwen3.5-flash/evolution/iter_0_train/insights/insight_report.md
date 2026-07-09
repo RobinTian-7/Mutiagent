@@ -1,9 +1,0 @@
-report_id: batch_insight_report_20260523_130525
-experiment_id: /Users/robintian/experiment/Agent-Expretional-Graph/exp-graph/runs/bailian_fulltest/qwen3.5-flash/evolution/iter_0_train/collected/batch_evidence.jsonl
-
-Batch-level MAS insights extracted from matrix evidence.
-
-rejected_insights:
-  - {"error": "1 validation error for InsightReport\nskill_update_recommendations.0.action\n  Input should be 'add', 'merge', 'discard' or 'deprecate' [type=literal_error, input_value='update', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error", "reason": "llm_failure"}
-  - {"error": "1 validation error for InsightReport\nskill_update_recommendations.0.action\n  Input should be 'add', 'merge', 'discard' or 'deprecate' [type=literal_error, input_value='update', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.13/v/literal_error", "reason": "llm_failure"}
-  - {"error": "3 validation errors for InsightReport\nkey_insights.0.condition_buckets\n  Input should be a valid list [type=list_type, input_value={'n_agents': 8, 'topology...ode': 'llm_local_solve'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/list_type\nkey_insights.1.condition_buckets\n  Input should be a valid list [type=list_type, input_value={'merge_mode': 'llm_full_...ed', 'array_size': 1024}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/list_type\nkey_insights.2.condition_buckets\n  Input should be a valid list [type=list_type, input_value={'init_mode': 'llm_local_...d:cascading_snake_flow'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/list_type", "reason": "llm_failure"}

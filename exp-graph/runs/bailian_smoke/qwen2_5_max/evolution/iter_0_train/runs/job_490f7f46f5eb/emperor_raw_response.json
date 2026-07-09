@@ -1,8 +1,0 @@
-{
-  "fallback_reason": null,
-  "free_graph_fallback_reason": null,
-  "free_graph_raw_responses": [
-    "{\n  \"candidates\": [\n    {\n      \"candidate_id\": \"candidate_0\",\n      \"expected_tradeoff\": {\n        \"accuracy\": \"medium\",\n        \"cost\": \"low\"\n      },\n      \"fallback_topology\": \"tree\",\n      \"graph_type\": \"temporal_dag\",\n      \"n_agents\": 4,\n      \"name\": \"hybrid_reduce_with_audit\",\n      \"rationale\": \"A hybrid design combining pairwise local aggregation with a final audit step ensures all partial counts propagate to the selected primary while staying within message and step constraints.\",\n      \"selected_primary\": 3,\n      \"steps\": [\n        {\n          \"description\": \"Pairwise local aggregation to reduce redundancy early.\",\n          \"edges\": [\n            [0, 1],\n            [2, 3]\n          ],\n          \"operator_hint\": \"pairwise local reduce\"\n        },\n        {\n          \"description\": \"Forward aggregated partials toward the sink agent for further merging.\",\n          \"edges\": [\n            [1, 3],\n            [0, 2]\n          ],\n          \"operator_hint\": \"sparse peer exchange\"\n        },\n        {\n          \"description\": \"Audit step to ensure completeness of counts at the selected primary.\",\n          \"edges\": [\n            [2, 3]\n          ],\n          \"operator_hint\": \"audit sink with extra edge\"\n        }\n      ]\n    }\n  ]\n}"
-  ],
-  "raw_response": null
-}

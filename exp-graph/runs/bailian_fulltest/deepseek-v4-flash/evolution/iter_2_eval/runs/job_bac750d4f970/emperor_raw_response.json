@@ -1,8 +1,0 @@
-{
-  "fallback_reason": null,
-  "free_graph_fallback_reason": null,
-  "free_graph_raw_responses": [
-    "{\n  \"candidates\": [\n    {\n      \"candidate_id\": \"candidate_0\",\n      \"expected_tradeoff\": {\n        \"accuracy\": \"medium\",\n        \"cost\": \"low\"\n      },\n      \"fallback_topology\": \"tree\",\n      \"graph_type\": \"temporal_dag\",\n      \"n_agents\": 8,\n      \"name\": \"two_stage_merge\",\n      \"rationale\": \"Uses pairwise reduce in step 1, then a star to sink in step 2, ensuring all agents reach sink with low message count (7) and steps (2).\",\n      \"selected_primary\": 7,\n      \"steps\": [\n        {\n          \"description\": \"Pairwise local reduce among leaves\",\n          \"edges\": [[0,1],[2,3],[4,5],[6,7]],\n          \"operator_hint\": \"pairwise_local_reduce\"\n        },\n        {\n          \"description\": \"All intermediate nodes send to sink 7\",\n          \"edges\": [[1,7],[3,7],[5,7]],\n          \"operator_hint\": \"star_sink\"\n        }\n      ]\n    }\n  ]\n}"
-  ],
-  "raw_response": null
-}
