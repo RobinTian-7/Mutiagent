@@ -53,3 +53,7 @@ examples/output/
 # Local reference files and large assets
 files/
 macnet/
+
+# Experiment outputs — never committed (frozen ledgers live under archive/)
+runs/
+*_results/
