@@ -25,6 +25,22 @@ machinery; they are test scaffolding, not the method. ``cfg.task_feature_source`
 selects: ``"llm"`` (default; falls back to heuristics for the fake provider),
 ``"heuristic"`` (ablation arm).
 """
+# ============================================================
+# 【模块导读】与基准无关的任务特征分类（阶段 3，M7）。
+# 迁移信任机制（台账分桶、类别细化、弃权）消费三个任务属性；本模块用本次运行自身的
+# LLM 对任务题面提出与基准无关的分布式计算问题来产出它们——不含基准专用关键词：
+# * order_sensitive —— 正确性是否依赖各智能体在某个排序中的位置（序列分段、邻居交换、
+#   流水线）？
+# * per_agent_output —— 是每个智能体必须持有答案中属于自己的切片，还是只对一个共享的
+#   全局答案计分？
+# * agg_kind —— 答案所需的统计量家族，取自通用词表（max/min/sum/mean/count/vote/any/
+#   set/topk/stats/xor/sort/seq/other）。词表命名的是统计量而非基准 case；other 恒可选。
+# 分类在温度 0 下进行，并按题面文本的 SHA-256 持久缓存（MASBENCH_FEATURE_CACHE 指定
+# JSON 文件；未设置则只有进程内缓存），因此每个见过的不同任务只花一次 LLM 调用。
+# masbench.task_features 里的正则启发式仅作为离线(fake-LLM)兜底保留，使确定性测试能
+# 驱动该机制；它们是测试脚手架，不是正式方法。cfg.task_feature_source 决定来源：
+# "llm"（默认；fake provider 时兜底到启发式）、"heuristic"（消融臂）。
+# ============================================================
 
 from __future__ import annotations
 
@@ -103,11 +119,14 @@ def _store_persistent(key: str, value: dict[str, Any]) -> None:
         path.write_text(json.dumps(data, indent=1, sort_keys=True))
 
 
+# 中文：这些类别的正确答案无法由小的局部摘要算出
+#   （仅作离线兜底映射；正式方法直接问 LLM）。
 # Kinds whose correct answer cannot be computed from small local summaries
 # (offline-fallback mapping only; the method asks the LLM directly).
 _LOSSLESS_KINDS = frozenset({"count", "set", "topk", "sort", "seq", "stats"})
 
 
+# 中文：复合答案的离线兜底探测器（正式方法直接问 LLM）。
 # Offline-fallback composite-answer detector (the method asks the LLM).
 _COMPOSITE_PATTERNS = (
     re.compile(r"output:?\**\s*(a |the )?(complete |sorted |full )?"
@@ -129,6 +148,8 @@ def _heuristic_composite(task_text: str) -> bool:
     return any(p.search(text) for p in _COMPOSITE_PATTERNS)
 
 
+# 【职责】纯启发式的完整分类（离线兜底）：正则特征 + 由类别推 needs_lossless、
+#   再用模式推 answer_composite。
 def _heuristic_classification(task_text: str) -> dict[str, Any]:
     feats = _heuristic_features(task_text)
     kind = _heuristic_agg_kind(task_text)
@@ -142,6 +163,7 @@ def _heuristic_classification(task_text: str) -> dict[str, Any]:
     }
 
 
+# 【职责】解析 LLM 分类回复；容忍代码围栏/前缀包裹的 JSON，非法类别归入 other。
 def _parse_classification(text: str) -> dict[str, Any] | None:
     """Parse the LLM reply; tolerate fenced/prefixed JSON."""
     raw = text.strip()
@@ -168,6 +190,9 @@ def _parse_classification(text: str) -> dict[str, Any] | None:
     }
 
 
+# 【职责】对单个任务题面做分类；带两级缓存（内存 + 持久 JSON）；失败时兜底到启发式。
+# - 兜底顺序：显式 source="heuristic" → 启发式；fake/缺失 LLM → 启发式（离线测试）；
+#   LLM 回复无法解析 → 启发式（经 source 字段记录，便于诊断统计各来源占比）。
 def classify_task(
     task_text: str,
     *,
@@ -197,6 +222,8 @@ def classify_task(
         return persistent
     prompt = _PROMPT % (text[:4000], ", ".join(AGG_KINDS))
     parsed = None
+    # 中文：只做一次解析重试：dev-5 曾见无法解析的回复兜底到启发式，
+    #   导致单次运行内出现来源混杂的标签。
     # One parse-retry: dev-5 saw unparseable replies fall back to heuristics,
     # creating mixed-source labels within a single run.
     for _ in range(2):
@@ -216,14 +243,20 @@ def classify_task(
     return result
 
 
+# 【职责】分类结果 → 迁移台账用的粗粒度桶 id（of/os，可带 -seg 后缀）。
 def classification_bucket(classification: dict[str, Any]) -> str:
     return feature_key(classification)
 
 
+# 【职责】分类结果 → 聚合统计量类别（agg_kind，缺省 other）。
 def classification_kind(classification: dict[str, Any]) -> str:
     return str(classification.get("agg_kind", "other"))
 
 
+# 【职责】M12/M16 信任子槽位名："(lossless|lossy)-(scalar|composite)"。
+# - M16 依据 dev-9 取证补上答案形态位：II-13/15（标量答案）与 II-17/19（需组装的
+#   复合数组）曾共用一个槽位，于是 II-13 的直接证据把 II-17 标成 preserve，
+#   裸结构得了 0 分——真正攻克它的其实是 Modify 改写过的指令。
 def classification_lossless_slot(classification: dict[str, Any]) -> str:
     """M12/M16 trust sub-slot name: '(lossless|lossy)-(scalar|composite)'.
 

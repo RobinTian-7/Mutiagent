@@ -1,5 +1,10 @@
 """Append-only evidence ingestion for MAS skill evolution."""
 
+# ============================================================
+# 【模块导读】MAS 技能进化的只追加(append-only)证据摄入。
+# - 把实验输出目录(aggregate_summary/run_summary CSV、逐步指标、traces JSONL)
+#   转成 EvidenceRecord；提供证据 JSONL 的读写、证据 ID 构造与去重辅助。
+# ============================================================
 from __future__ import annotations
 
 import csv
@@ -14,10 +19,12 @@ from typing import Any
 from exp_graph.mas.schemas import EvidenceRecord
 
 
+# 【职责】返回去微秒的 UTC ISO 时间戳。
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
+# 【职责】把 CSV 读成字典行列表；文件不存在返回空列表。
 def read_csv_rows(path: Path | str) -> list[dict[str, Any]]:
     file_path = Path(path)
     if not file_path.exists():
@@ -26,6 +33,7 @@ def read_csv_rows(path: Path | str) -> list[dict[str, Any]]:
         return [dict(row) for row in csv.DictReader(handle)]
 
 
+# 【职责】把证据记录逐行写成 JSONL(键排序、自动建父目录)，返回输出路径。
 def write_evidence_jsonl(records: list[EvidenceRecord], path: Path | str) -> Path:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,6 +44,7 @@ def write_evidence_jsonl(records: list[EvidenceRecord], path: Path | str) -> Pat
     return output_path
 
 
+# 【职责】从 JSONL 逐行读回并校验成 EvidenceRecord 列表(跳过空行)。
 def read_evidence_jsonl(path: Path | str) -> list[EvidenceRecord]:
     records: list[EvidenceRecord] = []
     with Path(path).open("r", encoding="utf-8") as handle:
@@ -46,6 +55,8 @@ def read_evidence_jsonl(path: Path | str) -> list[EvidenceRecord]:
     return records
 
 
+# 【职责】把一个实验输出目录转成只追加的证据记录。
+# - 汇集聚合(aggregate)、单次运行(run)、轨迹动力学(trace)三类记录并按 ID 去重。
 def ingest_experiment_evidence(directory: Path | str) -> list[EvidenceRecord]:
     """Convert an experiment output directory into append-only evidence records."""
     root = Path(directory)
@@ -57,6 +68,7 @@ def ingest_experiment_evidence(directory: Path | str) -> list[EvidenceRecord]:
     return _dedupe_records(records)
 
 
+# 【职责】默认证据输出路径：证据目录下 "<实验目录名>_<UTC 时间戳>.jsonl"。
 def default_evidence_output_path(
     *,
     experiment_dir: Path | str,
@@ -67,6 +79,8 @@ def default_evidence_output_path(
     return Path(evidence_dir) / name
 
 
+# 【职责】把 aggregate_summary.csv 每行转成 source_type="aggregate" 的证据记录。
+# - metrics 含 runs/mean_rmse/std_rmse/归一化 L1/精确匹配率/消息与 token 开销等聚合统计。
 def _aggregate_records(root: Path, created_at: str) -> list[EvidenceRecord]:
     records = []
     for row in read_csv_rows(root / "aggregate_summary.csv"):
@@ -103,6 +117,7 @@ def _aggregate_records(root: Path, created_at: str) -> list[EvidenceRecord]:
     return records
 
 
+# 【职责】把 run_summary.csv 每行转成 source_type="run" 的证据记录(带 seed 与风险标签)。
 def _run_records(root: Path, created_at: str) -> list[EvidenceRecord]:
     records = []
     for row in read_csv_rows(root / "run_summary.csv"):
@@ -146,6 +161,8 @@ def _run_records(root: Path, created_at: str) -> list[EvidenceRecord]:
     return records
 
 
+# 【职责】把逐步指标 CSV 与 traces/*.jsonl 聚合成 source_type="trace" 的动力学证据。
+# - 按(拓扑, agent 数, seed)分组，计算覆盖度增长/聚合可靠性/合并质量并打风险标签。
 def _trace_dynamics_records(root: Path, created_at: str) -> list[EvidenceRecord]:
     global_rows = read_csv_rows(root / "global_step_metrics.csv")
     agent_rows = read_csv_rows(root / "agent_step_metrics.csv")
@@ -209,6 +226,7 @@ def _trace_dynamics_records(root: Path, created_at: str) -> list[EvidenceRecord]
     return records
 
 
+# 【职责】统计每个轨迹 JSONL：行数、解析错误数、重试次数、token 用量、平均扇入。
 def _trace_jsonl_stats(trace_dir: Path) -> dict[str, dict[str, Any]]:
     stats: dict[str, dict[str, Any]] = {}
     if not trace_dir.exists():
@@ -245,6 +263,7 @@ def _trace_jsonl_stats(trace_dir: Path) -> dict[str, dict[str, Any]]:
     return stats
 
 
+# 【职责】由首末步全局指标算覆盖度增长(均值/最大覆盖的起止与增益、满覆盖 agent 数)。
 def _coverage_growth(initial: dict[str, Any], final: dict[str, Any]) -> dict[str, object]:
     initial_mean = _float(initial.get("mean_coverage"))
     final_mean = _float(final.get("mean_coverage"))
@@ -261,6 +280,8 @@ def _coverage_growth(initial: dict[str, Any], final: dict[str, Any]) -> dict[str
     }
 
 
+# 【职责】评估汇点聚合可靠性：汇点与最优 agent 的 RMSE 差距、汇点覆盖率、投票/平均 RMSE。
+# - is_sink_topology 依据拓扑名是否含 star/tree/sink/dag_mesh 等记号。
 def _aggregation_reliability(
     *,
     topology: str,
@@ -292,6 +313,7 @@ def _aggregation_reliability(
     }
 
 
+# 【职责】由动力学摘要推导风险标签：覆盖停滞/汇点质量差距/合并重试负担/解析错误。
 def _dynamics_risk_tags(dynamics: dict[str, object]) -> list[str]:
     tags: list[str] = []
     coverage = dynamics.get("coverage_growth", {})
@@ -308,6 +330,7 @@ def _dynamics_risk_tags(dynamics: dict[str, object]) -> list[str]:
     return tags
 
 
+# 【职责】由单次运行行推导风险标签：最终结果非精确匹配、发生过确定性回退。
 def _run_risk_tags(row: dict[str, Any]) -> list[str]:
     tags = []
     if not _bool(row.get("FinalExactMatch")):
@@ -317,14 +340,17 @@ def _run_risk_tags(row: dict[str, Any]) -> list[str]:
     return tags
 
 
+# 【职责】取 step_idx 最大(最末步)的一行。
 def _last_by_step(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return max(rows, key=lambda row: _float(row.get("step_idx")), default={})
 
 
+# 【职责】取 step_idx 最小(首步)的一行。
 def _first_by_step(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return min(rows, key=lambda row: _float(row.get("step_idx")), default={})
 
 
+# 【职责】筛出最末步的全部 agent 行。
 def _final_agent_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -332,6 +358,9 @@ def _final_agent_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in rows if _float(row.get("step_idx")) == final_step]
 
 
+# 【职责】从轨迹文件名解析运行键 "topology:n{N}:seed{S}"。
+# - 历史兼容：文件名带 cf_protocol_* 前缀(求解/合并模式的各种变体命名)，
+#   需逐一剥除已知前缀才能得到纯拓扑名；无法匹配时回退为文件 stem。
 def _trace_path_key(path: Path) -> str:
     match = re.search(r"_n(?P<n>\d+)_seed(?P<seed>\d+)\.jsonl$", path.name)
     if not match:
@@ -354,10 +383,12 @@ def _trace_path_key(path: Path) -> str:
     return _run_prefix(topology, int(match.group("n")), int(match.group("seed")))
 
 
+# 【职责】构造运行键 "topology:n{N}:seed{S}"。
 def _run_prefix(topology: str, n_agents: int, seed: int) -> str:
     return f"{topology}:n{n_agents}:seed{seed}"
 
 
+# 【职责】构造证据 ID：来源:拓扑:n{N}[:seed{S}]:合并模式:初始化模式(均 slug 化)。
 def _evidence_id(
     source_type: str,
     topology: str,
@@ -373,6 +404,7 @@ def _evidence_id(
     return ":".join(pieces)
 
 
+# 【职责】按 evidence_id 保序去重。
 def _dedupe_records(records: list[EvidenceRecord]) -> list[EvidenceRecord]:
     seen: set[str] = set()
     unique = []
@@ -384,10 +416,12 @@ def _dedupe_records(records: list[EvidenceRecord]) -> list[EvidenceRecord]:
     return unique
 
 
+# 【职责】把任意字符串规整为小写下划线 slug。
 def _slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip()).strip("_").lower()
 
 
+# 【职责】宽松转 float：空/无效值返回 0.0。
 def _float(value: Any) -> float:
     if value in {None, ""}:
         return 0.0
@@ -397,6 +431,7 @@ def _float(value: Any) -> float:
         return 0.0
 
 
+# 【职责】宽松转 int(先经 float)：空/无效值返回 0。
 def _int(value: Any) -> int:
     if value in {None, ""}:
         return 0
@@ -406,6 +441,7 @@ def _int(value: Any) -> int:
         return 0
 
 
+# 【职责】宽松转 bool：识别 "1"/"true"/"yes"(不区分大小写)。
 def _bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value

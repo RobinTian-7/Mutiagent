@@ -7,7 +7,7 @@ from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
 from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
-from masbench.core.task_bridge import BenchmarkTaskAdapter
+from masbench.core.task_bridge import BenchmarkTaskAdapter, private_answer_key
 from masbench.core.instance import BenchmarkInstance
 
 
@@ -53,7 +53,8 @@ def test_silo_is_protocol_adapter():
 
     # Inherited base TaskAdapter behaviour still works through BenchmarkTaskAdapter.
     global_task = adapter.build_global_task()
-    assert global_task["answer_key"] == "9"
+    assert private_answer_key(global_task) == "9"
+    assert "answer_key" not in global_task
     assert global_task["case_id"] == "I-01"
     assert global_task["n_agents"] == 2
 

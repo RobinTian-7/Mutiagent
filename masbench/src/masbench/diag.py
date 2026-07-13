@@ -9,6 +9,15 @@ appends one JSONL record (per-run topology / generated DAG spec / metrics) to
 side effect, at zero extra LLM cost. Env unset: everything is a no-op and the
 pipeline is byte-identical.
 """
+# ============================================================
+# 【模块导读】可选启用的自进化诊断转储，由环境变量 MASBENCH_EVOLVE_DUMP_DIR 控制。
+# verify_evolve.py 是冻结的判定目标、不许新增功能，因此机制证据改由管线一侧导出：
+# 当该环境变量指向一个目录时，run_evolution 会把完整总结（进化后技能库、门决策、
+# 结构母题统计）写入 evolution_NNN.json，且每次 _run_one 都向 eval_runs.jsonl 追加
+# 一条 JSONL 记录（单次运行的拓扑 / 生成的 DAG spec / 指标）。于是一次 verify 运行
+# 顺带产出进化前后的设计证据，额外 LLM 成本为零。环境变量未设置：一切都是空操作，
+# 管线逐字节不变。
+# ============================================================
 from __future__ import annotations
 
 import json
@@ -29,6 +38,7 @@ def enabled() -> bool:
     return dump_dir() is not None
 
 
+# 【职责】写出一份带自增编号的进化总结 JSON（技能库 + 门决策 + 结构母题）。
 def dump_evolution_summary(summary: dict[str, Any]) -> None:
     """Write one numbered evolution summary JSON (bank + gate + motifs)."""
     directory = dump_dir()
@@ -41,6 +51,7 @@ def dump_evolution_summary(summary: dict[str, Any]) -> None:
         path.write_text(json.dumps(summary, indent=2, default=str))
 
 
+# 【职责】向 eval_runs.jsonl 追加一条单次运行记录（线程安全；_run_one 会在多工作线程间扇出）。
 def dump_eval_run(record: dict[str, Any]) -> None:
     """Append one per-run record (thread-safe; _run_one fans out across workers)."""
     directory = dump_dir()
@@ -53,6 +64,7 @@ def dump_eval_run(record: dict[str, Any]) -> None:
             fh.write(line + "\n")
 
 
+# 【职责】把 ProtocolGraphSpec | dict | None 转成 JSON 安全值（优先走 model_dump）。
 def serialize_spec(spec: Any) -> Any:
     """ProtocolGraphSpec | dict | None -> JSON-safe value."""
     if spec is None or isinstance(spec, dict):

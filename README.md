@@ -12,7 +12,7 @@ restructure commit).
 | path | what it is |
 | --- | --- |
 | `exp-graph/` | The engine (`exp_graph` package): `runner/protocol.py` (generalized ProtocolRunner), `mas/` (EmperorPlanner, `graph_generation.plan_free_graph`, skill bank, evolution/consolidation/motifs), `protocols/` (schedules + graph specs), `llm/` (provider clients, fake client, retry/timeout), `tasks/` (Count-Frequency + generic protocol task adapters). Own tests/configs/scripts. |
-| `masbench/` | The benchmark framework (`masbench` package) reusing the engine: `adapters/` (Silo-Bench, JSSP, protocol + scoring bridges), `engine.py` (run one instance: fixed / planner select / graph_generate), `evolve.py` (gated self-evolution loop), `bench.py` (paper-grade arm comparison), `curve.py` (learning curves), `cli.py` (`run`, `run-suite`, `report`, `evolve`, `bench`, `curve`), `scripts/full_cluster_eval.py` (cross-difficulty eval on a local OpenAI-compatible endpoint). |
+| `masbench/` | The benchmark framework (`masbench` package) reusing the engine: `adapters/` (Silo-Bench, JSSP, protocol + scoring bridges), `engine.py` (fixed / planner select / free `graph_generate` / restricted `program_generate` / sandboxed `python_generate`), `evolve.py` (gated self-evolution loop), `bench.py` (paper-grade arm comparison), `curve.py` (learning curves), `cli.py` (`run`, `run-suite`, `report`, `evolve`, `bench`, `curve`), `scripts/full_cluster_eval.py` (cross-difficulty eval on a local OpenAI-compatible endpoint). |
 | `masbench/third_party/acl26-silo-bench` | Git **submodule** with the Silo-Bench data + official metrics. Required for anything Silo. |
 | `docs/superpowers/` | Cross-package design history: masbench plans 1–5 and the pipeline spec. |
 | `archive/` | Frozen history (legacy prototype, reference repros, vendored code, lab records). Nothing imports from it; see `archive/README.md`. |
@@ -57,6 +57,7 @@ for discriminative comparisons):
 uv run python -m masbench.cli run --benchmark silo_bench \
   --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
   --case I-01 --n-agents 2 --planner --planner-mode graph_generate --llm fake
+uv run python scripts/demo_python_generate.py
 uv run python -m masbench.cli evolve --benchmark silo_bench \
   --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
   --cases I-01 III-21 --agent-counts 2 --objective accuracy_first \
@@ -64,7 +65,7 @@ uv run python -m masbench.cli evolve --benchmark silo_bench \
 uv run python -m masbench.cli bench --benchmark silo_bench \
   --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
   --cases I-01 --agent-counts 2 --seeds 0 \
-  --arms fixed select graphgen --fixed-topologies tree chain \
+  --arms graphgen programgen pycodegen \
   --llm fake --objective accuracy_first --out runs/bench_smoke
 ```
 

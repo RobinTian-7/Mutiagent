@@ -87,7 +87,12 @@ def test_segmented_scoring_per_agent_planner_off() -> None:
 
 
 def test_segmented_scoring_per_agent_planner_on() -> None:
-    """Planner-ON run on the segmented fixture also uses per-agent scoring."""
+    """Planner-ON segmented runs follow the eval mode's grading semantics.
+
+    Default sink mode grades ONLY the resolved sink agent against its own
+    expected segment (sink_exact/sink_id in extra); all_agents mode grades
+    every agent against its own segment (per_agent_correct + all_agents_exact).
+    """
     seg = _instance("SEG-99")
     cfg = RunConfig(use_planner=True, llm_provider="fake", n_agents=2)
     score = run_instance(seg, cfg)
@@ -95,8 +100,18 @@ def test_segmented_scoring_per_agent_planner_on() -> None:
     assert isinstance(score, ScoreResult)
     assert score.extra["planner"] is True
     assert score.extra["segmented"] is True
-    assert isinstance(score.extra["per_agent_correct"], list)
-    assert len(score.extra["per_agent_correct"]) == 2
+    assert score.extra["information_goal"] == "sink"
+    assert isinstance(score.extra["sink_id"], int)
+    assert isinstance(score.extra["sink_exact"], bool)
+
+    cfg_all = RunConfig(
+        use_planner=True, llm_provider="fake", n_agents=2, silo_eval_mode="all_agents"
+    )
+    score_all = run_instance(seg, cfg_all)
+    assert score_all.extra["information_goal"] == "all_agents"
+    assert isinstance(score_all.extra["per_agent_correct"], list)
+    assert len(score_all.extra["per_agent_correct"]) == 2
+    assert score_all.extra["all_agents_exact"] == score_all.success
 
 
 def test_non_segmented_unchanged() -> None:

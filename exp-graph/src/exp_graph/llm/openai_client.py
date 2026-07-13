@@ -1,4 +1,10 @@
 """OpenAI-backed LLM client."""
+# ============================================================
+# 【模块导读】基于 OpenAI SDK 的 LLM 客户端(兼容各 OpenAI 风格供应商)。
+# _DEFAULT_BASE_URLS / _DEFAULT_API_KEY_ENVS：各 provider(供应商)预设的
+# base_url(接口地址)与 api_key_env(存 key 的环境变量名)，构造入参可覆盖。
+# 另含思考(thinking)开关到各供应商请求字段的映射，以及 usage(用量/token 计数)统计。
+# ============================================================
 
 from __future__ import annotations
 
@@ -26,6 +32,10 @@ _DEFAULT_API_KEY_ENVS = {
 }
 
 
+# 【职责】为受支持的 OpenAI 兼容模型族生成“关闭可选思考(reasoning)”的请求字段。
+# - thinking-only 模型(deepseek-r1*、kimi-k2-thinking*、qwen*thinking*)无法关闭，抛 ValueError。
+# - qwen3*、deepseek-v3.1/v3.2/v4-* 返回 enable_thinking=False。
+# - mimo-v2*(排除 -tts)与 kimi-k2.5 返回 thinking.type=disabled；其余模型返回空 dict。
 def _non_thinking_request_options(model_name: str) -> dict[str, object]:
     """Disable optional reasoning for supported OpenAI-compatible model families."""
     model = model_name.lower()
@@ -49,6 +59,8 @@ def _non_thinking_request_options(model_name: str) -> dict[str, object]:
     return {}
 
 
+# 【职责】返回与所选非思考模式兼容的温度。
+# - kimi-k2.5 固定 0.6；其余模型未显式给温度时用 0.0，否则用显式温度。
 def _non_thinking_temperature(model_name: str, temperature: float | None) -> float:
     """Return a temperature compatible with the selected non-thinking mode."""
     if model_name.lower() == "kimi-k2.5":
@@ -56,6 +68,10 @@ def _non_thinking_temperature(model_name: str, temperature: float | None) -> flo
     return 0.0 if temperature is None else temperature
 
 
+# 【职责】把角色级思考(thinking)策略映射为各供应商专有的请求字段。
+# - deepseek 或 deepseek-v4* 模型：thinking.type=enabled/disabled。
+# - bailian/dashscope/qwen/alibaba 或 qwen* 模型：enable_thinking=True/False。
+# - xiaomi 或 mimo-v2* 模型：thinking.type=enabled/disabled；其余返回空 dict。
 def _explicit_thinking_request_options(
     *,
     model_name: str,
@@ -78,6 +94,8 @@ def _explicit_thinking_request_options(
     return {}
 
 
+# 【职责】OpenAI chat-completions 接口的轻量封装；真实 LLM 实验用这个客户端。
+# - openai 依赖为可选安装，测试可以在无网络、无 API key 的环境下运行。
 class OpenAIChatClient:
     """Small OpenAI chat-completions wrapper.
 
@@ -85,6 +103,12 @@ class OpenAIChatClient:
     keys. Use this client for real LLM-backed experiments.
     """
 
+    # 【职责】构建底层 OpenAI 客户端：解析 base_url(接口地址)与 api_key_env(存 key 的环境变量名)。
+    # - 未安装 openai 包时抛 RuntimeError(提示安装 exp-graph[openai])。
+    # - 入参优先，缺省回落到该 provider(供应商)的预设；openai 平台无预设，走 SDK 默认行为。
+    # - 解析出的 api_key_env 环境变量缺失时抛 RuntimeError(快速失败)。
+    # - 超时读 OPENAI_TIMEOUT / OPENAI_CONNECT_TIMEOUT，重试次数读 OPENAI_MAX_RETRIES。
+    # - 默认换用不持久化 cookie 的 httpx 客户端(OPENAI_KEEP_COOKIES=1 恢复默认)。
     def __init__(
         self,
         *,
@@ -100,6 +124,9 @@ class OpenAIChatClient:
                 "Install exp-graph[openai] to use OpenAIChatClient"
             ) from exc
         timeout_total = float(os.environ.get("OPENAI_TIMEOUT", "120"))
+        # 中文：对死掉/卡住的连接快速失败——较短的 CONNECT 超时让“接受 TCP 连接
+        #   却从不响应”的代理被尽快放弃，而不是耗满(更长的)读超时预算。硬性墙钟守卫
+        #   TimeoutLLMClient 无论如何仍兜底整个调用；这里只是缩短常见的死连接场景。
         # Fail fast on a dead/wedged connection: a short CONNECT timeout means a
         # proxy that accepts the TCP socket but never responds is abandoned
         # quickly instead of tying up the (longer) read budget. The hard
@@ -114,6 +141,13 @@ class OpenAIChatClient:
 
             timeout: object = httpx.Timeout(timeout_total, connect=connect_timeout)
 
+            # 【职责】cookie 罐永不持久化任何内容的 httpx 客户端。
+            # - httpx 会把 cookies= 参数重新包装成普通 cookie 罐，子类化 Cookies 无法绕开，
+            # - 钉死 cookies 属性才是可靠的切入点。
+            # - API 本不需要 cookie；但会下发会话 cookie 的代理/负载均衡会让默认 cookie 罐
+            # - 在单进程长跑的数千次调用中持续膨胀，直到仅 Cookie 头就触发请求上限
+            # - (phase-3 dev-10：与实验臂无关的“431 请求头过大”失败毒害了所有 judge 臂)。
+            # - 设 OPENAI_KEEP_COOKIES=1 可恢复默认客户端。
             class _NoCookieHTTPClient(httpx.Client):
                 """An httpx client whose cookie jar never persists anything.
 
@@ -138,6 +172,7 @@ class OpenAIChatClient:
 
             if os.environ.get("OPENAI_KEEP_COOKIES", "").strip() not in {"1", "true"}:
                 http_client = _NoCookieHTTPClient(timeout=timeout)
+        # 中文：httpx 随 openai SDK 一并安装，此分支实际不会走到；兜底为仅用总超时数值。
         except Exception:  # pragma: no cover - httpx ships with the openai SDK
             timeout = timeout_total
         max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "2"))
@@ -162,11 +197,16 @@ class OpenAIChatClient:
             client_kwargs["api_key"] = api_key
         self._client = OpenAI(**client_kwargs)
 
+    # 【职责】发起一次 chat.completions 调用并回填用量(token 计数)。
+    # - thinking_enabled 未配置(None)时走“非思考”默认映射；否则按显式思考策略映射请求字段。
+    # - 以 response_format=json_object 约束仅输出 JSON；空内容兜底为 "{}"。
+    # - 供应商未返回 usage 字段时以 estimate_tokens 估算兜底。
     def complete(
         self,
         prompt: str,
         model_name: str,
         temperature: float | None = None,
+        json_mode: bool = True,
     ) -> LLMResponse:
         if self._thinking_enabled is None:
             request_options = _non_thinking_request_options(model_name)
@@ -179,14 +219,24 @@ class OpenAIChatClient:
             )
             request_temperature = 0.0 if temperature is None else temperature
 
+        # 中文：json_mode(默认)以 response_format=json_object 约束仅输出 JSON；
+        #   PythonGen 架构师/修复调用需返回原始 Python 源码，故 json_mode=False
+        #   时不加该约束，走自由文本输出。
+        # json_mode (default) constrains output to a single JSON object; the
+        # PythonGen architect/repair calls pass json_mode=False so the provider
+        # can return raw Python source instead of being forced into JSON.
+        if json_mode:
+            request_options = {
+                **request_options,
+                "response_format": {"type": "json_object"},
+            }
         response = self._client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=request_temperature,
-            response_format={"type": "json_object"},
             **request_options,
         )
-        text = response.choices[0].message.content or "{}"
+        text = response.choices[0].message.content or ("{}" if json_mode else "")
         usage = response.usage
         return LLMResponse(
             text=text,

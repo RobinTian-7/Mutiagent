@@ -35,13 +35,38 @@ the patch batch, and whether ``J_val`` improves — is computed by the real gate
 With a real LLM (or multi-seed Silo runs that actually differ per topology) the
 synthetic rows are unnecessary and ``held_out_rows`` can be left ``None``.
 """
+# ============================================================
+# 【模块导读】QueenBee 在 Silo-Bench 上的自进化闭环，Plan-3 各项改进全部开启。
+# run_evolution 端到端串起改进后的自进化流程：
+# 1. 把筛选后的 Silo 实例切成 TRAIN（训练）与 HELD-OUT（留出/VAL）两个集合。
+# 2. 让每个 TRAIN/VAL 实例经 QueenBee 规划器 + ProtocolRunner（与 engine._run_planner
+#    相同的机制）在若干目标变体下运行，使规划器真正选出多种拓扑；每次运行的总结经
+#    summary_to_aggregate_row（通用）转成一条聚合行。
+# 3. 由 ResultAnalystMinister（大臣：分析证据、提出技能补丁的角色）从 TRAIN 行提出技能补丁。
+# 4. 补丁经"留出集验证门"应用（consolidate_skill_updates(gate=True, validation_rows=...)），
+#    仅当整批补丁不使留出目标 J_val 退化时才接受。
+# 5. 返回带真实门决策（j_before/j_after、接受/拒绝）及进化前后留出成功率的总结。
+# 规划请求携带激活了 Plan-3 改进旋钮的 ObjectiveSpec，因此闭环实际演练：
+# * D 验证门 —— consolidate_skill_updates(gate=True)；
+# * E 不确定性感知选择 —— uncertainty_weight(kappa) + min_seeds；
+# * F 反例否决 + 绝对风险下限 —— enforce_avoid_veto + max_acceptable_loss +
+#   risk_weight（作用于 TopologySelectPlanner.plan）。
+# 离线诚实性：Silo 的确定性离线路径"成败与拓扑无关"——fake-LLM 跑某个 case 要么解出
+# （损失 0）要么不解（损失 1），对每种拓扑结果一致。因此真实的离线 Silo 行本身无法在
+# 门所用的留出目标上让某个拓扑显得更好。为了让离线的门决策依然"真实"，允许调用方提供
+# 一小组合成的多拓扑留出集（held_out_rows）；CLI 默认提供一组。门的算术——补丁批前后
+# 规划器在留出数据上各选哪个拓扑、J_val 是否改善——由真实的门计算。换成真实 LLM
+# （或各拓扑结果确实不同的多种子 Silo 运行）后合成行就没有必要，held_out_rows 可留 None。
+# ============================================================
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, replace
 from typing import Any
@@ -50,6 +75,7 @@ import masbench  # noqa: F401  (bootstraps exp_graph path)
 from exp_graph.llm.base import LLMClient
 from exp_graph.mas.consolidation import consolidate_skill_updates
 from exp_graph.mas.evolution import ResultAnalystMinister
+from exp_graph.mas.graph_generation import GraphGenerationError
 from exp_graph.mas.insights import (
     LLMInsightMinister,
     build_evidence_pack,
@@ -57,15 +83,27 @@ from exp_graph.mas.insights import (
     insight_report_to_patches,
 )
 from exp_graph.mas.planner import EmperorPlanner
+from exp_graph.mas.phase_program_generation import PhaseProgramGenerationError
+from exp_graph.mas.python_code_generation import PythonGenerationError
 from exp_graph.mas.motifs import aggregate_motif_losses, spec_motif_keys
 from exp_graph.mas.runner import summary_to_aggregate_row
+from exp_graph.mas.scoring import score_skill
 from exp_graph.mas.schemas import (
     EvidenceRecord,
     MASRuntimeConfig,
+    NamedTopologySkillPayload,
     ObjectiveSpec,
+    PaperTransportSkillPayload,
     PlannerRequest,
     SkillCard,
     SkillPatch,
+)
+from exp_graph.mas.skill_payloads import (
+    paper_protocol_from_skill,
+    planner_mode_from_skill,
+    program_sha256_from_skill,
+    protocol_spec_from_skill,
+    skill_type_for_payload,
 )
 from exp_graph.mas.skill_bank import SkillBank
 from exp_graph.protocols.schedules import build_protocol_schedule
@@ -75,10 +113,23 @@ from exp_graph.runner.protocol import ProtocolRunner, ProtocolRunnerConfig
 from masbench import diag
 from masbench.cache import EvidenceCache, open_cache, open_eval_cache
 from masbench.adapters.silo_bench import SiloBenchAdapter
+from masbench.adapters.silo_paper_protocols import (
+    PAPER_PROTOCOL_ARMS,
+    normalize_paper_protocol,
+    run_silo_paper_protocol,
+)
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
-from masbench.engine import _build_llm_client, _plan_graph_generate, _protocol_adapter
+from masbench.engine import (
+    _build_llm_client,
+    _plan_graph_generate,
+    _plan_program_generate,
+    _plan_python_generate,
+    _protocol_adapter,
+    _score_python_execution,
+    _score_protocol_result,
+)
 from masbench.task_classify import (
     classification_bucket,
     classification_kind,
@@ -98,6 +149,9 @@ from masbench.transfer import (
     stamp_rule_actions,
 )
 
+# 中文：Silo 规划器/进化所处的任务族。ResultAnalyst 大臣接受 task_family 参数，并把它
+#   原生盖到每张产出的技能卡、其触发器及（按族命名空间化的）skill_id 上，因此规划器检索、
+#   留出门与进化后的选择探针都在同一任务族内一致运作，无需任何事后重新打标。
 # Task family the Silo planner/evolution operate in. The ResultAnalyst minister
 # accepts a ``task_family`` argument and stamps every emitted skill card, its
 # trigger, and its (family-namespaced) skill_id with this family natively, so the
@@ -105,7 +159,311 @@ from masbench.transfer import (
 # operate consistently in one family without any post-hoc re-tagging.
 SILO_TASK_FAMILY = "silo"
 
+_HOT_START_TAG = "hot-start"
+_HOT_START_SINK_TOPOLOGIES = (
+    "one_peer_exponential_dag_star",
+    "mesh_star",
+    "star",
+    "chain",
+    "tree",
+    "two_stage_layer",
+    "balanced_log_layer",
+)
+_HOT_START_ALL_AGENTS_TOPOLOGIES = (
+    "one_peer_exponential_dag",
+    "static_exponential",
+)
+_HOT_START_INNOVATION_MODES = {
+    "graph_generate",
+    "program_generate",
+    "python_generate",
+}
+_PAPER_PROTOCOL_REASONING: dict[str, dict[str, object]] = {
+    "p2p": {
+        "transport": "dynamic targeted point-to-point",
+        "receive_rule": "read unread messages from prior rounds before acting",
+        "design_lesson": "send only useful deltas to selected recipients",
+    },
+    "broadcast": {
+        "transport": "dynamic one-to-all broadcast",
+        "receive_rule": "read prior-round broadcasts before acting",
+        "design_lesson": "broadcast shared state when every agent needs it",
+    },
+    "sfs": {
+        "transport": "round-delayed shared file store",
+        "receive_rule": "list and read visible files before writing the next state",
+        "design_lesson": "persist source-tagged state for asynchronous reuse",
+    },
+}
 
+
+def _failed_generation_row(
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    *,
+    seed: int,
+    classification: dict[str, Any],
+    error: GraphGenerationError | PhaseProgramGenerationError | PythonGenerationError,
+) -> dict[str, Any]:
+    """Turn a structurally invalid generated candidate into learnable evidence."""
+    mode = cfg.planner_mode
+    is_program = mode == "program_generate"
+    is_python = mode == "python_generate"
+    failure_key = (
+        "python_generation_failed"
+        if is_python
+        else "program_generation_failed"
+        if is_program
+        else "graph_generation_failed"
+    )
+    topology = (
+        "python:invalid"
+        if is_python
+        else "program:invalid"
+        if is_program
+        else "generated:invalid"
+    )
+    n_agents = cfg.n_agents or instance.n_agents
+    array_size = sum(
+        len(shard) if isinstance(shard, (list, tuple, dict)) else 1
+        for shard in instance.shards
+    )
+    return {
+        "Topology": topology,
+        "Agents": n_agents,
+        "ArraySize": array_size,
+        "MergeMode": cfg.merge_mode,
+        "InitMode": cfg.init_mode,
+        "Runs": 1,
+        "MeanFinalRMSE": 1.0,
+        "StdFinalRMSE": 0.0,
+        "MeanFinalNormalizedL1Error": 1.0,
+        "ExactMatchRate": 0.0,
+        "MeanPrimaryMetric": 0.0,
+        "PrimaryMetricName": "success_rate",
+        "PartialCorrectness": 0.0,
+        "MeanTotalSteps": 0.0,
+        "MeanTotalMessages": 0.0,
+        "MeanTotalModelCalls": 0.0,
+        "MeanTokenCost": 0.0,
+        "MeanVoteTopRatio": 0.0,
+        "case_id": instance.case_id,
+        "seed": seed,
+        "task_family": _task_family(instance),
+        "task_features_key": classification_bucket(classification),
+        "task_agg_kind": classification_kind(classification),
+        "task_needs_lossless": bool(classification.get("needs_lossless")),
+        "task_answer_composite": bool(classification.get("answer_composite")),
+        "information_goal": getattr(cfg, "silo_eval_mode", "sink") or "sink",
+        "planner_mode": mode,
+        "provenance": (
+            "llm_generated_python"
+            if is_python
+            else "program_generated"
+            if is_program
+            else "llm_generated"
+        ),
+        "program_validity": 0.0,
+        "structural_coverage": 0.0,
+        "submission_rate": 0.0,
+        "evolution_partial": 0.0,
+        "evolution_success": 0.0,
+        "evolution_stage": "validity",
+        "evolution_stage_score": 0.0,
+        "mean_primary_loss": 1.0,
+        "paper_S": 0.0,
+        "paper_P": 0.0,
+        "paper_C": 0.0,
+        "paper_D": 0.0,
+        failure_key: error.reason,
+    }
+
+
+def _apply_information_goal_score(
+    row: dict[str, Any],
+    *,
+    result: Any,
+    instance: BenchmarkInstance,
+    task_adapter: Any,
+    global_task: dict[str, Any],
+    information_goal: str,
+) -> None:
+    """Replace aggregate-holder scoring with the configured Silo mode score.
+
+    ``ProtocolExperimentResult.to_summary_dict`` reports the protocol finalizer's
+    selected/voted answer.  That is not the SILO all-agent criterion and can make
+    a gather-only graph look successful when only its sink is correct.  Evolution
+    evidence and gates must consume the same scorer as bench/eval.
+    """
+    score = _score_protocol_result(
+        result,
+        instance,
+        task_adapter,
+        global_task,
+        extra={},
+        information_goal=information_goal,
+    )
+    _apply_precomputed_information_goal_score(
+        row,
+        score=score,
+        information_goal=information_goal,
+        result=result,
+        task_adapter=task_adapter,
+    )
+
+
+def _apply_precomputed_information_goal_score(
+    row: dict[str, Any],
+    *,
+    score: Any,
+    information_goal: str,
+    result: Any | None = None,
+    task_adapter: Any | None = None,
+) -> None:
+    """Attach common paper metrics and dense evolution signals to a row.
+
+    ProtocolRunner and PythonGen have intentionally different execution models.
+    They nevertheless need exactly the same V/K/U/P/S curriculum signal for a
+    fair evolution gate.  ``score.extra`` is the common boundary; protocol-only
+    state inspection remains an optional fallback for sink submissions.
+    """
+    row["ExactMatchRate"] = 1.0 if score.success else 0.0
+    row["MeanPrimaryMetric"] = float(score.partial or 0.0)
+    row["PartialCorrectness"] = float(score.partial or 0.0)
+    row["information_goal"] = information_goal
+    for key in (
+        "paper_S",
+        "paper_P",
+        "paper_C",
+        "paper_D",
+        "per_agent_answers",
+        "per_agent_correct",
+        "per_agent_partial",
+        "per_agent_submissions",
+        "sink_id",
+        "sink_information_coverage",
+        "information_coverage_by_agent",
+        "mean_information_coverage",
+        "min_information_coverage",
+        "all_agents_full_information",
+    ):
+        if key in score.extra:
+            row[key] = score.extra[key]
+
+    # Dense curriculum signal for evolution. The bands are deliberately ordered:
+    # a program must become structurally valid, then complete information flow,
+    # then obtain submissions, then improve answer quality, and only then earn
+    # full-success credit. Cost remains a separately reported tie-breaker.
+    validity = float(score.extra.get("program_validity", 1.0) or 0.0)
+    if information_goal == "all_agents":
+        coverage = float(score.extra.get("min_information_coverage", 0.0) or 0.0)
+        submissions = list(score.extra.get("per_agent_submissions", []) or [])
+        submitted = sum(
+            1
+            for item in submissions
+            if isinstance(item, dict) and _is_real_submission(item.get("answer"))
+        )
+        submission_rate = submitted / len(submissions) if submissions else 0.0
+        partial = float(score.extra.get("paper_P", score.partial or 0.0) or 0.0)
+        success_signal = float(score.extra.get("paper_S", 0.0) or 0.0)
+    else:
+        coverage = float(score.extra.get("sink_information_coverage", 0.0) or 0.0)
+        sink_id = int(score.extra.get("sink_id", 0) or 0)
+        answer = None
+        python_submissions = list(score.extra.get("python_submissions", []) or [])
+        for submission in python_submissions:
+            if (
+                isinstance(submission, dict)
+                and int(submission.get("agent_id", -1)) == sink_id
+            ):
+                answer = submission.get("answer")
+                break
+        states = list(getattr(result, "final_agent_states", []) or [])
+        if answer is None and task_adapter is not None and 0 <= sink_id < len(states):
+            answer = task_adapter.extract_protocol_answer(states[sink_id].belief_state)
+        submission_rate = 1.0 if _is_real_submission(answer) else 0.0
+        partial = float(score.partial or 0.0)
+        success_signal = 1.0 if score.success else 0.0
+
+    coverage = min(1.0, max(0.0, coverage))
+    submission_rate = min(1.0, max(0.0, submission_rate))
+    partial = min(1.0, max(0.0, partial))
+    success_signal = min(1.0, max(0.0, success_signal))
+    if validity < 1.0:
+        staged = 0.0
+        stage = "validity"
+    elif coverage < 1.0:
+        staged = 0.2 * coverage
+        stage = "coverage"
+    elif submission_rate < 1.0:
+        staged = 0.2 + 0.2 * submission_rate
+        stage = "submission"
+    elif partial < 1.0:
+        staged = 0.4 + 0.5 * partial
+        stage = "partial"
+    else:
+        staged = 0.9 + 0.1 * success_signal
+        stage = "success"
+    row.update(
+        {
+            "program_validity": validity,
+            "structural_coverage": coverage,
+            "submission_rate": submission_rate,
+            "evolution_partial": partial,
+            "evolution_success": success_signal,
+            "evolution_stage": stage,
+            "evolution_stage_score": staged,
+            "mean_primary_loss": 1.0 - staged,
+        }
+    )
+
+
+def _is_real_submission(answer: Any) -> bool:
+    if answer is None:
+        return False
+    if isinstance(answer, str):
+        return answer.strip().lower() not in {"", "none", "null", "unknown"}
+    return True
+
+
+def _python_score_to_aggregate_row(
+    score: Any,
+    *,
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+) -> dict[str, Any]:
+    """Build the aggregate-row shape without pretending Python is a graph."""
+    n_agents = cfg.n_agents or instance.n_agents
+    array_size = sum(
+        len(shard) if isinstance(shard, (list, tuple, dict)) else 1
+        for shard in instance.shards
+    )
+    rounds = int(score.extra.get("rounds_executed", 0) or 0)
+    return {
+        "Topology": "python:generated",
+        "Agents": n_agents,
+        "ArraySize": array_size,
+        "MergeMode": cfg.merge_mode,
+        "InitMode": cfg.init_mode,
+        "Runs": 1,
+        "MeanFinalRMSE": 0.0 if score.success else 1.0,
+        "StdFinalRMSE": 0.0,
+        "MeanFinalNormalizedL1Error": 1.0 - float(score.partial or 0.0),
+        "ExactMatchRate": 1.0 if score.success else 0.0,
+        "MeanPrimaryMetric": float(score.partial or 0.0),
+        "PrimaryMetricName": "success_rate",
+        "PartialCorrectness": float(score.partial or 0.0),
+        "MeanTotalSteps": float(rounds),
+        "MeanTotalMessages": float(score.n_messages),
+        "MeanTotalModelCalls": float(score.n_model_calls),
+        "MeanTokenCost": float(score.tokens),
+        "MeanVoteTopRatio": 0.0,
+    }
+
+
+# 【职责】返回实例所属的行/触发器任务族。
+# - Silo 沿用其历史常量（保证路径逐字节一致）；其他基准（如 jssp）用自己的标签，
+#   使台账、触发器与各道门绝不跨基准混用证据。
 def _task_family(instance: BenchmarkInstance) -> str:
     """Row/trigger family for an instance.
 
@@ -119,6 +477,8 @@ def _task_family(instance: BenchmarkInstance) -> str:
     return bench
 
 
+# 中文：规划目标上默认激活的 Plan-3 改进旋钮：开启 E（不确定性感知选择）与
+#   F（反例否决 + 风险下限）；门 D 则由 consolidate_skill_updates(gate=True) 单独开启。
 # Default Plan-3 improvement knobs activated on the planner objective. These turn
 # on E (uncertainty-aware selection) and F (counterexample veto + risk floor); the
 # gate (D) is turned on separately via ``consolidate_skill_updates(gate=True)``.
@@ -128,6 +488,8 @@ DEFAULT_RISK_WEIGHT = 0.5
 DEFAULT_MAX_ACCEPTABLE_LOSS = 0.99
 
 
+# 【职责】构建规划器目标，并把 Plan-3 改进旋钮全部打开。
+# - E：uncertainty_weight + min_seeds；F：enforce_avoid_veto + risk_weight + max_acceptable_loss。
 def evolution_objective_spec(
     cfg: RunConfig,
     *,
@@ -149,6 +511,11 @@ def evolution_objective_spec(
     )
 
 
+# 【职责】把本次运行实际执行的可执行调度还原为 spec 字典。
+# - 生成式计划自带 spec；命名拓扑(select)计划在 ProtocolRunner 内部编译调度，这里用
+#   同一个构建器重建，让大臣能存下真正跑过的调度。
+# - 这正是 select_then_refine 落地的关键：技能携带可执行参考调度，评估时
+#   _skill_seeded_graph_candidates 能回放/精修它们，而不是只收到提示词上下文。
 def _executed_spec(plan: Any, n_agents: int) -> dict[str, Any] | None:
     """The executable schedule this run actually executed, as a spec dict.
 
@@ -189,6 +556,9 @@ def _executed_spec(plan: Any, n_agents: int) -> dict[str, Any] | None:
     ).model_dump(mode="json")
 
 
+# 【职责】让单个实例走 QueenBee 规划器路径并返回其聚合行。
+# - 镜像 engine._run_planner，但使用调用方提供的（旋钮开启的）ObjectiveSpec 与共享技能库，
+#   使 Plan-3 的 E/F 选择旋钮在证据收集期间真正影响拓扑选择。
 def _run_one(
     instance: BenchmarkInstance,
     cfg: RunConfig,
@@ -206,10 +576,18 @@ def _run_one(
     ``ObjectiveSpec`` and a shared ``SkillBank`` so the Plan-3 E/F selection knobs
     genuinely influence topology selection during evidence collection.
     """
-    task_adapter = _protocol_adapter(instance)
+    _goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
+    task_adapter = _protocol_adapter(instance, information_goal=_goal)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
 
+    # 中文：M18 断点续跑层：温度 0 下，(case、种子、规划旋钮、技能库内容、结构母题)
+    #   唯一决定这次测量；设置 MASBENCH_EVAL_CACHE 后，已完成的行可跨重启回放，被中断的
+    #   冻结判定运行得以续跑而非重新购买其成对样本。环境变量未设置：空操作。
+    #   M18b（dev-15 取证）：只缓存部署阶段的行（diag_phase == ""）。进化内部行
+    #   （证据/探索/门）必须保持新鲜：一轮被拒后链条会重置回空技能库，此时缓存的内部行
+    #   会让之后每一轮都逐字节重放被拒的那一轮——精修链曾在 j 0.44->0.67 上冻结了
+    #   三"轮"，实际只是同一次缓存计算。
     # M18 resume layer: at temperature 0, (case, seed, planner knobs, BANK
     # CONTENT, motif) determines the measurement; with MASBENCH_EVAL_CACHE
     # set, finished rows replay across relaunches so an interrupted frozen-
@@ -237,7 +615,12 @@ def _run_one(
         task_family=SILO_TASK_FAMILY,
         n_agents=n_agents,
         objective=objective,
+        planner_mode=cfg.planner_mode,
+        information_goal=_goal,
     )
+    # 中文：M1/M7——该 case 的任务特征桶 + 聚合类别，由运行自身的 LLM 依据题面文本分类
+    #   （与基准无关的问题；按文本哈希缓存；离线兜底到启发式）。行携带它们，迁移台账才能
+    #   按桶/类别归因成功，下方的部署也据此设门。
     # M1/M7: the case's task-feature bucket + agg kind, classified from the
     # statement text by the run's own LLM (benchmark-agnostic questions;
     # cached per text hash; heuristic fallback offline). Rows carry them so
@@ -261,7 +644,16 @@ def _run_one(
     abstained = False
     transfer_tier = "n/a"
     _planner_extra: dict[str, Any] = {}
-    if cfg.planner_mode == "graph_generate":
+    if cfg.planner_mode in {
+        "graph_generate",
+        "program_generate",
+        "python_generate",
+    }:
+        # 中文：自设计证据：生成一个 DAG（冷启动、靠多候选保证多样），让大臣 + 结构母题
+        #   闭环从真实生成的结构中学习，而不是只看拓扑选择。skill_bank 是每行新开的库；
+        #   此处母题先验关闭（我们在测量哪些结构会赢，还不向它们偏置）。
+        #   M1 迁移门：只有在本 case 特征桶里有实测成功的技能才可作为回放候选的种子；
+        #   无可信技能 → 走严格冷路径（空库、无母题先验）——对表征未覆盖的 case 不造成伤害。
         # Self-design evidence: GENERATE a DAG (cold, diverse via candidates) so the
         # minister + motif loop learn from real generated structures, not topology
         # picks. skill_bank is the fresh per-row bank; the motif prior is OFF here
@@ -280,14 +672,149 @@ def _run_one(
             skill_bank, motif_stats, feature_bucket,
             kind=feature_slot, mode=transfer_mode, fallback_tier=_ft,
         )
-        plan, _planner_extra = _plan_graph_generate(
-            cfg,
-            n_agents=n_agents,
-            task_adapter=task_adapter,
-            client=llm_client,
-            skill_bank=view_bank,
-            motif_stats=view_motif,
-        )
+        try:
+            if cfg.planner_mode == "python_generate":
+                planning, _planner_extra = _plan_python_generate(
+                    cfg,
+                    instance=instance,
+                    n_agents=n_agents,
+                    task_adapter=task_adapter,
+                    global_task=global_task,
+                    client=llm_client,
+                    skill_bank=view_bank,
+                )
+                score = _score_python_execution(
+                    planning,
+                    instance=instance,
+                    cfg=cfg,
+                    task_adapter=task_adapter,
+                    global_task=global_task,
+                    extra={
+                        "case_id": instance.case_id,
+                        "planner": True,
+                        "planner_mode": "python_generate",
+                        "topology": "python:generated",
+                        "objective": cfg.objective,
+                        "program_validity": 1.0,
+                        "silo_eval_mode": _goal,
+                        **_planner_extra,
+                    },
+                )
+                row = _python_score_to_aggregate_row(
+                    score,
+                    instance=instance,
+                    cfg=cfg,
+                )
+                _apply_precomputed_information_goal_score(
+                    row,
+                    score=score,
+                    information_goal=_goal,
+                )
+                execution = planning.execution
+                output = execution.output
+                usage = execution.authoritative_usage
+                row.update(
+                    {
+                        "case_id": instance.case_id,
+                        "seed": seed,
+                        "task_family": _task_family(instance),
+                        "task_features_key": feature_bucket,
+                        "task_agg_kind": feature_kind,
+                        "task_needs_lossless": bool(
+                            classification.get("needs_lossless")
+                        ),
+                        "task_answer_composite": bool(
+                            classification.get("answer_composite")
+                        ),
+                        "information_goal": _goal,
+                        "planner_mode": "python_generate",
+                        "provenance": planning.provenance,
+                        "selected_skill_id": planning.selected_skill_id,
+                        "python_source": planning.source,
+                        "program_sha256": _planner_extra["program_sha256"],
+                        "ast_policy_version": cfg.python_ast_policy_version,
+                        "execution_contract_version": (
+                            cfg.python_execution_contract_version
+                        ),
+                        "worker_contract": getattr(
+                            cfg, "python_worker_contract", "action_json_v1"
+                        ),
+                        "repair_attempts": max(0, len(planning.attempts) - 1),
+                        "python_artifacts_dir": str(planning.artifacts_dir),
+                        "runtime_trace_summary": {
+                            "rounds": int(output.rounds_executed) if output else 0,
+                            "messages": len(output.messages) if output else 0,
+                            "worker_model_calls": int(usage.model_calls),
+                            "prompt_tokens": int(usage.prompt_tokens),
+                            "completion_tokens": int(usage.completion_tokens),
+                        },
+                    }
+                )
+                if diag.enabled():
+                    diag.dump_eval_run(
+                        {
+                            "case_id": instance.case_id,
+                            "seed": seed,
+                            "phase": diag_phase,
+                            "planner_mode": "python_generate",
+                            "evolved_mode": cfg.evolved_mode,
+                            "n_agents": n_agents,
+                            "bank_size": len(skill_bank),
+                            "transfer_bucket": feature_bucket,
+                            "transfer_kind": feature_kind,
+                            "transfer_slot": feature_slot,
+                            "transfer_abstained": abstained,
+                            "transfer_tier": transfer_tier,
+                            "topology": "python:generated",
+                            "exact_match": row.get("ExactMatchRate"),
+                            "messages": row.get("MeanTotalMessages"),
+                            "model_calls": row.get("MeanTotalModelCalls"),
+                            "tokens": row.get("MeanTokenCost"),
+                            "program_sha256": row.get("program_sha256"),
+                            "provenance": planning.provenance,
+                        }
+                    )
+                if eval_cache is not None and eval_key is not None:
+                    eval_cache.put(eval_key, row)
+                return row
+            if cfg.planner_mode == "program_generate":
+                plan, _planner_extra = _plan_program_generate(
+                    cfg,
+                    n_agents=n_agents,
+                    task_adapter=task_adapter,
+                    client=llm_client,
+                    skill_bank=view_bank,
+                    motif_stats=view_motif,
+                    instance=instance,
+                )
+            else:
+                plan, _planner_extra = _plan_graph_generate(
+                    cfg,
+                    n_agents=n_agents,
+                    task_adapter=task_adapter,
+                    client=llm_client,
+                    skill_bank=view_bank,
+                    motif_stats=view_motif,
+                )
+        except (
+            PhaseProgramGenerationError,
+            GraphGenerationError,
+            PythonGenerationError,
+        ) as exc:
+            row = _failed_generation_row(
+                instance,
+                cfg,
+                seed=seed,
+                classification=classification,
+                error=exc,
+            )
+            if isinstance(exc, PythonGenerationError) and exc.artifacts_dir is not None:
+                row["python_artifacts_dir"] = str(exc.artifacts_dir)
+            if isinstance(exc, PythonGenerationError):
+                row["python_failure_category"] = exc.error_type
+            if eval_cache is not None and eval_key is not None:
+                eval_cache.put(eval_key, row)
+            return row
     else:
         plan = EmperorPlanner(skill_bank).plan(request)
 
@@ -301,6 +828,8 @@ def _run_one(
         "llm_provider": cfg.llm_provider,
         "model_name": cfg.model_name,
         "temperature": cfg.temperature,
+        # 中文：M9——允许学到的逐步骤角色指引进入合并提示词
+        #   （仅当实际执行的 spec 真的携带指令时才生效）。
         # M9: permit learned per-step role guidance to reach merge prompts
         # (only fires when the executed spec actually carries instructions).
         "enable_step_instructions": bool(getattr(cfg, "replay_rewrite", False)),
@@ -316,6 +845,16 @@ def _run_one(
     ).run()
     summary = result.to_summary_dict()
     row = summary_to_aggregate_row(summary)
+    _apply_information_goal_score(
+        row,
+        result=result,
+        instance=instance,
+        task_adapter=task_adapter,
+        global_task=global_task,
+        information_goal=_goal,
+    )
+    # 中文：给行打上条件 + 任务族标签，使训练/留出分组能按 (n, case) 诚实进行，
+    #   留出门在 silo 任务族内评估。
     # Tag the row with its condition + family so val/train grouping is honest per
     # (n, case) and the held-out gate evaluates in the silo family.
     row["case_id"] = instance.case_id
@@ -325,10 +864,25 @@ def _run_one(
     row["task_agg_kind"] = feature_kind
     row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
     row["task_answer_composite"] = bool(classification.get("answer_composite"))
+    # 中文：行携带信息目标与结构来源：技能卡的模式隔离、clean 入库判定与
+    #   同模式 gate 校验都读取这两个字段。
+    # Rows carry the information goal + structural provenance: card namespacing,
+    # clean-bank admission, and the same-goal gate check all read these.
+    row["information_goal"] = _goal
+    row["planner_mode"] = cfg.planner_mode
+    row["provenance"] = getattr(plan, "provenance", None) or (
+        "llm_generated"
+        if str(plan.topology_name).startswith("generated:")
+        else "fixed_named"
+    )
+    row["selected_skill_id"] = getattr(plan, "skill_id", None)
     # A2: carry the executed schedule so minister skills can store it
     # (organization_policy.protocol_spec) and the refine eval can replay it.
     row["protocol_spec"] = _executed_spec(plan, n_agents)
-    if cfg.planner_mode == "graph_generate" and plan.protocol_spec is not None:
+    if (
+        cfg.planner_mode in {"graph_generate", "program_generate"}
+        and plan.protocol_spec is not None
+    ):
         # Structural-motif evidence so the motif-credit loop can learn which
         # GENERATED structures (fan-in, depth, sink pattern) correlate with low
         # loss. Lower-is-better loss; offline this is topology-invariant.
@@ -340,7 +894,6 @@ def _run_one(
             if transfer_mode != "off"
             else raw_motif_keys
         )
-        row["mean_primary_loss"] = 1.0 - float(row.get("ExactMatchRate", 0.0))
     if diag.enabled():
         record: dict[str, Any] = {
             "case_id": instance.case_id,
@@ -362,9 +915,10 @@ def _run_one(
             "tokens": row.get("MeanTokenCost"),
             "motif_keys": row.get("motif_keys"),
             "spec": diag.serialize_spec(plan.protocol_spec),
-            "fallback_reason": _planner_extra.get("graph_fallback_reason"),
+            "graph_generation_failed": _planner_extra.get("graph_generation_failed"),
+            "provenance": _planner_extra.get("provenance"),
         }
-        if cfg.planner_mode == "graph_generate":
+        if cfg.planner_mode in {"graph_generate", "program_generate"}:
             record["retrieved_skills"] = [
                 {
                     "skill_id": s.skill_id,
@@ -399,7 +953,8 @@ def _run_fixed_one(
     (e.g. ``chain``) on the same train grid so order-sensitive evidence exists
     when train contains level-II cases.
     """
-    task_adapter = _protocol_adapter(instance)
+    _goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
+    task_adapter = _protocol_adapter(instance, information_goal=_goal)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
     config = ProtocolRunnerConfig(
@@ -420,6 +975,14 @@ def _run_fixed_one(
     ).run()
     summary = result.to_summary_dict()
     row = summary_to_aggregate_row(summary)
+    _apply_information_goal_score(
+        row,
+        result=result,
+        instance=instance,
+        task_adapter=task_adapter,
+        global_task=global_task,
+        information_goal=_goal,
+    )
     classification = classify_task(
         instance.task_prompt,
         llm_client=llm_client,
@@ -434,6 +997,13 @@ def _run_fixed_one(
     row["task_agg_kind"] = classification_kind(classification)
     row["task_needs_lossless"] = bool(classification.get("needs_lossless"))
     row["task_answer_composite"] = bool(classification.get("answer_composite"))
+    # 中文：具名拓扑证据行：provenance=fixed_named + 信息目标。clean GraphGen 库
+    #   由此把 fixed 臂证据挡在检索/入库之外。
+    # Named-topology evidence rows: provenance=fixed_named + information goal,
+    # so clean GraphGen banks can exclude fixed-arm evidence entirely.
+    row["information_goal"] = _goal
+    row["provenance"] = "fixed_named"
+    row["planner_mode"] = "fixed_named"
     try:
         steps = build_protocol_schedule(topology, n_agents)
     except Exception:
@@ -482,6 +1052,8 @@ def _run_fixed_one(
 
 
 def _portfolio_topologies(cfg: RunConfig) -> list[str]:
+    if cfg.planner_mode == "python_generate":
+        return []
     raw = (
         os.environ.get("MASBENCH_EVIDENCE_PORTFOLIO")
         if os.environ.get("MASBENCH_EVIDENCE_PORTFOLIO") is not None
@@ -573,6 +1145,925 @@ def _collect_portfolio_rows(
     return [row for row in results if row is not None]
 
 
+def _hot_start_items(value: object) -> list[str]:
+    """Normalize a comma-separated or sequence-valued hot-start setting."""
+    if isinstance(value, (list, tuple, set)):
+        raw = [str(item).strip() for item in value]
+    else:
+        raw = [item.strip() for item in str(value or "").split(",")]
+    result: list[str] = []
+    for item in raw:
+        if item and item not in result:
+            result.append(item)
+    return result
+
+
+def _resolve_hot_start_settings(
+    cfg: RunConfig,
+    instances: list[BenchmarkInstance],
+) -> dict[str, Any]:
+    """Resolve goal-aware defaults and reject ambiguous hot-start inputs."""
+    enabled = bool(getattr(cfg, "hot_start_enabled", False))
+    goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
+    if not enabled:
+        return {
+            "enabled": False,
+            "information_goal": goal,
+            "protocols": [],
+            "topologies": [],
+            "seed_count": 0,
+            "dual_branch": False,
+            "innovation_mode": None,
+        }
+
+    protocol_setting = getattr(cfg, "hot_start_protocols", "auto") or ""
+    if (
+        isinstance(protocol_setting, str)
+        and protocol_setting.strip().lower() == "auto"
+    ):
+        protocols = list(PAPER_PROTOCOL_ARMS) if goal == "all_agents" else []
+    else:
+        protocols = [
+            normalize_paper_protocol(item)
+            for item in _hot_start_items(protocol_setting)
+        ]
+    if protocols and goal != "all_agents":
+        raise ValueError(
+            "hot-start SILO paper protocols require silo_eval_mode='all_agents'; "
+            "use hot_start_protocols='' for sink training"
+        )
+
+    topology_setting = getattr(cfg, "hot_start_topologies", "auto") or ""
+    if (
+        isinstance(topology_setting, str)
+        and topology_setting.strip().lower() == "auto"
+    ):
+        topologies = list(
+            _HOT_START_ALL_AGENTS_TOPOLOGIES
+            if goal == "all_agents"
+            else _HOT_START_SINK_TOPOLOGIES
+        )
+    else:
+        topologies = _hot_start_items(topology_setting)
+    for topology in topologies:
+        for n_agents in sorted({inst.n_agents for inst in instances}):
+            try:
+                build_protocol_schedule(topology, n_agents)
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid hot-start topology {topology!r} for n={n_agents}: {exc}"
+                ) from exc
+
+    seed_count = int(getattr(cfg, "hot_start_seed_count", 1) or 0)
+    if seed_count < 1:
+        raise ValueError("hot_start_seed_count must be at least 1")
+    innovation = str(
+        getattr(cfg, "hot_start_innovation_mode", "auto") or "auto"
+    ).strip().lower()
+    if innovation == "auto":
+        innovation = next(
+            (
+                mode
+                for mode in (cfg.planner_mode, cfg.evolved_mode)
+                if mode in _HOT_START_INNOVATION_MODES
+            ),
+            "graph_generate",
+        )
+    if innovation not in _HOT_START_INNOVATION_MODES:
+        raise ValueError(
+            "hot_start_innovation_mode must be auto, graph_generate, "
+            "program_generate, or python_generate"
+        )
+    return {
+        "enabled": True,
+        "information_goal": goal,
+        "protocols": protocols,
+        "topologies": topologies,
+        "seed_count": seed_count,
+        "dual_branch": bool(getattr(cfg, "hot_start_dual_branch", True)),
+        "innovation_mode": innovation,
+    }
+
+
+def _paper_protocol_row(
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    *,
+    protocol: str,
+    seed: int,
+    llm_client: LLMClient,
+) -> dict[str, Any]:
+    """Run one dynamic paper transport and adapt it to evolution evidence."""
+    run_cfg = replace(cfg, seed=seed)
+    score = run_silo_paper_protocol(
+        instance,
+        run_cfg,
+        protocol=protocol,
+        llm_client=llm_client,
+    )
+    row = _python_score_to_aggregate_row(score, instance=instance, cfg=run_cfg)
+    selected = normalize_paper_protocol(protocol)
+    classification = classify_task(
+        instance.task_prompt,
+        llm_client=llm_client,
+        model_name=cfg.model_name,
+        llm_provider=cfg.llm_provider,
+        source=getattr(cfg, "task_feature_source", "llm"),
+    )
+    row.update(
+        {
+            "Topology": f"paper_{selected}",
+            "case_id": instance.case_id,
+            "seed": seed,
+            "task_family": _task_family(instance),
+            "task_features_key": classification_bucket(classification),
+            "task_agg_kind": classification_kind(classification),
+            "task_needs_lossless": bool(classification.get("needs_lossless")),
+            "task_answer_composite": bool(classification.get("answer_composite")),
+            "information_goal": "all_agents",
+            "planner_mode": "hot_start_reference",
+            "provenance": "fixed_named",
+            "hot_start_source": "paper_protocol",
+            "hot_start_protocol": selected,
+        }
+    )
+    _apply_precomputed_information_goal_score(
+        row,
+        score=score,
+        information_goal="all_agents",
+    )
+    return row
+
+
+def _collect_hot_start_protocol_rows(
+    instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    protocols: list[str],
+    seeds: list[int],
+    llm_client: LLMClient,
+    workers: int,
+    progress: bool,
+) -> list[dict[str, Any]]:
+    tasks = [
+        (instance, protocol, seed)
+        for instance in instances
+        for protocol in protocols
+        for seed in (seeds or [0])
+    ]
+    if not tasks:
+        return []
+    prog = _EvolveProgress("hot-start protocols", len(tasks)) if progress else None
+
+    def _do(task: tuple[BenchmarkInstance, str, int]) -> dict[str, Any] | None:
+        instance, protocol, seed = task
+        try:
+            return _paper_protocol_row(
+                instance,
+                cfg,
+                protocol=protocol,
+                seed=seed,
+                llm_client=llm_client,
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the rest of the warm-up
+            print(
+                f"  [evolve hot-start] paper {protocol} {instance.case_id} "
+                f"seed={seed} FAILED: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            return None
+
+    if workers and workers > 1 and len(tasks) > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as executor:
+            rows = []
+            for row in executor.map(_do, tasks):
+                rows.append(row)
+                if prog is not None:
+                    prog.tick(ok=row is not None)
+    else:
+        rows = []
+        for task in tasks:
+            row = _do(task)
+            rows.append(row)
+            if prog is not None:
+                prog.tick(ok=row is not None)
+    return [row for row in rows if row is not None]
+
+
+def _hot_start_evidence_summary(skill: SkillCard) -> dict[str, Any]:
+    rows = [row for row in skill.evidence if isinstance(row, dict)]
+
+    def _mean(key: str) -> float:
+        values = [
+            float(row[key])
+            for row in rows
+            if row.get(key) is not None
+        ]
+        return sum(values) / len(values) if values else 0.0
+
+    return {
+        "n_observations": len(rows),
+        "case_ids": sorted(
+            {str(row["case_id"]) for row in rows if row.get("case_id")}
+        ),
+        "seeds": sorted(
+            {int(row["seed"]) for row in rows if row.get("seed") is not None}
+        ),
+        "mean_program_validity": _mean("program_validity"),
+        "mean_structural_coverage": _mean("structural_coverage"),
+        "mean_submission_rate": _mean("submission_rate"),
+        "mean_partial": _mean("evolution_partial"),
+        "mean_success": _mean("evolution_success"),
+        "mean_stage_score": _mean("evolution_stage_score"),
+    }
+
+
+def _hot_start_structure_code(
+    *,
+    topology: str,
+    paper_protocol: str | None,
+) -> dict[str, Any]:
+    """Serializable executable descriptor stored beside the compiled artifact."""
+    if paper_protocol is not None:
+        return {
+            "schema_version": "organization_code_v1",
+            "language": "silo_paper_transport_v1",
+            "entrypoint": (
+                "masbench.adapters.silo_paper_protocols."
+                "run_silo_paper_protocol"
+            ),
+            "source": (
+                "run_silo_paper_protocol(instance, cfg, "
+                f"protocol={paper_protocol!r}, llm_client=client)"
+            ),
+            "parameters": {"protocol": paper_protocol},
+            "execution": "direct_dynamic_runner",
+        }
+    return {
+        "schema_version": "organization_code_v1",
+        "language": "named_topology_v1",
+        "entrypoint": "exp_graph.protocols.schedules.build_protocol_schedule",
+        "source": f"build_protocol_schedule({topology!r}, n_agents)",
+        "parameters": {"topology_name": topology},
+        "compiled_artifact_field": "mode_payload.protocol_spec",
+        "execution": "direct_protocol_spec",
+    }
+
+
+def _decorate_hot_start_patches(
+    patches: list[SkillPatch],
+) -> list[SkillPatch]:
+    """Mark executable fixed seeds vs dynamic context-only protocol cards."""
+    decorated: list[SkillPatch] = []
+    for patch in patches:
+        skill = patch.candidate_skill
+        if skill is None:
+            decorated.append(patch)
+            continue
+        topology = str(skill.topology_name or "")
+        is_paper = topology.startswith("paper_")
+        tags = list(skill.tags)
+        for tag in (
+            _HOT_START_TAG,
+            "hot-start-protocol" if is_paper else "hot-start-fixed",
+            "reference-only" if is_paper else "executable-seed",
+        ):
+            if tag not in tags:
+                tags.append(tag)
+        policy = dict(skill.organization_policy)
+        reasoning = dict(skill.reasoning_policy)
+        paper_protocol: str | None = None
+        if is_paper:
+            paper_protocol = topology.removeprefix("paper_")
+            policy.update(
+                {
+                    "planner_mode": "hot_start_reference",
+                    "dynamic_transport": paper_protocol,
+                    "protocol_spec": None,
+                    "replayable": False,
+                }
+            )
+            reasoning.update(_PAPER_PROTOCOL_REASONING.get(paper_protocol, {}))
+            reasoning["submission_rule"] = "every agent independently submits"
+        else:
+            policy["hot_start_seed_topologies"] = [topology]
+        policy["structure_code"] = _hot_start_structure_code(
+            topology=topology,
+            paper_protocol=paper_protocol,
+        )
+        if is_paper:
+            mode_payload = PaperTransportSkillPayload(
+                protocol=str(paper_protocol),
+                structure_code=dict(policy["structure_code"]),
+            )
+        else:
+            spec_data = policy.get("protocol_spec")
+            mode_payload = (
+                NamedTopologySkillPayload(
+                    topology_name=topology,
+                    protocol_spec=dict(spec_data),
+                    structure_code=dict(policy["structure_code"]),
+                )
+                if isinstance(spec_data, dict)
+                else skill.mode_payload
+            )
+        evidence_summary = _hot_start_evidence_summary(skill)
+        insight_id = "hot_start_" + topology.replace(":", "_")
+        insight_summary = (
+            str(reasoning.get("design_lesson") or "Measured paper transport.")
+            if is_paper
+            else (
+                f"Measured executable {topology} structure; preserve its "
+                "temporal coverage pattern when the task goal matches."
+            )
+        )
+        design_insights = list(skill.design_insights)
+        if not any(item.get("insight_id") == insight_id for item in design_insights):
+            design_insights.append(
+                {
+                    "insight_id": insight_id,
+                    "type": "design_principle",
+                    "status": "observed",
+                    "title": f"Measured hot-start structure: {topology}",
+                    "summary": insight_summary,
+                    "evidence_summary": evidence_summary,
+                }
+            )
+        expected_dynamics = dict(skill.expected_dynamics)
+        expected_dynamics["hot_start_evidence_summary"] = evidence_summary
+        confidence = dict(skill.confidence)
+        confidence["hot_start_seed"] = True
+        candidate = skill.model_copy(
+            update={
+                "organization_policy": policy,
+                "mode_payload": mode_payload,
+                "skill_type": skill_type_for_payload(mode_payload),
+                "reasoning_policy": reasoning,
+                "design_insights": design_insights,
+                "expected_dynamics": expected_dynamics,
+                "confidence": confidence,
+                "tags": tags,
+            }
+        )
+        decorated.append(
+            patch.model_copy(
+                update={
+                    "patch_id": f"hot_start_{patch.patch_id}",
+                    "candidate_skill": candidate,
+                    "source": "hot_start_pretraining",
+                }
+            )
+        )
+    return decorated
+
+
+def _runtime_cost_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "runs": len(rows),
+        "model_calls": int(
+            sum(float(row.get("MeanTotalModelCalls", 0.0) or 0.0) for row in rows)
+        ),
+        "tokens": int(
+            sum(float(row.get("MeanTokenCost", 0.0) or 0.0) for row in rows)
+        ),
+        "messages": int(
+            sum(float(row.get("MeanTotalMessages", 0.0) or 0.0) for row in rows)
+        ),
+    }
+
+
+def _skill_payload_audit(skills: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize persisted mode formats and the supported update surface."""
+    format_counts: dict[str, int] = defaultdict(int)
+    missing_generated_payload: list[str] = []
+    python_sources: list[dict[str, Any]] = []
+    for skill in skills:
+        payload = skill.get("mode_payload")
+        payload = payload if isinstance(payload, dict) else {}
+        payload_format = str(payload.get("format") or "legacy_or_context_only")
+        format_counts[payload_format] += 1
+        trigger = skill.get("trigger")
+        trigger = trigger if isinstance(trigger, dict) else {}
+        planner_mode = str(trigger.get("planner_mode") or "")
+        tags = {str(tag).lower() for tag in skill.get("tags", [])}
+        if (
+            planner_mode in _HOT_START_INNOVATION_MODES
+            and not payload
+            and "counterexample" not in tags
+        ):
+            missing_generated_payload.append(str(skill.get("skill_id")))
+        if payload_format == "python_skill_v1":
+            source = payload.get("source_code")
+            python_sources.append(
+                {
+                    "skill_id": skill.get("skill_id"),
+                    "program_sha256": payload.get("program_sha256"),
+                    "source_chars": len(source) if isinstance(source, str) else 0,
+                    "source_persisted": bool(isinstance(source, str) and source),
+                }
+            )
+    return {
+        "format_counts": dict(sorted(format_counts.items())),
+        "missing_generated_payload_skill_ids": sorted(missing_generated_payload),
+        "python_sources": python_sources,
+        "iterative_fields": [
+            "mode_payload",
+            "organization_policy",
+            "reasoning_policy",
+            "trigger",
+            "expected_tradeoff",
+            "expected_dynamics",
+            "design_insights",
+            "evidence",
+            "evidence_refs",
+            "counterexamples",
+            "failure_modes",
+            "risk_notes",
+            "hypotheses",
+            "fallback",
+            "confidence",
+            "validation_plan",
+            "tags",
+            "update_rule",
+        ],
+        "immutable_identity_fields": [
+            "skill_id",
+            "task_family",
+            "information_goal",
+            "provenance",
+        ],
+    }
+
+
+def _seed_hot_start_bank(
+    train_instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    settings: dict[str, Any],
+    train_seeds: list[int],
+    skill_bank: SkillBank,
+    llm_client: LLMClient,
+    workers: int,
+    progress: bool,
+    batch_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Measure supplied organizations once and seed the persistent bank."""
+    existing_hot = [
+        skill for skill in skill_bank if _HOT_START_TAG in skill.tags
+    ]
+    existing_hot_ids = sorted(skill.skill_id for skill in existing_hot)
+    covered_topologies: set[str] = set()
+    for skill in existing_hot:
+        if "hot-start-fixed" not in skill.tags:
+            continue
+        sources = skill.organization_policy.get("hot_start_seed_topologies")
+        if isinstance(sources, list):
+            covered_topologies.update(str(source) for source in sources)
+        else:
+            covered_topologies.add(
+                str(skill.topology_name)
+            )
+    covered_protocols = {
+        str(paper_protocol_from_skill(skill))
+        for skill in existing_hot
+        if paper_protocol_from_skill(skill)
+    }
+    missing_topologies = [
+        topology
+        for topology in settings["topologies"]
+        if topology not in covered_topologies
+    ]
+    missing_protocols = [
+        protocol
+        for protocol in settings["protocols"]
+        if protocol not in covered_protocols
+    ]
+    if existing_hot_ids and not missing_topologies and not missing_protocols:
+        return [], {
+            **settings,
+            "status": "reused_existing_seed",
+            "bank_size_before": len(skill_bank),
+            "bank_size_after": len(skill_bank),
+            "seeded_skill_ids": existing_hot_ids,
+            "n_pretrain_rows": 0,
+            "n_fixed_rows": 0,
+            "n_protocol_rows": 0,
+            "cost": _runtime_cost_summary([]),
+            "paired_ablation": [],
+            "measured_topologies": [],
+            "measured_protocols": [],
+        }
+
+    before = len(skill_bank)
+    seed_count = int(settings["seed_count"])
+    seeds = list(train_seeds or [0])[:seed_count]
+    fixed_rows = _collect_portfolio_rows(
+        train_instances,
+        cfg,
+        topologies=missing_topologies,
+        seeds=seeds,
+        llm_client=llm_client,
+        workers=workers,
+        progress=progress,
+        phase=f"n={cfg.n_agents} hot-start fixed",
+    )
+    for row in fixed_rows:
+        row["hot_start_source"] = "fixed_topology"
+    protocol_rows = _collect_hot_start_protocol_rows(
+        train_instances,
+        cfg,
+        protocols=missing_protocols,
+        seeds=seeds,
+        llm_client=llm_client,
+        workers=workers,
+        progress=progress,
+    )
+    rows = [*fixed_rows, *protocol_rows]
+    if not rows:
+        return [], {
+            **settings,
+            "status": "no_successful_pretrain_rows",
+            "bank_size_before": before,
+            "bank_size_after": len(skill_bank),
+            "seeded_skill_ids": [],
+            "n_pretrain_rows": 0,
+            "n_fixed_rows": 0,
+            "n_protocol_rows": 0,
+            "cost": _runtime_cost_summary([]),
+            "paired_ablation": [],
+            "measured_topologies": missing_topologies,
+            "measured_protocols": missing_protocols,
+        }
+
+    patches = ResultAnalystMinister().analyze(rows, task_family=SILO_TASK_FAMILY)
+    # The warm bank is a portfolio of the explicitly supplied organizations,
+    # exactly one positive card per item. Failures stay on those cards as
+    # evidence/insights; separate avoid cards are learned by the normal round.
+    patches = [patch for patch in patches if not _is_avoid_patch(patch)]
+    patches = _filter_misfired_avoids(patches, rows)
+    patches, paired_ablation = _paired_skill_ablation(
+        patches,
+        rows,
+        strict=False,
+    )
+    patches = _decorate_hot_start_patches(patches)
+    consolidate_skill_updates(
+        bank=skill_bank,
+        patches=patches,
+        evidence_records=[],
+        batch_id=f"{batch_id}_hot_start",
+        gate=False,
+    )
+    # SkillBank merge intentionally preserves the incumbent card's lifecycle
+    # tags.  Hot-start safety tags are semantic (especially reference-only), so
+    # stamp them explicitly when a seed merged into an existing identity.
+    for patch in patches:
+        candidate = patch.candidate_skill
+        if candidate is None:
+            continue
+        current = skill_bank.get(candidate.skill_id)
+        if current is None:
+            continue
+        tags = list(current.tags)
+        for tag in candidate.tags:
+            if tag not in tags:
+                tags.append(tag)
+        skill_bank.skills[current.skill_id] = current.model_copy(update={"tags": tags})
+    inject_transfer_evidence(skill_bank, rows)
+    stamp_rule_actions(skill_bank)
+    seeded_ids = sorted(
+        skill.skill_id for skill in skill_bank if _HOT_START_TAG in skill.tags
+    )
+    return rows, {
+        **settings,
+        "status": "extended_existing_seed" if existing_hot_ids else "seeded",
+        "bank_size_before": before,
+        "bank_size_after": len(skill_bank),
+        "seeded_skill_ids": seeded_ids,
+        "n_pretrain_rows": len(rows),
+        "n_fixed_rows": len(fixed_rows),
+        "n_protocol_rows": len(protocol_rows),
+        "cost": _runtime_cost_summary(rows),
+        "paired_ablation": paired_ablation,
+        "measured_topologies": missing_topologies,
+        "measured_protocols": missing_protocols,
+    }
+
+
+def _innovation_context_bank(
+    bank: SkillBank,
+    *,
+    parent_skill_id: str | None,
+) -> tuple[SkillBank, list[str]]:
+    """Keep one parent plus protocol references, but remove replay payloads."""
+    selected: list[SkillCard] = []
+    selected_ids: set[str] = set()
+    parent = bank.get(parent_skill_id) if parent_skill_id else None
+    if parent is not None:
+        selected.append(parent)
+        selected_ids.add(parent.skill_id)
+    for skill in sorted(bank, key=lambda item: item.skill_id):
+        if (
+            "reference-only" in {tag.lower() for tag in skill.tags}
+            and skill.skill_id not in selected_ids
+        ):
+            selected.append(skill)
+            selected_ids.add(skill.skill_id)
+    if not selected:
+        selected = sorted(bank, key=lambda item: item.skill_id)[:1]
+    copied = SkillBank(skills=[skill.model_copy(deep=True) for skill in selected])
+    for skill in copied:
+        policy = skill.organization_policy or {}
+        policy["protocol_spec"] = None
+        policy.pop("source_code", None)
+        # Innovation may learn from the parent's evidence and insights, but it
+        # must not replay any executable payload from any planner format.
+        skill.mode_payload = None
+    return copied, [skill.skill_id for skill in selected]
+
+
+def _fallback_parent_skill_id(
+    bank: SkillBank,
+    cfg: RunConfig,
+    *,
+    n_agents: int,
+    objective: ObjectiveSpec,
+) -> str | None:
+    request = PlannerRequest(
+        task_family=SILO_TASK_FAMILY,
+        n_agents=n_agents,
+        objective=objective,
+        planner_mode=cfg.planner_mode,
+        information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+    )
+    direct = bank.retrieve(request)
+    context = bank.retrieve_generation_context(
+        request.model_copy(update={"include_reference_skills": True})
+    )
+    candidates: list[SkillCard] = []
+    seen: set[str] = set()
+    for skill in [*direct, *context]:
+        if skill.skill_id not in seen:
+            candidates.append(skill)
+            seen.add(skill.skill_id)
+    if not candidates:
+        return None
+    ranked = []
+    for skill in candidates:
+        score, _breakdown = score_skill(
+            skill,
+            objective=objective,
+            peers=candidates,
+        )
+        ranked.append((score, skill.skill_id))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
+def _reuse_bank_and_mode(
+    bank: SkillBank,
+    *,
+    parent_skill_id: str | None,
+    fallback_mode: str,
+) -> tuple[SkillBank, str]:
+    """Pin reuse to one parent and dispatch through that skill's own planner."""
+    parent = bank.get(parent_skill_id) if parent_skill_id else None
+    if parent is None:
+        return bank, fallback_mode
+    if paper_protocol_from_skill(parent):
+        return SkillBank(skills=[parent.model_copy(deep=True)]), "paper_protocol"
+    declared = str(
+        planner_mode_from_skill(parent) or fallback_mode
+    )
+    mode = (
+        declared
+        if declared in {
+            "topology_select",
+            "graph_generate",
+            "program_generate",
+            "python_generate",
+        }
+        else "topology_select"
+    )
+    # Keep negative constraints alongside the one positive parent, but never let
+    # another positive card silently replace the requested reuse candidate.
+    cards = [parent.model_copy(deep=True)]
+    cards.extend(
+        skill.model_copy(deep=True)
+        for skill in bank
+        if "counterexample" in {tag.lower() for tag in skill.tags}
+        and skill.skill_id != parent.skill_id
+    )
+    return SkillBank(skills=cards), mode
+
+
+def _paper_protocol_from_skill(skill: SkillCard | None) -> str | None:
+    if skill is None:
+        return None
+    typed = paper_protocol_from_skill(skill)
+    if typed:
+        return normalize_paper_protocol(typed)
+    policy = skill.organization_policy or {}
+    code = policy.get("structure_code")
+    if isinstance(code, dict):
+        parameters = code.get("parameters")
+        if isinstance(parameters, dict) and parameters.get("protocol"):
+            return normalize_paper_protocol(str(parameters["protocol"]))
+    dynamic = policy.get("dynamic_transport")
+    return normalize_paper_protocol(str(dynamic)) if dynamic else None
+
+
+def _collect_hot_start_dual_rows(
+    instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+    *,
+    settings: dict[str, Any],
+    objective: ObjectiveSpec,
+    skill_bank: SkillBank,
+    seeds: list[int],
+    llm_client: LLMClient,
+    workers: int,
+    progress: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """For every pair, run existing-skill reuse then parent-conditioned novelty."""
+    if not settings.get("dual_branch"):
+        return [], {
+            "enabled": False,
+            "innovation_mode": settings.get("innovation_mode"),
+            "branches": {},
+            "cost": _runtime_cost_summary([]),
+        }
+    tasks = [
+        (instance, seed)
+        for instance in instances
+        for seed in (seeds or [0])
+    ]
+    innovation_mode = str(settings["innovation_mode"])
+    prog = _EvolveProgress("hot-start dual", len(tasks) * 2) if progress else None
+
+    def _pair(task: tuple[BenchmarkInstance, int]) -> list[dict[str, Any]]:
+        instance, seed = task
+        pair_id = f"{instance.case_id}|n={instance.n_agents}|seed={seed}"
+        rows: list[dict[str, Any]] = []
+        predicted_parent = _fallback_parent_skill_id(
+            skill_bank,
+            cfg,
+            n_agents=cfg.n_agents or instance.n_agents,
+            objective=objective,
+        )
+        reuse_bank, reuse_mode = _reuse_bank_and_mode(
+            skill_bank,
+            parent_skill_id=predicted_parent,
+            fallback_mode=cfg.planner_mode,
+        )
+        reuse_row: dict[str, Any] | None = None
+        try:
+            if reuse_mode == "paper_protocol":
+                parent = reuse_bank.get(predicted_parent or "")
+                protocol = _paper_protocol_from_skill(parent)
+                if parent is None or protocol is None:
+                    raise ValueError("paper-protocol parent lacks executable code")
+                reuse_row = _paper_protocol_row(
+                    instance,
+                    cfg,
+                    protocol=protocol,
+                    seed=seed,
+                    llm_client=llm_client,
+                )
+                reuse_row["selected_skill_id"] = parent.skill_id
+            else:
+                reuse_row = _run_one(
+                    instance,
+                    replace(cfg, planner_mode=reuse_mode, replay_first=True),
+                    objective=objective,
+                    skill_bank=reuse_bank,
+                    seed=seed,
+                    llm_client=llm_client,
+                    diag_phase="hot_start_reuse",
+                )
+            reuse_row.update(
+                {
+                    "hot_start_branch": "reuse",
+                    "hot_start_pair_id": pair_id,
+                    "hot_start_parent_skill_id": (
+                        reuse_row.get("selected_skill_id") or predicted_parent
+                    ),
+                }
+            )
+            rows.append(reuse_row)
+            if prog is not None:
+                prog.tick(ok=True)
+        except Exception as exc:  # noqa: BLE001 - innovation still runs
+            print(
+                f"  [evolve hot-start] reuse {pair_id} FAILED: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            if prog is not None:
+                prog.tick(ok=False)
+
+        parent_id = (
+            str(reuse_row.get("selected_skill_id"))
+            if reuse_row is not None and reuse_row.get("selected_skill_id")
+            else predicted_parent
+        )
+        innovation_bank, context_ids = _innovation_context_bank(
+            skill_bank,
+            parent_skill_id=parent_id,
+        )
+        innovation_cfg = replace(
+            cfg,
+            planner_mode=innovation_mode,
+            replay_first=False,
+            graph_gen_temperature=(
+                0.7 if innovation_mode != "python_generate" else cfg.graph_gen_temperature
+            ),
+            python_gen_temperature=(
+                0.7 if innovation_mode == "python_generate" else cfg.python_gen_temperature
+            ),
+        )
+        try:
+            innovation_row = _run_one(
+                instance,
+                innovation_cfg,
+                objective=objective,
+                skill_bank=innovation_bank,
+                seed=seed,
+                llm_client=llm_client,
+                diag_phase="hot_start_innovation",
+            )
+            innovation_row.update(
+                {
+                    "hot_start_branch": "innovation",
+                    "hot_start_pair_id": pair_id,
+                    "hot_start_parent_skill_id": parent_id,
+                    "hot_start_context_skill_ids": context_ids,
+                    "hot_start_context_exposed_to_architect": (
+                        innovation_mode != "python_generate"
+                    ),
+                }
+            )
+            rows.append(innovation_row)
+            if prog is not None:
+                prog.tick(ok=True)
+        except Exception as exc:  # noqa: BLE001 - one failed candidate is evidence loss
+            print(
+                f"  [evolve hot-start] innovation {pair_id} FAILED: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            if prog is not None:
+                prog.tick(ok=False)
+        return rows
+
+    if workers and workers > 1 and len(tasks) > 1:
+        with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as executor:
+            nested = list(executor.map(_pair, tasks))
+    else:
+        nested = [_pair(task) for task in tasks]
+    rows = [row for pair_rows in nested for row in pair_rows]
+    branch_summary: dict[str, Any] = {}
+    for branch in ("reuse", "innovation"):
+        branch_rows = [row for row in rows if row.get("hot_start_branch") == branch]
+        branch_summary[branch] = {
+            "n_rows": len(branch_rows),
+            "success_rate": _success_rate(branch_rows),
+            "training_signal": _training_signal_summary(branch_rows),
+            "selected_skill_ids": sorted(
+                {
+                    str(row["hot_start_parent_skill_id"])
+                    for row in branch_rows
+                    if row.get("hot_start_parent_skill_id")
+                }
+            ),
+            "outputs": [
+                {
+                    "pair_id": row.get("hot_start_pair_id"),
+                    "topology": row.get("Topology"),
+                    "provenance": row.get("provenance"),
+                    "program_validity": row.get("program_validity"),
+                    "parent_skill_id": row.get("hot_start_parent_skill_id"),
+                }
+                for row in branch_rows
+            ],
+            "cost": _runtime_cost_summary(branch_rows),
+        }
+    return rows, {
+        "enabled": True,
+        "innovation_mode": innovation_mode,
+        "n_pairs_requested": len(tasks),
+        "n_rows": len(rows),
+        "branches": branch_summary,
+        "cost": _runtime_cost_summary(rows),
+        "python_context_note": (
+            "Python architect remains SkillBank-blind; innovation is independent "
+            "after replay source removal."
+            if innovation_mode == "python_generate"
+            else None
+        ),
+    }
+
+
 def _run_spec_on_instance(
     instance: BenchmarkInstance,
     cfg: RunConfig,
@@ -582,7 +2073,8 @@ def _run_spec_on_instance(
     llm_client: LLMClient,
 ) -> tuple[float, dict[str, Any]]:
     """Execute one instruction-bearing spec; return (EM, procedural feedback)."""
-    task_adapter = _protocol_adapter(instance)
+    goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
+    task_adapter = _protocol_adapter(instance, information_goal=goal)
     global_task = task_adapter.build_global_task()
     n_agents = cfg.n_agents or instance.n_agents
     config = ProtocolRunnerConfig(
@@ -602,6 +2094,14 @@ def _run_spec_on_instance(
         global_task=global_task, llm_client=llm_client,
     ).run()
     row = summary_to_aggregate_row(result.to_summary_dict())
+    _apply_information_goal_score(
+        row,
+        result=result,
+        instance=instance,
+        task_adapter=task_adapter,
+        global_task=global_task,
+        information_goal=goal,
+    )
     em = float(row.get("ExactMatchRate", 0.0))
     n_wrong = round((1.0 - em) * n_agents)
     feedback = {
@@ -777,7 +2277,12 @@ def _exemplar_phase(
     The deployment view surfaces it; the rewrite prompt anchors on it.
     Train-time only -- zero test leakage.
     """
-    budget = int(getattr(cfg, "exemplar_search_budget", 0))
+    budget_raw = os.environ.get("MASBENCH_EXEMPLAR_BUDGET", "").strip()
+    budget = (
+        int(budget_raw)
+        if budget_raw
+        else int(getattr(cfg, "exemplar_search_budget", 0))
+    )
     if budget <= 0:
         return [], 0
     traces: list[dict[str, Any]] = []
@@ -819,7 +2324,7 @@ def _exemplar_phase(
             )
             if real is None or real.organization_policy is None:
                 continue
-            spec_data = real.organization_policy.get("protocol_spec")
+            spec_data = protocol_spec_from_skill(real)
             if not isinstance(spec_data, dict) or not spec_data.get("steps"):
                 continue
             try:
@@ -1156,6 +2661,102 @@ def _filter_misfired_avoids(
     return [patch for patch in patches if keep(patch)]
 
 
+def _paired_skill_ablation(
+    patches: list[SkillPatch],
+    train_rows: list[dict[str, Any]],
+    *,
+    strict: bool,
+) -> tuple[list[SkillPatch], list[dict[str, Any]]]:
+    """Measure each proposed skill against alternatives on identical pairs.
+
+    This consumes already-paid training rows: for each `(case, seed, n, goal)`
+    it compares the candidate topology's dense loss with the best other measured
+    topology. The result is persisted on the card. Strict mode rejects only a
+    measured candidate with more losses than wins; ties and insufficient evidence
+    remain visible but are not mislabelled as improvement.
+    """
+    grouped: dict[tuple[Any, ...], dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in train_rows:
+        key = (
+            row.get("case_id"),
+            row.get("seed"),
+            row.get("Agents"),
+            row.get("information_goal"),
+        )
+        grouped[key][_ablation_identity_from_row(row)].append(_row_loss(row))
+
+    kept: list[SkillPatch] = []
+    reports: list[dict[str, Any]] = []
+    for patch in patches:
+        skill = patch.candidate_skill
+        if skill is None or _is_avoid_patch(patch):
+            kept.append(patch)
+            continue
+        topology = str(skill.topology_name or "")
+        candidate_identity = _ablation_identity_from_skill(skill)
+        deltas: list[float] = []
+        for by_topology in grouped.values():
+            own = by_topology.get(candidate_identity)
+            alternatives = [
+                loss
+                for other, losses in by_topology.items()
+                if other != candidate_identity
+                for loss in [sum(losses) / len(losses)]
+            ]
+            if own and alternatives:
+                deltas.append((sum(own) / len(own)) - min(alternatives))
+        wins = sum(delta < -1e-12 for delta in deltas)
+        losses = sum(delta > 1e-12 for delta in deltas)
+        ties = len(deltas) - wins - losses
+        accepted = not deltas or not strict or losses <= wins
+        status = (
+            "insufficient_evidence"
+            if not deltas
+            else "rejected"
+            if not accepted
+            else "accepted_improved"
+            if wins > losses
+            else "accepted_no_change"
+        )
+        report = {
+            "skill_id": skill.skill_id,
+            "topology_name": topology,
+            "n_pairs": len(deltas),
+            "wins": wins,
+            "losses": losses,
+            "ties": ties,
+            "mean_delta_loss": (
+                sum(deltas) / len(deltas) if deltas else None
+            ),
+            "strict": strict,
+            "status": status,
+        }
+        confidence = dict(skill.confidence)
+        confidence["paired_ablation"] = report
+        patch.candidate_skill = skill.model_copy(
+            update={"confidence": confidence}
+        )
+        reports.append(report)
+        if accepted:
+            kept.append(patch)
+    return kept, reports
+
+
+def _ablation_identity_from_row(row: dict[str, Any]) -> str:
+    if row.get("planner_mode") == "python_generate" and row.get("program_sha256"):
+        return f"python:{row['program_sha256']}"
+    return str(row.get("Topology", ""))
+
+
+def _ablation_identity_from_skill(skill: SkillCard) -> str:
+    digest = program_sha256_from_skill(skill)
+    if planner_mode_from_skill(skill) == "python_generate" and digest:
+        return f"python:{digest}"
+    return str(skill.topology_name or "")
+
+
 def _split_train_val(
     instances: list[BenchmarkInstance],
     *,
@@ -1207,11 +2808,72 @@ def _split_train_val(
     return train, val
 
 
+def _curriculum_train_instances(
+    instances: list[BenchmarkInstance],
+    cfg: RunConfig,
+) -> tuple[list[BenchmarkInstance], dict[str, Any]]:
+    """Grow examples within every available level while keeping levels present."""
+    enabled = bool(getattr(cfg, "curriculum_enabled", False))
+    current = max(1, int(getattr(cfg, "curriculum_round", 1) or 1))
+    total = max(current, int(getattr(cfg, "curriculum_total_rounds", 1) or 1))
+    if not enabled or total <= 1:
+        return instances, {
+            "enabled": enabled,
+            "round": current,
+            "total_rounds": total,
+            "selected_cases": [inst.case_id for inst in instances],
+        }
+    fraction = min(1.0, current / total)
+    groups: dict[str, list[BenchmarkInstance]] = defaultdict(list)
+    for inst in instances:
+        level = str(inst.case_id).split("-", 1)[0]
+        groups[level].append(inst)
+    selected: list[BenchmarkInstance] = []
+    for _level, members in sorted(groups.items()):
+        ordered = sorted(members, key=lambda inst: (inst.n_agents, inst.case_id))
+        count = max(1, math.ceil(len(ordered) * fraction))
+        selected.extend(ordered[:count])
+    selected.sort(key=lambda inst: (inst.case_id, inst.n_agents))
+    return selected, {
+        "enabled": True,
+        "round": current,
+        "total_rounds": total,
+        "fraction": fraction,
+        "selected_cases": [inst.case_id for inst in selected],
+        "available_cases": [inst.case_id for inst in instances],
+    }
+
+
 def _success_rate(rows: list[dict[str, Any]]) -> float:
     if not rows:
         return 0.0
     # ExactMatchRate is 1.0 for a solved single run, 0.0 otherwise.
     return sum(float(row.get("ExactMatchRate", 0.0)) for row in rows) / len(rows)
+
+
+def _training_signal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        stage = str(row.get("evolution_stage") or "unknown")
+        counts[stage] = counts.get(stage, 0) + 1
+
+    def mean(key: str) -> float:
+        return (
+            sum(float(row.get(key, 0.0) or 0.0) for row in rows) / len(rows)
+            if rows
+            else 0.0
+        )
+
+    return {
+        "n_rows": len(rows),
+        "stage_counts": counts,
+        "mean_V": mean("program_validity"),
+        "mean_K": mean("structural_coverage"),
+        "mean_U": mean("submission_rate"),
+        "mean_P": mean("evolution_partial"),
+        "mean_S": mean("evolution_success"),
+        "mean_stage_score": mean("evolution_stage_score"),
+    }
 
 
 def _incumbent_skill(topology: str, *, objective_name: str) -> SkillCard:
@@ -1438,6 +3100,11 @@ def run_evolution(
     train_instances, val_instances = _split_train_val(
         instances, bucket_of=_carve_bucket
     )
+    train_instances, curriculum = _curriculum_train_instances(
+        train_instances,
+        cfg,
+    )
+    hot_start_settings = _resolve_hot_start_settings(cfg, instances)
 
     # The evolving (held-out) bank is the one the gate mutates. Optionally seed an
     # incumbent so the gate has a concrete starting selection to improve on.
@@ -1459,6 +3126,30 @@ def run_evolution(
             )
         )
 
+    hot_start_rows: list[dict[str, Any]] = []
+    hot_start_pretraining: dict[str, Any] = {
+        **hot_start_settings,
+        "status": "disabled",
+        "n_pretrain_rows": 0,
+        "n_fixed_rows": 0,
+        "n_protocol_rows": 0,
+        "seeded_skill_ids": [],
+        "cost": _runtime_cost_summary([]),
+        "paired_ablation": [],
+    }
+    if hot_start_settings["enabled"]:
+        hot_start_rows, hot_start_pretraining = _seed_hot_start_bank(
+            train_instances,
+            cfg,
+            settings=hot_start_settings,
+            train_seeds=train_seeds,
+            skill_bank=skill_bank,
+            llm_client=client,
+            workers=workers,
+            progress=progress,
+            batch_id=batch_id,
+        )
+
     train_rows = _collect_rows(
         train_instances,
         cfg,
@@ -1469,6 +3160,29 @@ def run_evolution(
         progress=progress,
         phase=f"n={cfg.n_agents} train",
     )
+    if hot_start_rows:
+        train_rows = [*hot_start_rows, *train_rows]
+
+    hot_start_dual_rows: list[dict[str, Any]] = []
+    hot_start_dual: dict[str, Any] = {
+        "enabled": False,
+        "innovation_mode": hot_start_settings.get("innovation_mode"),
+        "branches": {},
+        "cost": _runtime_cost_summary([]),
+    }
+    if hot_start_settings["enabled"]:
+        hot_start_dual_rows, hot_start_dual = _collect_hot_start_dual_rows(
+            train_instances,
+            cfg,
+            settings=hot_start_settings,
+            objective=objective,
+            skill_bank=skill_bank,
+            seeds=train_seeds,
+            llm_client=client,
+            workers=workers,
+            progress=progress,
+        )
+        train_rows = [*train_rows, *hot_start_dual_rows]
     # M3 portfolio: explicitly-named topologies the objective-variant detour
     # never measures (chain by default), so sequential-paradigm champions can
     # be learned when train contains order-sensitive cases.
@@ -1508,9 +3222,30 @@ def run_evolution(
     # therefore STATIC (cold evidence cache-hits every round, recipes only on
     # unanchored slots) and its rounds-curve provably flat (dev-7: 25.0 x3,
     # bank 10->10->10). Both generation-deploying modes now explore.
-    if cfg.evolved_mode in ("select_then_refine", "graph_generate") and explore_n > 0:
+    if cfg.evolved_mode in (
+        "select_then_refine",
+        "graph_generate",
+        "program_generate",
+        "python_generate",
+    ) and explore_n > 0 and not (
+        hot_start_settings["enabled"] and hot_start_settings["dual_branch"]
+    ):
+        explore_mode = (
+            cfg.evolved_mode
+            if cfg.evolved_mode in {
+                "graph_generate",
+                "program_generate",
+                "python_generate",
+            }
+            else "graph_generate"
+        )
         explore_cfg = replace(
-            cfg, planner_mode="graph_generate", graph_gen_temperature=0.7
+            cfg,
+            planner_mode=explore_mode,
+            graph_gen_temperature=0.7,
+            python_gen_temperature=(
+                0.7 if explore_mode == "python_generate" else cfg.python_gen_temperature
+            ),
         )
         # Exploration must produce NEW designs: with executable specs in the
         # bank, seeded replay candidates fill every generation slot and
@@ -1524,6 +3259,9 @@ def run_evolution(
         for skill in explore_bank:
             if isinstance((skill.organization_policy or {}).get("protocol_spec"), dict):
                 skill.organization_policy["protocol_spec"] = None
+            if explore_mode == "python_generate":
+                skill.organization_policy.pop("source_code", None)
+            skill.mode_payload = None
         explore_tasks = [
             (inst, seed)
             for inst in train_instances
@@ -1557,7 +3295,8 @@ def run_evolution(
     # consumer of val evidence rows besides optional insight falsification --
     # is inactive there, so collecting val evidence would be pure spend.
     deploys_generation_mode = (
-        cfg.planner_mode == "graph_generate"
+        cfg.planner_mode
+        in {"graph_generate", "program_generate", "python_generate"}
         or cfg.evolved_mode == "select_then_refine"
     )
     needs_val_rows = (not deploys_generation_mode) or cfg.use_llm_insights
@@ -1613,6 +3352,11 @@ def run_evolution(
     # per-case rows (best=0 -> everything "dominated") and advertises avoid
     # skills for EVERY topology. Require a real mean-loss gap instead.
     patches = _filter_misfired_avoids(patches, train_rows)
+    patches, skill_ablation = _paired_skill_ablation(
+        patches,
+        train_rows,
+        strict=bool(getattr(cfg, "skill_ablation_strict", False)),
+    )
 
     # Held-out gate mode: "auto" gates on the DEPLOYED objective (generation loss
     # when the evolved state will GENERATE at eval, selection J otherwise);
@@ -1629,7 +3373,9 @@ def run_evolution(
     # seeded incumbent, which exists only for selection-gate measurement.
     pre_transfer_ledgers = snapshot_transfer_evidence(skill_bank)
     incumbent_bank = (
-        SkillBank(skills=[SkillCard.model_validate(s) for s in initial_skills])
+        SkillBank(skills=[SkillCard.model_validate(s) for s in pre_skills])
+        if hot_start_settings["enabled"]
+        else SkillBank(skills=[SkillCard.model_validate(s) for s in initial_skills])
         if initial_skills
         else None
     )
@@ -1642,7 +3388,8 @@ def run_evolution(
     # (phase-2 explore rows made this bind). Selection-deploying mode keeps the
     # selection gate.
     deploys_generation = (
-        cfg.planner_mode == "graph_generate"
+        cfg.planner_mode
+        in {"graph_generate", "program_generate", "python_generate"}
         or cfg.evolved_mode == "select_then_refine"
     )
     selection_gate_active = gate_mode != "off" and not deploys_generation
@@ -1675,18 +3422,24 @@ def run_evolution(
     # verified recipe (structure + per-step instructions) against the train
     # signal; verified recipes enter the bank trusted (their ledger rows are
     # their verification runs) and the gate below vets the whole state.
-    recipe_traces, n_recipe_runs = _recipe_search_phase(
-        train_instances, cfg, skill_bank=skill_bank,
-        train_seeds=train_seeds, llm_client=client,
-    )
+    if cfg.planner_mode == "python_generate":
+        recipe_traces, n_recipe_runs = [], 0
+    else:
+        recipe_traces, n_recipe_runs = _recipe_search_phase(
+            train_instances, cfg, skill_bank=skill_bank,
+            train_seeds=train_seeds, llm_client=client,
+        )
     # M20: train-verify an instruction EXEMPLAR for the bucket champion so
     # deploy-time Modify rewrites anchor on a proven style instead of
     # re-rolling per deployment (instruction-draw variance was the gen-vs-
     # select instability: 6-7 distinct sets per 8 seeds, EM tracked the draw).
-    exemplar_traces, n_exemplar_runs = _exemplar_phase(
-        train_instances, cfg, skill_bank=skill_bank,
-        train_seeds=train_seeds, llm_client=client,
-    )
+    if cfg.planner_mode == "python_generate":
+        exemplar_traces, n_exemplar_runs = [], 0
+    else:
+        exemplar_traces, n_exemplar_runs = _exemplar_phase(
+            train_instances, cfg, skill_bank=skill_bank,
+            train_seeds=train_seeds, llm_client=client,
+        )
     size_after = len(skill_bank)
 
     # Post-evolution selection probe: run the knob-on planner against the (now
@@ -1730,8 +3483,17 @@ def run_evolution(
             else {**selection_gate, "accepted": True, "mode": "off"}
         )
     elif deploys_generation:
+        gate_planner_mode = next(
+            (
+                mode
+                for mode in (cfg.evolved_mode, cfg.planner_mode)
+                if mode
+                in {"graph_generate", "program_generate", "python_generate"}
+            ),
+            "graph_generate",
+        )
         gate_info = _generation_gate(
-            val_instances, replace(cfg, planner_mode="graph_generate"),
+            val_instances, replace(cfg, planner_mode=gate_planner_mode),
             val_seeds=val_seeds, llm_client=client,
             evolved_bank=skill_bank, motif_stats=motif_stats, epsilon=epsilon,
             objective=objective, incumbent_bank=incumbent_bank, workers=workers,
@@ -1744,16 +3506,51 @@ def run_evolution(
     # REJECTED state must be withheld HERE: export the pre-evolution state and
     # keep the rejected ids for diagnostics.
     gate_accepted = bool(gate_info.get("accepted"))
-    exported_skills = [skill.model_dump(mode="json") for skill in skill_bank]
+    candidate_skills = [skill.model_dump(mode="json") for skill in skill_bank]
+    exported_skills = list(candidate_skills)
     exported_motif = motif_stats
     rejected_skill_ids: list[str] = []
     if not gate_accepted:
         rejected_skill_ids = sorted(skill.skill_id for skill in skill_bank)
         exported_skills = pre_skills
         exported_motif = {}
+    innovation_topologies = {
+        str(row.get("Topology"))
+        for row in hot_start_dual_rows
+        if row.get("hot_start_branch") == "innovation" and row.get("Topology")
+    }
+    pre_skill_ids = {str(skill.get("skill_id")) for skill in pre_skills}
+    hot_start_innovation_candidates = sorted(
+        str(skill.get("skill_id"))
+        for skill in candidate_skills
+        if str((skill.get("organization_policy") or {}).get("topology_name"))
+        in innovation_topologies
+    )
+    hot_start_new_candidate_ids = sorted(
+        skill_id
+        for skill_id in hot_start_innovation_candidates
+        if skill_id not in pre_skill_ids
+    )
+    deployed_ids = {str(skill.get("skill_id")) for skill in exported_skills}
+    # 中文：gate 必须使用相同 information_goal 的 VAL 数据——混模式行违反隔离不变式。
+    # The gate must judge on SAME-goal validation rows; mixed-mode rows violate
+    # the isolation invariant.
+    _run_goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
+    _mixed = {
+        str(r.get("information_goal"))
+        for r in [*train_rows, *val_rows]
+        if r.get("information_goal")
+    } - {_run_goal}
+    if _mixed:
+        raise ValueError(
+            f"run_evolution collected rows for goals {sorted(_mixed)} while "
+            f"running goal {_run_goal!r}; sink/all_agents evidence must not mix"
+        )
     summary = {
         "benchmark": cfg.benchmark,
         "objective": cfg.objective,
+        "information_goal": _run_goal,
+        "clean_run": not bool(hot_start_settings["enabled"]),
         "config": asdict(cfg),
         "objective_knobs": {
             "uncertainty_weight": objective.uncertainty_weight,
@@ -1764,16 +3561,35 @@ def run_evolution(
         },
         "train_cases": [inst.case_id for inst in train_instances],
         "val_cases": [inst.case_id for inst in val_instances],
+        "curriculum": curriculum,
         "n_train_rows": len(train_rows),
         "n_val_rows": len(val_rows),
         "n_val_rows_real": len(val_rows_real),
         "n_synthetic_held_out_rows": len(held_out_rows or []),
         "train_success_rate": _success_rate(train_rows),
         "val_success_rate": _success_rate(val_rows_real),
+        "training_signal": _training_signal_summary(train_rows),
         "n_patches": len(patches),
+        "skill_ablation": skill_ablation,
         "n_insight_patches": n_insight_patches,
         "n_explore_rows": n_explore_rows,
         "n_portfolio_rows": n_portfolio_rows,
+        "hot_start": {
+            "enabled": bool(hot_start_settings["enabled"]),
+            "settings": hot_start_settings,
+            "pretraining": hot_start_pretraining,
+            "dual_branch": hot_start_dual,
+            "innovation_candidate_skill_ids": hot_start_innovation_candidates,
+            "new_candidate_skill_ids": hot_start_new_candidate_ids,
+            "deployed_innovation_skill_ids": sorted(
+                skill_id
+                for skill_id in hot_start_innovation_candidates
+                if skill_id in deployed_ids
+            ),
+            "total_extra_cost": _runtime_cost_summary(
+                [*hot_start_rows, *hot_start_dual_rows]
+            ),
+        },
         "n_merged_duplicates": n_merged_duplicates,
         "n_recipe_runs": n_recipe_runs,
         "recipe_traces": recipe_traces,
@@ -1787,6 +3603,20 @@ def run_evolution(
         "skill_bank_mutated": gate_accepted,
         "skill_ids_after": sorted(skill.skill_id for skill in skill_bank),
         "rejected_skill_ids": rejected_skill_ids,
+        # Full audit snapshots. ``candidate`` preserves the proposed bank even
+        # when the held-out gate rejects it; ``deployed`` is exactly what every
+        # evaluator is allowed to rebuild and use. Keeping all three prevents a
+        # rejected update from disappearing from the scientific record without
+        # confusing it with the accepted policy.
+        "skill_bank_snapshots": {
+            "before": pre_skills,
+            "candidate": candidate_skills,
+            "deployed": exported_skills,
+        },
+        "skill_payload_audit": {
+            "candidate": _skill_payload_audit(candidate_skills),
+            "deployed": _skill_payload_audit(exported_skills),
+        },
         # Serialized evolved skills so the eval can rebuild the bank across the
         # cache/parallel boundary and feed it to graph generation (evolved_mode=
         # graph_generate -> the emperor designs a DAG from these skills). On a

@@ -123,6 +123,17 @@ has no default `--api-key-env`/`--base-url`, so the OpenAI SDK's standard
 `OPENAI_API_KEY` + `api.openai.com` are used). Outputs land in `runs/paper/`:
 `results.json`, `results.csv`, `report.md`.
 
+For paired self-evolution verification, `scripts/verify_beats_baselines.py`
+also writes an auditable `skill_banks/` tree under `--out`. Its
+`manifest.json` indexes the shared empty control banks, every round's `before`,
+pre-gate `candidate`, and post-gate `deployed` banks, plus the exact final bank
+used for paired evaluation. Each non-empty snapshot is available both as one
+`bank.json` and as one YAML file per skill. A rejected candidate is therefore
+preserved for diagnosis without being mistaken for the deployed policy.
+Cross-level evaluations can use explicit, disjoint `--train-cases` and
+`--test-cases`; both lists are recorded with `split_mode: explicit` in the
+report, avoiding any dependence on the default lexicographic holdout rule.
+
 Offline smoke (wiring check only, no keys, no cost — see the caveats below for why
 the offline numbers are not discriminative):
 
@@ -134,6 +145,111 @@ uv run python -m masbench.cli bench --benchmark silo_bench \
   --arms fixed select graphgen --fixed-topologies tree chain \
   --llm fake --objective accuracy_first --out runs/bench_smoke
 ```
+
+## Optional evolution hot start
+
+`run_evolution` remains cold-start by default. `--hot-start` adds a measured
+pretraining stage and a paired improve/expand stage:
+
+1. Pretraining executes supplied fixed topologies on TRAIN. In `all_agents`
+   mode it can also execute the paper's dynamic `p2p`, `broadcast`, and `sfs`
+   transports. Fixed cards retain an executable `protocol_spec`; dynamic cards
+   are tagged `reference-only`, so they can inform generation but can never be
+   selected as a static topology.
+2. Every `(case, seed)` then runs two paid branches. `reuse` pins one parent
+   Skill and dispatches through that Skill's own planner mode. `innovation`
+   retains the parent's lessons/reasoning but removes `protocol_spec` or Python
+   source, forcing a fresh candidate. Generic `evolve_explore` is skipped while
+   this paired branch is active, avoiding a duplicate novelty run.
+3. Pretraining is paid once. Later rounds detect persisted `hot-start` tags and
+   reuse the seed bank, while still rerunning both per-task branches. A gate
+   rejection rolls back to the warm bank, not to an empty bank.
+
+Goal-aware `auto` defaults are intentionally different:
+
+- `all_agents` starts from exactly five primary Skills: dynamic `p2p`,
+  `broadcast`, and `sfs`, plus `one_peer_exponential_dag` (the propagation
+  phases without a final star sink) and `static_exponential`. Both fixed graphs
+  have statically verified all-agent source coverage.
+- `sink` uses gathering organizations instead: `one_peer_exponential_dag_star`,
+  `mesh_star`, `star`, `chain`, `tree`, `two_stage_layer`, and
+  `balanced_log_layer`; paper transports are not auto-added.
+
+Explicit paper transports in sink mode fail fast. Hot-start portfolio members
+also retain their protocol-family identity during structural deduplication: two
+programs that happen to expand to the same graph at `n=2` are not the same
+scaling Skill.
+
+Each hot-start Skill stores all three learning layers:
+
+- **code:** the canonical executable artifact lives in the discriminated
+  `mode_payload`. Fixed graphs use `named_topology_skill_v1`; paper transports
+  use `paper_transport_skill_v1` and their dedicated dynamic runner instead of
+  pretending to be a static graph. `organization_policy` is only a legacy/index
+  mirror during migration.
+- **insight:** `design_insights` records an observed design principle and its
+  evidence summary; `reasoning_policy` records transport/merge/submission rules.
+- **evidence:** `evidence` retains per-case/per-seed observations, while
+  `expected_dynamics.hot_start_evidence_summary` summarizes V/K/U/P/S. The
+  dynamic paper cards remain `reference-only` for the normal static planner but
+are directly executable by the hot-start reuse branch.
+
+### Mode-specific Skill payloads and iterative updates
+
+The SkillBank keeps one common audit envelope for evidence, insights, failures,
+triggers, tradeoffs, and revision history, but executable formats are not
+shared:
+
+| planner family | canonical payload format | executable source |
+| --- | --- | --- |
+| fixed named topology | `named_topology_skill_v1` | named constructor + compiled `ProtocolGraphSpec` |
+| SILO paper transport | `paper_transport_skill_v1` | dynamic runner descriptor |
+| GraphGen | `graph_skill_v1` | free topology program when present + compiled spec |
+| PhaseProgram | `phase_program_skill_v1` | complete `phase_program_v1` + compiled spec |
+| PythonGenerate | `python_skill_v1` | complete Python `source_code`, SHA-256, AST/runner contract |
+
+The discriminator prevents a Graph candidate from being merged into a Phase or
+Python card even if display names coincide. Legacy cards are adapted on read;
+new cards and subsequent snapshots persist the typed payload.
+
+Both direct `SkillBank.apply_patch` and batch consolidation iteratively update
+the full learning surface: executable payload, organization compatibility
+index, reasoning policy, trigger, tradeoff/dynamics, insight, evidence,
+counterexamples, failures/risks, hypotheses, fallback, confidence, validation
+plan, tags, and update rule. Nested dictionaries merge without deleting sibling
+knowledge. An executable or reasoning change bumps the minor version and writes
+before/after payload and program hashes to `revision_history`; round snapshots
+retain the complete prior source. Explicit `patch.update` fields take precedence
+over the candidate snapshot.
+
+Every evolution summary exposes
+`skill_payload_audit.{candidate,deployed}` with counts by payload format,
+payload-less generated-card violations, persisted Python source lengths/hashes,
+the iterative field list, and the deliberately immutable identity fields.
+
+```bash
+uv run python -m masbench.cli evolve --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --levels II III --agent-counts 5 --train-seeds 1 2 --val-seeds 3 \
+  --silo-eval-mode all_agents --planner-mode graph_generate \
+  --hot-start --hot-start-protocols auto --hot-start-topologies auto \
+  --hot-start-seed-count 1 --hot-start-innovation-mode graph_generate \
+  --llm openai --model-name gpt-4o-mini --out runs/hot_start
+```
+
+Audit data is under `summary.json["hot_start"]`: resolved settings, seed Skill
+ids, pretraining and branch V/K/U/P/S signals, branch outputs, calls,
+tokens/messages, innovation candidate ids, and deployed innovation ids. The same
+flags are available in `scripts/verify_beats_baselines.py`; its budget guard
+includes the extra runs and its snapshots preserve the warm seed.
+
+**Contamination boundary:** hot start deliberately supplies fixed/paper
+structural knowledge, so it is not clean GraphGen. The verifier writes
+`clean_run=false`; generated records write `clean_graphgen=false` (or
+`clean_programgen=false`). Structural reference names alone are narrowly allowed
+by the prompt audit, while answer/expected-output/ground-truth tokens remain
+forbidden. A hot-start result cannot support a claim that GraphGen discovered a
+paper topology without prior structural information.
 
 ## Honest caveats
 
@@ -228,3 +344,27 @@ paper command; if it dies, re-run the identical command with `--resume`.
   effect on truly *generated* DAGs is an activation that surfaces with a real LLM.
 - **Not wired:** additional benchmarks (REALM-Bench / M-APPLE-OS) and
   `std_primary_loss` evidence recording — see caveats 6 and 7.
+
+## Contamination notice (2026-07-11): pre-leakage-fix results
+
+> **热警告 / Contamination warning.** 本文件上方的既有结论与所有早于
+> 2026-07-11 泄漏修复的实验产物（包括
+> `runs/graphgen_vs_fixed_mixed_train.41DNFR` 及此前一切 bench/evolve/verify
+> 运行）在以下已修复缺陷下产生，一律标记为 **contaminated**，不得用于新的
+> 科学结论（保留仅供历史审计，不删除、不改写）：
+>
+> 1. **答案泄漏**：`meta.expected_outputs` 经 `TASK_CONTEXT_JSON` 进入模型可见
+>    上下文（顶层黑名单挡不住嵌套字段）。
+> 2. **拓扑泄漏**：Silo `task_description` 的 “Communication Protocol” 小节
+>    （含标注拓扑）与 `metadata.optimal_topology/optimal_message_count/`
+>    `theoretical_complexity` 均可达模型上下文。
+> 3. **指数图注入**：graphgen 架构师提示词的 `required_json_shape` 示例含
+>    `distance-doubling` / `pow2(r)` / `ceil_log2` 可复制公式。
+> 4. **fallback 污染**：graphgen 失败会静默回退到具名拓扑
+>    （accuracy_first 默认 `one_peer_exponential_dag_star`）并计入 graphgen 臂。
+> 5. **审计缺失**：架构师调用产物写入 `TemporaryDirectory` 后即删除。
+>
+> 自本日期起，`results.json` / verify 报告携带 `silo_eval_mode` 与
+> `clean_run` 字段；缺这两个字段的产物即属 contaminated 世代。旧 SkillBank
+> 卡片缺 `provenance`，被 clean GraphGen 检索一律排除（文件保留）。
+> 详见 `docs/leakage_and_eval_modes.md`。

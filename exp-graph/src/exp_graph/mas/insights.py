@@ -1,5 +1,13 @@
 """LLM post-run insight generation and insight-to-skill patch mapping."""
 
+# ============================================================
+# 【模块导读】运行后的 LLM 设计洞见(insight)生成，以及洞见→技能补丁的映射。
+# - 可选路径：仅在 --use-llm-insights 打开时启用。
+# - 主链路：build_evidence_pack 压缩证据 → LLMInsightMinister 产出洞见报告
+#   → verify_insight_report 规则校验 → falsify_insights 留出集证伪
+#   → insight_report_to_patches 转成技能补丁候选。
+# - 注意：本文件 JSON 负载/字符串里的英文是发给 LLM 的运行时提示词，不可改动。
+# ============================================================
 from __future__ import annotations
 
 import json
@@ -29,6 +37,7 @@ from exp_graph.mas.schemas import (
 from exp_graph.mas.skill_bank import SkillBank
 
 
+# 【职责】把证据压缩成提示词尺寸的 MAS 设计摘要(按拓扑汇总指标/动态/条件范围/结构特征)。
 def build_evidence_pack(
     *,
     records: list[EvidenceRecord],
@@ -67,6 +76,8 @@ def build_evidence_pack(
     }
 
 
+# 【职责】LLM 洞见大臣：执行结束后生成"以证据为依据"的 MAS 设计洞见报告。
+# - fake 平台走确定性报告；真实 LLM 失败时降级为只含一条被拒记录的报告。
 class LLMInsightMinister:
     """Generate evidence-grounded MAS design insights after execution."""
 
@@ -121,6 +132,7 @@ class LLMInsightMinister:
             )
 
 
+# 【职责】构建"只返回 JSON"的运行后洞见提取提示词(其中英文均为运行时提示词，勿改)。
 def build_insight_prompt(*, evidence_pack: dict[str, Any]) -> str:
     """Build a JSON-only prompt for post-run MAS insight extraction."""
     payload = {
@@ -211,6 +223,7 @@ def build_insight_prompt(*, evidence_pack: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
 
 
+# 【职责】规则校验：洞见成为补丁候选前——缺证据引用即拒；单证据且非假设的降级为假设。
 def verify_insight_report(report: InsightReport) -> InsightReport:
     """Rule-check insights before they become patch candidates."""
     accepted: list[MASInsight] = []
@@ -241,6 +254,9 @@ def verify_insight_report(report: InsightReport) -> InsightReport:
     )
 
 
+# 【职责】把已校验洞见转为"不直接写库"的补丁候选。
+# - require_verified 默认 False，行为逐字节不变：每条非 rejected 且有更新内容的洞见都产补丁。
+# - 为 True(--evolve 证伪后路径)时，仅 claim_status=="observed"(留出集证伪通过)的洞见产补丁。
 def insight_report_to_patches(
     report: InsightReport,
     *,
@@ -284,6 +300,8 @@ def insight_report_to_patches(
     return patches
 
 
+# 中文：这些操作 action_type 断言某拓扑是"好"(规划器应保留/选它)或"坏"(应弃用)。
+#   mutate 与 validate 不作损失断言，只带这两类操作的洞见视为无可检验极性。
 # Operation ``action_type`` values that assert a topology is *good* (planner
 # should keep/choose it) versus *bad* (planner should drop it). ``mutate`` and
 # ``validate`` make no loss claim, so an insight carrying only those is treated
@@ -291,6 +309,8 @@ def insight_report_to_patches(
 _PREFER_ACTIONS: frozenset[str] = frozenset({"preserve", "prefer"})
 _AVOID_ACTIONS: frozenset[str] = frozenset({"avoid"})
 
+# 中文：越高越好的聚合指标名，比较前必须换算成统一的"越低越好"损失。
+#   与 objective_metrics 保持一致，使成功率类基准也能正确证伪。
 # Higher-is-better aggregate metric names that must be converted to a uniform
 # lower-is-better loss before comparison. Mirrors objective_metrics so a
 # success-rate benchmark falsifies correctly.
@@ -301,6 +321,8 @@ _HIGHER_IS_BETTER_ROW_KEYS: tuple[str, ...] = (
     "exact_match_rate",
     "mean_partial",
 )
+# 中文：越低越好的损失列，按序尝试。mean_rmse 是跨种子聚合列；
+#   final_rmse/rmse/loss 覆盖单次运行与本身已是损失的行。
 # Lower-is-better loss columns, tried in order. ``mean_rmse`` is the cross-seed
 # aggregate column; ``final_rmse``/``rmse``/``loss`` cover single-run and
 # already-loss rows.
@@ -313,6 +335,10 @@ _LOWER_IS_BETTER_ROW_KEYS: tuple[str, ...] = (
 )
 
 
+# 【职责】留出集证伪：LLM 洞见成为补丁前，用留出聚合行检验其可证伪的拓扑断言。
+# - 断言"好"(preserve/prefer)成立当且仅当该拓扑在其条件内的损失 <= 同条件行的中位损失。
+# - 断言"坏"(avoid)成立当且仅当其损失 >= 中位。通过→observed；被反驳→rejected 并记为反例。
+# - 提取不出断言或缺相关行→保持 hypothesis(不可验证)；纯增量：默认流水线不调用则行为不变。
 def falsify_insights(
     report: InsightReport,
     held_out_rows: list[dict[str, Any]],
@@ -358,6 +384,7 @@ def falsify_insights(
     )
 
 
+# 【职责】证伪单条洞见：返回 observed/rejected/hypothesis；None 表示无可检断言、保持原状。
 def _falsify_one(
     insight: MASInsight,
     held_out_rows: list[dict[str, Any]],
@@ -394,6 +421,9 @@ def _falsify_one(
     return "observed" if verified else "rejected"
 
 
+# 【职责】尽力从洞见提取(拓扑, 极性, 条件)三元组；识别不出拓扑则返回 None。
+# - 拓扑依次取自：操作建议的 topology_name→受影响技能 id 反查→标题首词。
+# - 极性取自操作 action_type(preserve/prefer=好, avoid=坏)；有拓扑无极性时默认"好"。
 def _extract_topology_claim(
     insight: MASInsight,
 ) -> tuple[str, str, dict[str, Any]] | None:
@@ -459,6 +489,8 @@ def _topology_from_skills(affected_skills: list[str]) -> str | None:
     return None
 
 
+# 中文：classify_topology 赋予这些稳定技能 id；此处做反查，
+#   让只携带 affected_skills 的洞见仍可被检验。
 # classify_topology assigns these stable skill ids; invert them so an insight
 # that only carries ``affected_skills`` is still checkable.
 _SKILL_ID_TOPOLOGY: dict[str, str] = {
@@ -497,6 +529,7 @@ def _condition_from_insight(insight: MASInsight) -> dict[str, Any]:
     return {}
 
 
+# 【职责】按洞见的条件桶(agent/数组规模范围)筛选留出行；无条件则全部行在范围内。
 def _rows_in_condition(
     rows: list[dict[str, Any]],
     condition: dict[str, Any],
@@ -542,6 +575,7 @@ def _row_topology_matches(row: dict[str, Any], topology: str) -> bool:
     return str(row.get("topology_name", "")) == topology
 
 
+# 【职责】把一行留出聚合行归一为"越低越好"的损失：优先低优列，否则换算首个高优列。
 def _row_loss(row: dict[str, Any]) -> float | None:
     """Uniform lower-is-better loss for one held-out aggregate row.
 
@@ -572,6 +606,7 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+# 【职责】fake 平台的确定性洞见报告：按拓扑生成"权衡"与"风险边界"两类洞见。
 def _deterministic_insight_report(
     evidence_pack: dict[str, Any],
     skill_bank: SkillBank,
@@ -676,6 +711,7 @@ def _deterministic_insight_report(
     )
 
 
+# 【职责】按洞见类型映射为技能卡字段更新(理由规则/动态/风险注记/假设/验证计划等)。
 def _insight_update(insight: MASInsight) -> dict[str, object]:
     update: dict[str, object]
     if insight.insight_type in {"design_principle", "tradeoff"}:
@@ -835,6 +871,7 @@ def _record_prompt_rows(rows: list[EvidenceRecord]) -> list[dict[str, object]]:
     ]
 
 
+# 【职责】返回确定性、提示词尺寸的已执行拓扑结构集合：必含最好与最坏，按哈希序补齐至上限。
 def topology_structures_from_records(
     rows: list[EvidenceRecord],
     *,

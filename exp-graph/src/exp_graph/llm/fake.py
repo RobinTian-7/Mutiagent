@@ -1,4 +1,11 @@
 """Deterministic fake LLM client for tests and offline smoke runs."""
+# ============================================================
+# 【模块导读】面向测试与离线冒烟运行的离线假客户端(确定性、零成本)。
+# 从提示词中按标记(LOCAL_OBSERVATION_JSON: 等)截取 JSON 块，本地规则求解，不调用任何模型：
+# - count_frequency 任务：合并各来源的部分计数(可结合归约)，覆盖全部智能体后给出最终答案；
+# - 其余任务按数组搜索处理：在本地分片查找目标，或传播旧信念/收件箱中的 FOUND 证据。
+# 提示词缺少预期标记或 JSON 非法时直接抛错(ValueError 等)，不做静默兜底。
+# ============================================================
 
 from __future__ import annotations
 
@@ -19,15 +26,22 @@ from exp_graph.tasks.count_frequency import (
 )
 
 
+# 【职责】离线假客户端(确定性、零成本)：面向离线拓扑与运行器冒烟测试。
 class FakeLLMClient:
     """A deterministic client for offline topology and runner smoke tests."""
 
+    # 【职责】从提示中截取本地观测/旧信念状态/收件箱三段 JSON，规则求解并返回信念 JSON。
+    # - task_name == "count_frequency" 走计数合并求解，否则走数组搜索求解。
+    # - 用量(token 计数)以 estimate_tokens 估算填充。
     def complete(
         self,
         prompt: str,
         model_name: str,
         temperature: float | None = None,
+        json_mode: bool = True,
     ) -> LLMResponse:
+        # json_mode is accepted for interface parity; this deterministic fake
+        # always returns a JSON belief object regardless of the flag.
         local_observation = _extract_first_json_block(
             prompt,
             [
@@ -61,6 +75,8 @@ class FakeLLMClient:
         )
 
 
+# 【职责】截取 start_marker 与 end_marker 之间的文本并按 JSON 解析。
+# - end_marker 为 None 时取到提示末尾；标记不存在时 index 抛 ValueError。
 def _extract_json_block(prompt: str, start_marker: str, end_marker: str | None) -> Any:
     start = prompt.index(start_marker) + len(start_marker)
     if end_marker is None:
@@ -71,6 +87,8 @@ def _extract_json_block(prompt: str, start_marker: str, end_marker: str | None) 
     return json.loads(raw)
 
 
+# 【职责】按(起始, 结束)标记对依次尝试，返回第一个命中的 JSON 块。
+# - 所有标记都不存在时抛 ValueError：无法解析的提示显式失败，不静默兜底。
 def _extract_first_json_block(
     prompt: str,
     marker_pairs: list[tuple[str, str | None]],
@@ -81,6 +99,10 @@ def _extract_first_json_block(
     raise ValueError(f"none of the markers were found: {marker_pairs}")
 
 
+# 【职责】数组搜索类任务的确定性求解：查本地分片并融合旧信念/收件箱证据。
+# - 旧信念或收件箱已有 FOUND:* 共识键 -> 取全局下标最小者，产出 final 信念。
+# - 本地分片命中目标 -> 产出 FOUND:<全局下标> 的 final 信念(附分片范围等证据)。
+# - 否则返回 unknown/UNKNOWN：仅凭本地缺失不宣称 NOT_FOUND，等待其他分片的证据。
 def _solve_array_search_like(
     local_observation: dict[str, Any],
     old_belief: dict[str, Any],
@@ -143,6 +165,7 @@ def _solve_array_search_like(
     }
 
 
+# 【职责】在多个 FOUND:<下标> 键中选全局下标最小者；无合法格式时退回第一个键。
 def _select_lowest_found_key(keys: list[str]) -> str:
     parsed = []
     for key in keys:
@@ -152,6 +175,10 @@ def _select_lowest_found_key(keys: list[str]) -> str:
     return min(parsed)[1] if parsed else keys[0]
 
 
+# 【职责】count_frequency 任务的确定性求解：合并各来源的部分计数(可结合归约)。
+# - 计数来源：本地分片、旧信念/收件箱消息的结构化状态字段与 proposal 内嵌状态负载。
+# - 若发现 cf-outbox-v1 答案工件：改用工件合并路径(来源集不重叠才相加)。
+# - 覆盖到全部 n_agents -> final 信念(共识键由计数生成)；否则 candidate 并报告缺失智能体。
 def _solve_count_frequency_like(
     local_observation: dict[str, Any],
     old_belief: dict[str, Any],
@@ -174,6 +201,8 @@ def _solve_count_frequency_like(
     if artifact_sources:
         counts = artifact_counts
         covered_agents = artifact_sources
+        # 中文：离线假客户端只输出与要求真实 LLM 相同的紧凑答案形态；
+        #   运行时校验会保留隐藏的传输状态。
         # The fake client only outputs the same compact answer shape requested
         # from real LLMs. Runtime validation preserves hidden transport state.
         structured_state = {
@@ -233,6 +262,8 @@ def _solve_count_frequency_like(
     }
 
 
+# 【职责】从 proposal 文本解析 CF 状态负载，把各智能体的部分计数并入 partials。
+# - 解析不到负载时不做任何事(空操作兜底)。
 def _merge_cf_state_into_partials(
     partials: dict[str, dict[str, int]],
     text: Any,
@@ -244,6 +275,8 @@ def _merge_cf_state_into_partials(
         partials[str(agent_id)] = counts
 
 
+# 【职责】从结构化字段提取 CF 结构化状态并把部分计数并入 partials。
+# - 提取结果为 None 时不做任何事。
 def _merge_cf_structured_into_partials(
     partials: dict[str, dict[str, int]],
     value: Any,
@@ -255,6 +288,7 @@ def _merge_cf_structured_into_partials(
         partials[str(agent_id)] = counts
 
 
+# 【职责】合并旧信念与收件箱中的 cf-outbox-v1 答案工件，返回(规范化总计数, 已覆盖来源)。
 def _merge_cf_answer_artifacts(
     old_belief: dict[str, Any],
     inbox: list[dict],
@@ -266,6 +300,8 @@ def _merge_cf_answer_artifacts(
         if not source_set:
             continue
         if source_set & covered_sources:
+            # 中文：答案级工件没有按来源的细分，来源集重叠的聚合答案无法安全相加，
+            #   因此直接跳过。
             # With answer-level artifacts there is no source-level breakdown, so
             # overlapping aggregate answers cannot be safely added.
             continue
@@ -274,6 +310,7 @@ def _merge_cf_answer_artifacts(
     return canonicalize_counts(total), sorted(covered_sources)
 
 
+# 【职责】按“旧信念在前、收件箱消息在后”的顺序收集所有可识别的答案工件。
 def _iter_cf_answer_artifacts(
     old_belief: dict[str, Any],
     inbox: list[dict],
@@ -289,6 +326,8 @@ def _iter_cf_answer_artifacts(
     return items
 
 
+# 【职责】校验并提取单条 cf-outbox-v1 答案工件 -> (规范化计数, 排序后的来源智能体 ID)。
+# - 非 dict、schema_version 不符或 artifact/provenance 形态不对时返回 None(忽略该条)。
 def _extract_cf_answer_artifact(value: Any) -> tuple[dict[str, int], list[int]] | None:
     if not isinstance(value, dict):
         return None
@@ -307,6 +346,7 @@ def _extract_cf_answer_artifact(value: Any) -> tuple[dict[str, int], list[int]] 
     return None
 
 
+# 【职责】两个计数表逐键相加，右表与合并结果均做规范化。
 def _add_counts(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
     merged = dict(left)
     for key, count in canonicalize_counts(right).items():
@@ -314,10 +354,12 @@ def _add_counts(left: dict[str, int], right: dict[str, int]) -> dict[str, int]:
     return canonicalize_counts(merged)
 
 
+# 【职责】用空格拼接非空片段。
 def _join_nonempty(*parts: str) -> str:
     return " ".join(part for part in parts if part)
 
 
+# 【职责】保序去重，同时丢弃空字符串。
 def _dedupe(items: list[str]) -> list[str]:
     seen = set()
     result = []

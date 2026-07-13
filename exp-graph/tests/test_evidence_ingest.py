@@ -1,6 +1,37 @@
 import json
 
 from exp_graph.mas.evidence import ingest_experiment_evidence, write_evidence_jsonl
+from exp_graph.mas.ingest import aggregate_rows_to_evidence
+
+
+def test_explicit_staged_loss_and_failure_fields_survive_ingest() -> None:
+    evidence = aggregate_rows_to_evidence(
+        [
+            {
+                "Topology": "program:invalid",
+                "Agents": 5,
+                "MergeMode": "deterministic",
+                "Runs": 1,
+                "MeanPrimaryMetric": 0.8,
+                "PrimaryMetricName": "success_rate",
+                "ExactMatchRate": 0.0,
+                "MeanTotalSteps": 0,
+                "MeanTotalMessages": 0,
+                "MeanTotalModelCalls": 1,
+                "MeanTokenCost": 10,
+                "mean_primary_loss": 1.0,
+                "program_validity": 0.0,
+                "evolution_stage": "validity",
+                "program_generation_failed": "invalid phase",
+            }
+        ]
+    )[0]
+
+    assert evidence["mean_primary_loss"] == 1.0
+    assert evidence["mean_rmse"] == 1.0
+    assert evidence["program_validity"] == 0.0
+    assert evidence["evolution_stage"] == "validity"
+    assert evidence["program_generation_failed"] == "invalid phase"
 
 
 def test_ingest_experiment_evidence_builds_append_only_records(tmp_path):

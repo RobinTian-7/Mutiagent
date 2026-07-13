@@ -54,10 +54,20 @@ picks how the communication structure is chosen:
   *temporal communication DAG* from scratch (`plan_free_graph`), and its
   generated `protocol_spec` drives the runner. Each `ScoreResult.extra` records
   `planner_mode` and (for `graph_generate`) `generated_steps`.
+- `program_generate`: an independent restricted planner. The emperor emits only
+  typed `phase_program_v1` stages; a deterministic compiler expands edges,
+  enforces coverage/budgets, and performs bounded counterexample repair. The
+  original `graph_generate` path remains available and unchanged.
+- `python_generate`: a third independent generated path. The architect emits a
+  complete `program.py` that calls the existing `create_llm_client` /
+  `LLMClient.complete` API directly. A fail-closed AST/API/taint validator,
+  fake-canary dry run, metered child process, and stdout/accounting checks run
+  before scoring. It does not compile to `ProtocolGraphSpec` and does not reuse
+  either generated graph DSL.
 
-Offline (`--llm fake`) the emperor still emits deterministic fake DAG candidates
-that compile to valid specs; on junk it validates/repairs and ultimately falls
-back to a fixed operator topology, so the run never crashes without an API key:
+Offline (`--llm fake`) all three generated modes emit deterministic honest smoke
+candidates. Invalid real-model output is recorded as generation failure rather
+than silently replaced by a named topology:
 ```bash
 cd masbench
 uv run python -m masbench.cli run --benchmark silo_bench \
@@ -65,6 +75,20 @@ uv run python -m masbench.cli run --benchmark silo_bench \
   --case I-01 --n-agents 2 \
   --planner --planner-mode graph_generate --llm fake --objective accuracy_first
 ```
+
+PythonGen offline demo and one-instance smoke:
+```bash
+cd masbench
+uv run python scripts/demo_python_generate.py
+uv run python -m masbench.cli run --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --case I-01 --n-agents 2 --max-rounds 2 \
+  --planner --planner-mode python_generate --llm fake --model-name fake
+```
+The fake workers deliberately return no solution; this validates execution,
+state retention, delayed delivery, no-send, metering, and artifacts only. See
+[`docs/python_generate.md`](docs/python_generate.md) for the contract and the
+static/runtime isolation boundary.
 
 Real DAG generation needs a real LLM (the emperor designs the topology, soldiers
 execute it):
@@ -116,6 +140,29 @@ decision; the gate arithmetic itself is real. Pass `--no-synthetic-held-out` to
 score the gate purely on the real held-out Silo runs (intended for the real-LLM
 path below).
 
+Evolution can optionally warm-start from measured fixed/paper protocols and run
+paired reuse plus fresh-creation branches for every TRAIN pair:
+
+```bash
+uv run python -m masbench.cli evolve --benchmark silo_bench \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --levels II III --agent-counts 5 --train-seeds 1 2 --val-seeds 3 \
+  --silo-eval-mode all_agents --planner-mode graph_generate \
+  --hot-start --hot-start-protocols auto --hot-start-topologies auto \
+  --hot-start-innovation-mode graph_generate --llm fake --out runs/hot-start
+```
+
+This mode is deliberately **not clean GraphGen** because structural references
+are supplied. Its separate cost, seed cards, parent selections, and innovation
+outputs are recorded under `summary.json["hot_start"]`; see
+`docs/experiments.md` for exact semantics and the contamination boundary.
+In `all_agents` mode, `auto` creates the five-Skill portfolio
+`p2p,broadcast,sfs,one_peer_exponential_dag,static_exponential`; sink mode uses
+the separate gather/star/chain/tree/layer fixed portfolio. Every seeded card
+stores a mode-specific typed executable payload, structured insights, and
+measured evidence. Graph, phase DSL, Python source, fixed topology, and paper
+transport payloads use distinct schemas; Python cards preserve full source.
+
 ### Real LLM (uses your provider keys)
 ```bash
 cd masbench
@@ -147,6 +194,11 @@ aggregates. The arms:
 - **graphgen** — QueenBee `graph_generate` (the emperor LLM invents a temporal
   DAG). `--graphgen-candidates` is >1 by default so the structural-motif prior
   can matter; motif evidence accumulated from earlier conditions is fed back in.
+- **programgen** — independent QueenBee `program_generate`; the emperor composes
+  restricted phases and the compiler creates the executable schedule.
+- **pycodegen** — non-default independent `python_generate`; the architect emits
+  validated full Python and a Python-only subprocess executes it with an
+  authoritative Worker-call ledger.
 - **evolved** — the gated self-evolution loop (`masbench evolve`) run ONCE per
   agent-count on the train seeds, then its post-evolution topology selection is
   evaluated on the held-out/test seeds (the gate decision is attached).
@@ -165,7 +217,7 @@ cd masbench
 uv run python -m masbench.cli bench --benchmark silo_bench \
   --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
   --cases I-01 --agent-counts 2 --seeds 0 \
-  --arms fixed select graphgen --fixed-topologies tree chain \
+  --arms graphgen programgen pycodegen \
   --llm fake --objective accuracy_first --out runs/bench_smoke
 ```
 The fake LLM is deterministic and only supports `--merge-mode deterministic` /

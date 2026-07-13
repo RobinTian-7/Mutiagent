@@ -20,6 +20,12 @@ Arms
   DAG). ``num_graph_candidates`` is bumped to >1 by default so the structural
   motif prior can matter; accumulated motif evidence from earlier arms' generated
   specs is passed in to activate that prior.
+* **programgen** -- independent QueenBee ``program_generate``. The emperor emits
+  only ``phase_program_v1`` stages; a deterministic compiler expands and checks
+  the executable schedule. The original graphgen arm remains unchanged.
+* **pycodegen** -- independent QueenBee ``python_generate``. The architect emits
+  a complete constrained ``program.py`` which is validated and executed in a
+  metered child process. It is non-default and shares no graph/program DSL path.
 * **evolved** -- the gated self-evolution loop (:func:`evolve.run_evolution`) run
   ONCE per ``(case-set, n_agents)`` on the train seeds, then its post-evolution
   topology selection is evaluated on the held-out/test seeds. The gate decision
@@ -45,6 +51,11 @@ is made non-degenerate offline exactly as ``masbench evolve`` does -- via a smal
 synthetic multi-topology held-out set plus a baseline incumbent (see
 :mod:`masbench.evolve`).
 """
+# ============================================================
+# 【模块导读】论文级实验 harness：在 Silo-Bench 条件网格上比较 fixed/select/graphgen/evolved 各臂。
+# 本文件不重新定义执行逻辑，只负责枚举实验单元、调用 engine/evolve、做断点续跑/并行调度，
+# 最后聚合成 results.json、results.csv 和 report.md。
+# ============================================================
 
 from __future__ import annotations
 
@@ -65,6 +76,10 @@ from exp_graph.mas.schemas import SkillCard
 from exp_graph.mas.skill_bank import SkillBank
 
 from masbench.adapters.silo_bench import SiloBenchAdapter
+from masbench.adapters.silo_paper_protocols import (
+    PAPER_PROTOCOL_ARMS,
+    run_silo_paper_protocol,
+)
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
@@ -75,6 +90,8 @@ from masbench.evolve import (
     run_evolution,
 )
 
+# 中文：默认 planner-OFF 固定基线。它们是 build_protocol_schedule 认识的协议调度拓扑名，
+# 因此 fixed 臂走 engine.run_fixed_protocol 的协议路径，而不是旧的 SynchronousRunner。
 # Default planner-OFF fixed baselines. These are *protocol-schedule* topology
 # names understood by ``build_protocol_schedule`` (chain/tree/mesh_star/
 # one_peer_exponential_dag_star), which is why the fixed arm runs via the
@@ -86,18 +103,33 @@ DEFAULT_FIXED_TOPOLOGIES = (
     "chain",
 )
 
+# 中文：调用方未指定 arms 时默认比较的实验臂集合。
 # Default arm set when the caller does not specify one.
 DEFAULT_ARMS = ("fixed", "select", "graphgen")
 
+# 中文：graphgen 臂的默认候选数。大于 1 时结构母题先验才有机会改变最终选中的 DAG。
 # Default candidate count for the graphgen arm. >1 so the structural-motif prior
 # can actually change which generated DAG is picked (it is inert with a single
 # surviving candidate).
 DEFAULT_GRAPHGEN_CANDIDATES = 4
 
+# 中文：聚合和渲染的指标列，顺序也是报告展示顺序。
 # The metric columns aggregated and rendered, in display order.
 _METRIC_KEYS = ("success", "partial", "n_messages", "n_model_calls", "tokens")
+_PAPER_METRIC_KEYS = ("paper_S", "paper_P", "paper_C", "paper_D")
 
 
+def _add_optional_paper_metrics(
+    entry: dict[str, Any], runs: list[dict[str, Any]]
+) -> None:
+    """Aggregate paper metrics when a run arm actually records them."""
+    for metric in _PAPER_METRIC_KEYS:
+        values = [float(run[metric]) for run in runs if run.get(metric) is not None]
+        if values:
+            entry[metric] = _mean_std(values)
+
+
+# 【职责】计算总体均值和总体标准差；空列表返回 0，单样本标准差为 0。
 def _mean_std(values: list[float]) -> dict[str, float]:
     """Population mean and std of ``values`` (std 0 for a single sample)."""
     n = len(values)
@@ -108,6 +140,7 @@ def _mean_std(values: list[float]) -> dict[str, float]:
     return {"mean": mean, "std": math.sqrt(var)}
 
 
+# 【职责】把某个条件下的原始 run 记录按 arm 聚合成 mean/std 指标块。
 def aggregate_condition(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate raw per-run records into per-arm mean +/- std.
 
@@ -125,10 +158,12 @@ def aggregate_condition(runs: list[dict[str, Any]]) -> dict[str, Any]:
         entry: dict[str, Any] = {"n": len(arm_runs)}
         for metric in _METRIC_KEYS:
             entry[metric] = _mean_std([float(r[metric]) for r in arm_runs])
+        _add_optional_paper_metrics(entry, arm_runs)
         aggregates[arm] = entry
     return aggregates
 
 
+# 【职责】把一次成功运行的 ScoreResult 展平成 JSON 可序列化的 run 记录。
 def _run_record(
     arm: str,
     instance: BenchmarkInstance,
@@ -154,18 +189,47 @@ def _run_record(
     }
     if extra:
         record.update(extra)
+    goal = score.extra.get("information_goal") or score.extra.get("silo_eval_mode")
+    if goal == "all_agents":
+        record.update(
+            {
+                metric: float(score.extra.get(metric, 0.0) or 0.0)
+                for metric in _PAPER_METRIC_KEYS
+            }
+        )
+        for key in (
+            "information_goal",
+            "paper_protocol",
+            "per_agent_submissions",
+            "per_agent_answers",
+            "per_agent_correct",
+            "per_agent_partial",
+            "rounds_executed",
+            "all_submitted",
+            "outward_events_by_agent",
+            "total_prompt_tokens",
+            "total_completion_tokens",
+            "paper_metric_notes",
+        ):
+            if key in score.extra:
+                record[key] = score.extra[key]
     return record
 
 
 # --------------------------------------------------------------------------- #
+# 中文：崩溃安全：单 run 隔离 + 追加式 checkpoint + resume（Plan 5 Task 2）。 #
 # Crash-safety: per-run isolation + checkpoint + resume (Plan 5 Task 2).      #
 # --------------------------------------------------------------------------- #
 
 
+# 中文：run unit 的稳定身份。resume 时用它判断是否已完成，也用它去重 runs.jsonl。
+# fixed 臂会在同一个 (case,n,seed) 上扫多个 topology，所以 key 额外带 fixed_topology；
+# 其他臂该位置为 None。
 # A run unit's identity. Used BOTH to decide whether a loaded record means the
 # run is already done (resume) and to dedupe records read back from runs.jsonl.
 # The fixed arm sweeps several topologies per (case,n,seed), so its key carries
 # the per-topology ``fixed_topology``; every other arm leaves that None.
+# 【职责】返回单个 run 记录的稳定身份元组：(arm, case, n, seed, topology)。
 def _run_key(record: dict[str, Any]) -> tuple:
     """Stable identity tuple for one run record: (arm, case, n, seed, topology)."""
     return (
@@ -177,6 +241,7 @@ def _run_key(record: dict[str, Any]) -> tuple:
     )
 
 
+# 【职责】把单个 run 的异常转成失败记录，保证整个实验网格不中断。
 def _failed_record(
     arm: str,
     instance: BenchmarkInstance,
@@ -208,9 +273,12 @@ def _failed_record(
     }
     if extra:
         record.update(extra)
+    if arm in PAPER_PROTOCOL_ARMS or record.get("information_goal") == "all_agents":
+        record.update({metric: 0.0 for metric in _PAPER_METRIC_KEYS})
     return record
 
 
+# 【职责】执行一个独立 run 单元；成功返回真实记录，异常返回失败记录并触发进度 tick。
 def _run_unit(
     produce: Callable[[], ScoreResult],
     *,
@@ -263,6 +331,7 @@ def _run_unit(
     return record
 
 
+# 【职责】追加式 runs.jsonl checkpoint：记录已完成 key，支持崩溃后 resume 和并发写入。
 class _Checkpoint:
     """Append-as-you-go run log + completed-key set for crash-safe resume.
 
@@ -277,17 +346,20 @@ class _Checkpoint:
     def __init__(
         self, path: Path | None, *, completed_keys: set[tuple] | None = None
     ) -> None:
+        # 中文：没有 out 目录时 path 为 None；run 仍被隔离并在内存追踪，但不会落盘。
         # ``path`` is None when no ``out`` dir was given: runs are still isolated
         # and tracked in-memory, but nothing is persisted to disk.
         self._path = path
         self._lock = threading.Lock()
         self._completed: set[tuple] = set(completed_keys or set())
 
+    # 【职责】查询一个 run-key 是否已经完成。
     def done(self, key: tuple) -> bool:
         """True if a record with this :func:`_run_key` is already complete."""
         with self._lock:
             return key in self._completed
 
+    # 【职责】把一条成功或失败记录追加到 checkpoint，并把它的 key 标记为完成。
     def append(self, record: dict[str, Any]) -> None:
         """Persist one record (success or failed) and mark its key complete."""
         line = json.dumps(record, default=str) + "\n"
@@ -298,6 +370,7 @@ class _Checkpoint:
             self._completed.add(_run_key(record))
 
 
+# 【职责】把秒数渲染成 H:MM:SS，供长实验进度输出使用。
 def _fmt_hms(seconds: float) -> str:
     """Render an elapsed duration as ``H:MM:SS`` (no fractional part)."""
     total = int(seconds)
@@ -306,6 +379,7 @@ def _fmt_hms(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}"
 
 
+# 【职责】长时间 bench 网格的实时进度打印器；并行 worker 下用锁避免输出交错。
 class _Progress:
     """Live per-run progress printer for a long ``run_benchmark`` grid.
 
@@ -323,6 +397,7 @@ class _Progress:
     (``--quiet`` / ``progress=False``), so the disabled path costs only a branch.
     """
 
+    # 【职责】初始化进度计数器；enabled=False 时所有输出路径变成 no-op。
     def __init__(self, *, enabled: bool = True) -> None:
         self.enabled = enabled
         self.total = 0
@@ -332,6 +407,7 @@ class _Progress:
         self.start = time.monotonic()
         self._lock = threading.Lock()
 
+    # 【职责】打印启动横幅：总单元数、resume 数、worker 数与输出目录。
     def header(
         self,
         *,
@@ -358,6 +434,7 @@ class _Progress:
             flush=True,
         )
 
+    # 【职责】记录一个 run-unit 完成并打印单行进度。
     def tick(self, record: dict[str, Any], elapsed_s: float) -> None:
         """Account for + print one finished run-unit (thread-safe)."""
         with self._lock:
@@ -385,6 +462,7 @@ class _Progress:
             print(line, flush=True)
 
 
+# 【职责】准备 out/runs.jsonl：resume 时读取去重，fresh run 时清空旧日志。
 def _load_checkpoint(out: Path, *, resume: bool) -> tuple[_Checkpoint, list[dict[str, Any]]]:
     """Prepare ``out/runs.jsonl`` and return ``(_Checkpoint, prior_records)``.
 
@@ -407,11 +485,13 @@ def _load_checkpoint(out: Path, *, resume: bool) -> tuple[_Checkpoint, list[dict
             record = json.loads(line)
             by_key[_run_key(record)] = record
         prior = list(by_key.values())
+        # 中文：把去重后的集合写回磁盘，使日志与本次 resume 的起点一致。
         # Rewrite the deduped set so the on-disk log matches what we resume from.
         with path.open("w", encoding="utf-8") as fh:
             for record in prior:
                 fh.write(json.dumps(record, default=str) + "\n")
     else:
+        # 中文：全新运行时丢弃旧日志，避免后续 append 造成重复计数。
         # Fresh run: drop any stale log so appended records don't double-count.
         path.write_text("", encoding="utf-8")
 
@@ -419,15 +499,18 @@ def _load_checkpoint(out: Path, *, resume: bool) -> tuple[_Checkpoint, list[dict
     return _Checkpoint(path, completed_keys=completed), prior
 
 
+# 【职责】复制基础 RunConfig，固定 n_agents 并应用每个 arm/seed 的覆盖项。
 def _cfg_for(cfg_base: RunConfig, n_agents: int, **overrides: Any) -> RunConfig:
     """Clone ``cfg_base`` with ``n_agents`` pinned and any per-arm overrides."""
     return RunConfig(**{**asdict(cfg_base), "n_agents": n_agents, **overrides})
 
 
+# 【职责】构造聚合用条件键：同一 case_id 与 n_agents 归为一个条件块。
 def _condition_key(case_id: str, n_agents: int) -> str:
     return f"{case_id}|n{n_agents}"
 
 
+# 【职责】枚举整个 bench 网格会产生的所有 run-key，用作进度总数与 resume 跳过依据。
 def _all_unit_keys(
     instances: list[BenchmarkInstance],
     arms: list[str],
@@ -455,7 +538,13 @@ def _all_unit_keys(
                         keys.append(
                             ("fixed", instance.case_id, instance.n_agents, seed, topology)
                         )
-        elif arm in ("select", "graphgen"):
+        elif arm in (
+            "select",
+            "graphgen",
+            "programgen",
+            "pycodegen",
+            *PAPER_PROTOCOL_ARMS,
+        ):
             for instance in instances:
                 for seed in seeds:
                     keys.append(
@@ -469,11 +558,14 @@ def _all_unit_keys(
                     )
         else:
             raise SystemExit(
-                f"unknown arm '{arm}' (valid: fixed, select, graphgen, evolved)"
+                f"unknown arm '{arm}' (valid: fixed, select, graphgen, programgen, "
+                "pycodegen, evolved, "
+                "p2p, broadcast, sfs)"
             )
     return keys
 
 
+# 【职责】bench 主入口：枚举条件和实验臂，执行/恢复所有 run 单元，并聚合输出 Table-1 风格结果。
 def run_benchmark(
     adapter: SiloBenchAdapter,
     *,
@@ -526,6 +618,8 @@ def run_benchmark(
     seeds = list(seeds)
     fixed_topologies = list(fixed_topologies or DEFAULT_FIXED_TOPOLOGIES)
 
+    # 中文：离线 fake LLM 只理解确定性 soldier 提示词；llm_* merge/init 模式会产生它无法解析的
+    # prompt，若不提前阻止会在 client 深处崩溃。这里给出可操作的失败信息。
     # The offline fake LLM only understands the deterministic soldier prompts; the
     # llm_* merge/init modes emit prompts it cannot parse and would crash deep in
     # the client. Fail fast with an actionable message instead.
@@ -539,6 +633,7 @@ def run_benchmark(
             f"merge-mode={cfg_base.merge_mode!r} / init-mode={cfg_base.init_mode!r}."
         )
 
+    # 中文：共享一个离线 client，让 fake-LLM 运行保持便宜且确定性。
     # One shared offline client keeps fake-LLM runs cheap and deterministic.
     client = llm_client or _build_llm_client(cfg_base)
 
@@ -550,6 +645,8 @@ def run_benchmark(
             "no Silo-Bench instances matched the given cases/agent-counts/levels"
         )
 
+    # 中文：checkpoint：给定 out 时准备 out/runs.jsonl（fresh run 截断，resume 读取并去重），
+    # 并把历史记录放进最终聚合。没有 out 时 checkpoint 是内存 no-op，但每个 run 仍走隔离包装。
     # Checkpoint: when ``out`` is given, prepare ``out/runs.jsonl`` (truncate on a
     # fresh run, read+dedupe on resume) and seed the run list with prior records so
     # they fold into the final aggregate. With no ``out`` the checkpoint is an
@@ -559,6 +656,9 @@ def run_benchmark(
     else:
         ckpt, prior_records = _Checkpoint(None), []
 
+    # 中文：实时进度（Plan 5 Task 5）：只枚举一次所有 run-unit，作为顺序/并行两条路径共享的
+    # 计数真源。resumed 是已 checkpoint 且会跳过的单元；to_run 是本次真正执行并 tick 的单元。
+    # tick 从 _run_unit 这个唯一 chokepoint 发出，因此顺序和 --workers 都覆盖到。
     # Live progress (Plan 5 Task 5): enumerate every run-unit ONCE (the single
     # source of truth shared by both execution paths) to compute the header
     # counts. ``resumed`` = units already checkpointed (skipped, never ticked);
@@ -584,14 +684,17 @@ def run_benchmark(
 
     runs: list[dict[str, Any]] = list(prior_records)
     conditions: dict[str, Any] = {}
+    # 中文：graphgen 已生成 spec 的母题证据会反馈给后续 graphgen，使结构母题先验真的参与选择。
     # Accumulated motif evidence from graphgen-generated specs, fed back into
     # later graphgen runs so the structural-motif prior is active, not merely set.
     motif_rows: list[dict[str, Any]] = []
 
+    # 中文：evolved 臂代价高：按 (case-set, n_agents) 只跑一次，而不是每个 (case, seed) 都跑。
     # The evolved arm is heavy: run it ONCE per (case-set, n_agents) rather than
     # per (case, seed). Cache the evolve summary keyed by n_agents.
     evolved_summaries: dict[int, dict[str, Any]] = {}
 
+    # 中文：把 resumed 的历史记录按条件分桶，保证每个条件聚合包含 checkpoint 恢复记录 + 本次新记录。
     # Prior (resumed) records bucketed by condition so each condition aggregate is
     # built from EVERYTHING for it -- runs replayed from the checkpoint plus runs
     # produced this session -- not just what executed now.
@@ -601,6 +704,9 @@ def run_benchmark(
         prior_by_cond.setdefault(key, []).append(record)
 
     if workers > 1:
+        # 中文：并行路径：先构建全部未完成任务（graphgen 母题先验取快照，重型 evolution 预先顺序跑），
+        # 再把 run-unit 派发到线程池。每条完成记录仍通过带锁的 ckpt.append 回写，因此 checkpoint/
+        # resume 和“不重复 append”的保证不变；聚合对完成顺序不敏感。
         # Parallel path: build the full not-yet-done task list up front (snapshot
         # the graphgen motif prior, pre-run the heavy evolution sequentially), then
         # dispatch every run-unit to a thread pool. Each finished record is folded
@@ -624,6 +730,7 @@ def run_benchmark(
             progress=prog,
         )
         runs.extend(new_runs)
+        # 中文：每个条件都用 resumed + 本次新跑的全部记录聚合。
         # Aggregate each condition from EVERYTHING for it (resumed + freshly run).
         by_cond_runs: dict[str, list[dict[str, Any]]] = {
             k: list(v) for k, v in prior_by_cond.items()
@@ -651,6 +758,18 @@ def run_benchmark(
                             progress=prog,
                         )
                     )
+                elif arm in PAPER_PROTOCOL_ARMS:
+                    new_runs.extend(
+                        _run_paper_protocol_arm(
+                            instance,
+                            cfg_base,
+                            seeds,
+                            arm,
+                            client,
+                            ckpt,
+                            progress=prog,
+                        )
+                    )
                 elif arm == "select":
                     new_runs.extend(
                         _run_select_arm(
@@ -670,6 +789,30 @@ def run_benchmark(
                     )
                     new_runs.extend(arm_runs)
                     motif_rows.extend(new_motif_rows)
+                elif arm == "programgen":
+                    arm_runs, new_motif_rows = _run_programgen_arm(
+                        instance,
+                        cfg_base,
+                        seeds,
+                        client,
+                        ckpt,
+                        program_candidates=graphgen_candidates,
+                        motif_rows=motif_rows,
+                        progress=prog,
+                    )
+                    new_runs.extend(arm_runs)
+                    motif_rows.extend(new_motif_rows)
+                elif arm == "pycodegen":
+                    new_runs.extend(
+                        _run_pycodegen_arm(
+                            instance,
+                            cfg_base,
+                            seeds,
+                            client,
+                            ckpt,
+                            progress=prog,
+                        )
+                    )
                 elif arm == "evolved":
                     new_runs.extend(
                         _run_evolved_arm(
@@ -688,10 +831,12 @@ def run_benchmark(
                 else:
                     raise SystemExit(
                         f"unknown arm '{arm}' "
-                        f"(valid: fixed, select, graphgen, evolved)"
+                        f"(valid: fixed, select, graphgen, programgen, pycodegen, evolved, "
+                        f"p2p, broadcast, sfs)"
                     )
 
             runs.extend(new_runs)
+            # 中文：顺序路径同样用 resumed + 新记录聚合当前条件。
             # Aggregate the condition from resumed + freshly produced records.
             cond_runs = prior_by_cond.get(cond_key, []) + new_runs
             conditions[cond_key] = _aggregate_condition_block(instance, cond_runs)
@@ -701,6 +846,16 @@ def run_benchmark(
         "arms": arms,
         "seeds": seeds,
         "fixed_topologies": fixed_topologies,
+        # 中文：评测模式与 clean_run 标记（答案隔离 + 无具名兜底 + 拓扑泄漏修复
+        #   全部生效的运行才算 clean）。
+        # Eval mode + clean_run flag (answer isolation, no named fallback, and
+        # the topology-leak fixes are all active in this pipeline version).
+        "silo_eval_mode": getattr(cfg_base, "silo_eval_mode", "sink"),
+        "clean_run": not bool(getattr(cfg_base, "hot_start_enabled", False)),
+        "hot_start_enabled": bool(
+            getattr(cfg_base, "hot_start_enabled", False)
+        ),
+        "clean_pythongen": bool(getattr(cfg_base, "clean_pythongen", True)),
         "conditions": conditions,
         "overall": overall,
         "runs": runs,
@@ -712,11 +867,13 @@ def run_benchmark(
 
 
 # --------------------------------------------------------------------------- #
+# 中文：并发：把独立 run-unit 派发给线程池（Plan 5 Task 3）。                #
 # Concurrency: parallel run-unit dispatch (Plan 5 Task 3).                    #
 # --------------------------------------------------------------------------- #
 
 
 @dataclass
+# 【职责】线程池里的一个独立待执行 run-unit；produce 已经包装成不会因普通运行错误抛出。
 class _RunTask:
     """One independent, not-yet-done run-unit to dispatch to the thread pool.
 
@@ -730,6 +887,7 @@ class _RunTask:
     produce: Callable[[], dict[str, Any]]
 
 
+# 【职责】并行执行所有尚未完成的 run-unit，并把完成记录安全追加到 checkpoint。
 def _run_parallel(
     instances: list[BenchmarkInstance],
     arms: list[str],
@@ -795,6 +953,8 @@ def _run_parallel(
         return []
 
     new_runs: list[dict[str, Any]] = []
+    # 中文：context manager 退出会等待在途 future；每个单元有请求超时约束，所以可接受。
+    # KeyboardInterrupt 会继续冒泡以便操作者中止，已完成单元已经落盘。
     # The context manager's __exit__ waits for in-flight futures; that is fine
     # because each unit is bounded by the per-request timeout. A KeyboardInterrupt
     # propagates out (stops new scheduling); already-finished units are on disk.
@@ -807,6 +967,7 @@ def _run_parallel(
     return new_runs
 
 
+# 【职责】构建并行模式下所有未完成 run-unit；在这里完成 graphgen 快照和 evolved 预运行。
 def _build_parallel_tasks(
     instances: list[BenchmarkInstance],
     arms: list[str],
@@ -837,7 +998,11 @@ def _build_parallel_tasks(
     """
     tasks: list[_RunTask] = []
 
+    # 中文：graphgen：并行批次共享同一份母题先验快照。
     # graphgen: one motif-prior snapshot for the whole parallel batch.
+    motif_rows = _motif_rows_for_goal(
+        motif_rows, getattr(cfg_base, "silo_eval_mode", "sink")
+    )
     motif_stats = aggregate_motif_losses(motif_rows) if motif_rows else None
 
     for arm in arms:
@@ -860,6 +1025,22 @@ def _build_parallel_tasks(
                                 progress=progress,
                             )
                         )
+        elif arm in PAPER_PROTOCOL_ARMS:
+            for instance in instances:
+                for seed in seeds:
+                    key = (arm, instance.case_id, instance.n_agents, seed, None)
+                    if ckpt.done(key):
+                        continue
+                    tasks.append(
+                        _paper_protocol_task(
+                            instance,
+                            cfg_base,
+                            seed,
+                            arm,
+                            client,
+                            progress=progress,
+                        )
+                    )
         elif arm == "select":
             for instance in instances:
                 for seed in seeds:
@@ -900,6 +1081,50 @@ def _build_parallel_tasks(
                             progress=progress,
                         )
                     )
+        elif arm == "programgen":
+            for instance in instances:
+                for seed in seeds:
+                    key = (
+                        "programgen",
+                        instance.case_id,
+                        instance.n_agents,
+                        seed,
+                        None,
+                    )
+                    if ckpt.done(key):
+                        continue
+                    tasks.append(
+                        _programgen_task(
+                            instance,
+                            cfg_base,
+                            seed,
+                            client,
+                            program_candidates=graphgen_candidates,
+                            motif_stats=motif_stats,
+                            progress=progress,
+                        )
+                    )
+        elif arm == "pycodegen":
+            for instance in instances:
+                for seed in seeds:
+                    key = (
+                        "pycodegen",
+                        instance.case_id,
+                        instance.n_agents,
+                        seed,
+                        None,
+                    )
+                    if ckpt.done(key):
+                        continue
+                    tasks.append(
+                        _pycodegen_task(
+                            instance,
+                            cfg_base,
+                            seed,
+                            client,
+                            progress=progress,
+                        )
+                    )
         elif arm == "evolved":
             tasks.extend(
                 _evolved_tasks(
@@ -918,12 +1143,15 @@ def _build_parallel_tasks(
             )
         else:
             raise SystemExit(
-                f"unknown arm '{arm}' (valid: fixed, select, graphgen, evolved)"
+                f"unknown arm '{arm}' (valid: fixed, select, graphgen, programgen, "
+                "pycodegen, evolved, "
+                "p2p, broadcast, sfs)"
             )
 
     return tasks
 
 
+# 【职责】构造一个 fixed 臂的单 run-unit：强制指定 topology，planner 关闭。
 def _fixed_task(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -950,6 +1178,40 @@ def _fixed_task(
     )
 
 
+# 【职责】构造一个 SILO 论文协议 baseline 的单 run-unit。
+def _paper_protocol_task(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seed: int,
+    protocol: str,
+    client: LLMClient,
+    *,
+    progress: _Progress | None = None,
+) -> _RunTask:
+    """One dynamic P2P/Broadcast/SFS run with paper per-agent scoring."""
+    cfg = _cfg_for(cfg_base, instance.n_agents, use_planner=False, seed=seed)
+    return _RunTask(
+        produce=lambda: _run_unit(
+            lambda: run_silo_paper_protocol(
+                instance,
+                cfg,
+                protocol=protocol,
+                llm_client=client,
+            ),
+            arm=protocol,
+            instance=instance,
+            seed=seed,
+            topology=f"paper_{protocol}",
+            extra={
+                "information_goal": "all_agents",
+                "paper_protocol": protocol,
+            },
+            progress=progress,
+        )
+    )
+
+
+# 【职责】构造一个 select 臂的单 run-unit：QueenBee 只选择具名 topology。
 def _select_task(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -979,6 +1241,7 @@ def _select_task(
     )
 
 
+# 【职责】构造一个 graphgen 臂的单 run-unit：QueenBee 生成候选 DAG 并带上母题快照。
 def _graphgen_task(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -1013,14 +1276,113 @@ def _graphgen_task(
             seed=seed,
             topology=None,
             extra_from_score=lambda s: {
+                "planner_mode": "graph_generate",
                 "generated_steps": s.extra.get("generated_steps"),
-                "graph_fallback_reason": s.extra.get("graph_fallback_reason"),
+                "graph_generation_failed": s.extra.get("graph_generation_failed"),
+                "provenance": s.extra.get("provenance"),
+                "graph_artifacts_dir": s.extra.get("graph_artifacts_dir"),
+                "information_goal": s.extra.get("information_goal")
+                or s.extra.get("silo_eval_mode"),
             },
             progress=progress,
         )
     )
 
 
+def _programgen_task(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seed: int,
+    client: LLMClient,
+    *,
+    program_candidates: int,
+    motif_stats: Any,
+    progress: _Progress | None = None,
+) -> _RunTask:
+    """One independent restricted-program run unit."""
+    cfg = _cfg_for(
+        cfg_base,
+        instance.n_agents,
+        use_planner=True,
+        planner_mode="program_generate",
+        num_graph_candidates=program_candidates,
+        seed=seed,
+    )
+    return _RunTask(
+        produce=lambda: _run_unit(
+            lambda: run_instance(
+                instance, cfg, llm_client=client, motif_stats=motif_stats
+            ),
+            arm="programgen",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra_from_score=lambda s: {
+                "planner_mode": "program_generate",
+                "generated_steps": s.extra.get("generated_steps"),
+                "program_generation_failed": s.extra.get(
+                    "program_generation_failed"
+                ),
+                "program_format": s.extra.get("program_format"),
+                "provenance": s.extra.get("provenance"),
+                "program_artifacts_dir": s.extra.get("program_artifacts_dir"),
+                "information_goal": s.extra.get("information_goal")
+                or s.extra.get("silo_eval_mode"),
+            },
+            progress=progress,
+        )
+    )
+
+
+def _pycodegen_score_extra(score: ScoreResult) -> dict[str, Any]:
+    """Persist PythonGen audit/provenance fields without private message bodies."""
+    return {
+        "planner_mode": "python_generate",
+        "python_generation_failed": score.extra.get("python_generation_failed"),
+        "python_failure_category": score.extra.get("python_failure_category"),
+        "program_validity": score.extra.get("program_validity"),
+        "program_sha256": score.extra.get("program_sha256"),
+        "provenance": score.extra.get("provenance"),
+        "python_artifacts_dir": score.extra.get("python_artifacts_dir"),
+        "worker_model_calls": score.extra.get("worker_model_calls"),
+        "prompt_tokens": score.extra.get("prompt_tokens"),
+        "completion_tokens": score.extra.get("completion_tokens"),
+        "rounds_executed": score.extra.get("rounds_executed"),
+        "information_goal": score.extra.get("information_goal")
+        or score.extra.get("silo_eval_mode"),
+    }
+
+
+def _pycodegen_task(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seed: int,
+    client: LLMClient,
+    *,
+    progress: _Progress | None = None,
+) -> _RunTask:
+    """One independent full-Python planner run unit."""
+    cfg = _cfg_for(
+        cfg_base,
+        instance.n_agents,
+        use_planner=True,
+        planner_mode="python_generate",
+        seed=seed,
+    )
+    return _RunTask(
+        produce=lambda: _run_unit(
+            lambda: run_instance(instance, cfg, llm_client=client),
+            arm="pycodegen",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra_from_score=_pycodegen_score_extra,
+            progress=progress,
+        )
+    )
+
+
+# 【职责】把 seeds 切成训练种子和测试/验证种子；末尾 k 个留出。
 def _train_test_seeds(seeds: list[int], k: int) -> tuple[list[int], list[int]]:
     """Split seeds into (train, test), holding out the LAST ``k`` for eval + gate.
 
@@ -1036,15 +1398,23 @@ def _train_test_seeds(seeds: list[int], k: int) -> tuple[list[int], list[int]]:
     return seeds[:-k], seeds[-k:]
 
 
+# 【职责】决定 evolved 臂进化环使用 topology_select 还是 graph_generate。
 def _evolved_planner_mode(cfg_base: RunConfig) -> str:
     """The planner mode the evolution loop runs in for the evolved arm.
 
     ``graph_generate`` makes BOTH evidence collection and eval generate DAGs (so
     the loop learns from generated structures); otherwise topology_select.
     """
-    return "graph_generate" if cfg_base.evolved_mode == "graph_generate" else "topology_select"
+    if cfg_base.evolved_mode == "program_generate":
+        return "program_generate"
+    if cfg_base.evolved_mode == "python_generate":
+        return "python_generate"
+    if cfg_base.evolved_mode == "graph_generate":
+        return "graph_generate"
+    return "topology_select"
 
 
+# 【职责】从 run_evolution summary 里重建 SkillBank，供 evolved graph_generate 评测使用。
 def _bank_from_summary(summary: dict[str, Any]) -> SkillBank:
     """Rebuild the evolved skill bank from a ``run_evolution`` summary.
 
@@ -1056,6 +1426,7 @@ def _bank_from_summary(summary: dict[str, Any]) -> SkillBank:
     return SkillBank(skills=skills)
 
 
+# 【职责】为一个 evolved 评测种子产生 run 记录：可评估选中的拓扑，也可用进化技能重新生成 DAG。
 def _evolved_eval_unit(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -1076,20 +1447,34 @@ def _evolved_eval_unit(
     Either way the record keys to ``(evolved, case, n, seed, None)`` (no
     ``fixed_topology``), so checkpoint/resume is identical across modes.
     """
-    if cfg_base.evolved_mode in ("graph_generate", "select_then_refine"):
+    if cfg_base.evolved_mode in (
+        "graph_generate",
+        "program_generate",
+        "python_generate",
+        "select_then_refine",
+    ):
+        # 中文：graph_generate 从头设计（母题先验来自已生成证据）；若生成门未改善 held-out，
+        # 就丢弃学习状态。select_then_refine 则始终锚定技能库中的工作拓扑参考 spec。
         # graph_generate: design from scratch (motif prior from generated evidence);
         # the generation gate (C) discards the learned state if it didn't improve
         # held-out generation. select_then_refine: always anchor on the bank's
         # working-topology reference specs (its gate is the select-mode one).
         gate = summary.get("gate") or {}
         use_learned = (
-            cfg_base.evolved_mode != "graph_generate" or bool(gate.get("accepted", True))
+            cfg_base.evolved_mode == "select_then_refine"
+            or bool(gate.get("accepted", True))
         )
         bank = _bank_from_summary(summary) if use_learned else SkillBank()
         motif_stats = (summary.get("evolved_motif_stats") or None) if use_learned else None
         cfg = _cfg_for(
             cfg_base, n_agents, use_planner=True,
-            planner_mode="graph_generate", seed=seed,
+            planner_mode=(
+                cfg_base.evolved_mode
+                if cfg_base.evolved_mode
+                in {"graph_generate", "program_generate", "python_generate"}
+                else "graph_generate"
+            ),
+            seed=seed,
         )
         return _run_unit(
             lambda: run_instance(
@@ -1097,7 +1482,13 @@ def _evolved_eval_unit(
                 skill_bank=bank, motif_stats=motif_stats,
             ),
             arm="evolved", instance=instance, seed=seed, topology=None,
-            extra=evolved_extra, progress=progress,
+            extra=evolved_extra,
+            extra_from_score=(
+                _pycodegen_score_extra
+                if cfg.planner_mode == "python_generate"
+                else None
+            ),
+            progress=progress,
         )
     evolved_topology = summary["final_selection"]["topology_name"]
     cfg = _cfg_for(cfg_base, n_agents, use_planner=False, seed=seed)
@@ -1110,6 +1501,7 @@ def _evolved_eval_unit(
     )
 
 
+# 【职责】并行模式下构造 evolved eval 任务；先按 n_agents 顺序跑重型 evolution 并缓存。
 def _evolved_tasks(
     instances: list[BenchmarkInstance],
     cfg_base: RunConfig,
@@ -1136,6 +1528,7 @@ def _evolved_tasks(
     """
     _, test_seeds = _train_test_seeds(seeds, cfg_base.evolved_test_seeds)
 
+    # 中文：找出哪些实例仍有待评测种子，以及它们需要哪些 n_agents 的 evolution summary。
     # Which instances still have a pending eval? (and which n_agents they need.)
     pending: list[tuple[BenchmarkInstance, list[int]]] = []
     for instance in instances:
@@ -1151,6 +1544,8 @@ def _evolved_tasks(
     if not pending:
         return []
 
+    # 中文：按需要的 n_agents 顺序预运行并缓存重型 evolution。这里的失败（例如 provider 全挂）
+    # 不能中止整个网格：记录日志并跳过该 n_agents 的 evolved 臂；不写记录，之后 --resume 会重试。
     # Pre-run + cache the heavy evolution sequentially, once per needed n_agents.
     # A failure here (e.g. a total provider outage) must NOT abort the whole grid:
     # log it and skip the evolved arm for that n_agents this run -- nothing is
@@ -1178,6 +1573,7 @@ def _evolved_tasks(
                     flush=True,
                 )
 
+    # 中文：现在构造独立的逐实例 eval 任务；上面 evolution 失败的 n_agents 保持未记录，供 resume 重试。
     # Now build the independent per-instance eval tasks (skipping any n_agents
     # whose evolution failed above -- left un-recorded so --resume retries it).
     tasks: list[_RunTask] = []
@@ -1200,6 +1596,7 @@ def _evolved_tasks(
     return tasks
 
 
+# 【职责】对一个 n_agents 跑一次带验证门的 run_evolution，并返回可复用 summary。
 def _compute_evolution_summary(
     n_agents: int,
     adapter: SiloBenchAdapter,
@@ -1245,6 +1642,7 @@ def _compute_evolution_summary(
     )
 
 
+# 【职责】从 evolution summary 提取附加到每条 evolved eval 记录的 gate/验证字段。
 def _evolved_extra(summary: dict[str, Any]) -> dict[str, Any]:
     """The gate/summary fields attached to every evolved eval record."""
     gate = summary["gate"]
@@ -1261,10 +1659,12 @@ def _evolved_extra(summary: dict[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# 中文：四个实验臂各自的顺序执行器。                                         #
 # Per-arm runners.                                                            #
 # --------------------------------------------------------------------------- #
 
 
+# 【职责】顺序模式 fixed 臂：对每个固定 topology 和 seed 跑 planner-OFF 协议路径。
 def _run_fixed_arm(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -1304,6 +1704,47 @@ def _run_fixed_arm(
     return records
 
 
+# 【职责】顺序模式 SILO 论文协议臂：逐 seed 动态执行 P2P/Broadcast/SFS。
+def _run_paper_protocol_arm(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seeds: list[int],
+    protocol: str,
+    client: LLMClient,
+    ckpt: _Checkpoint,
+    *,
+    progress: _Progress | None = None,
+) -> list[dict[str, Any]]:
+    """Run one of the three paper transports over all requested seeds."""
+    records: list[dict[str, Any]] = []
+    for seed in seeds:
+        key = (protocol, instance.case_id, instance.n_agents, seed, None)
+        if ckpt.done(key):
+            continue
+        cfg = _cfg_for(cfg_base, instance.n_agents, use_planner=False, seed=seed)
+        record = _run_unit(
+            lambda c=cfg, p=protocol: run_silo_paper_protocol(
+                instance,
+                c,
+                protocol=p,
+                llm_client=client,
+            ),
+            arm=protocol,
+            instance=instance,
+            seed=seed,
+            topology=f"paper_{protocol}",
+            extra={
+                "information_goal": "all_agents",
+                "paper_protocol": protocol,
+            },
+            progress=progress,
+        )
+        ckpt.append(record)
+        records.append(record)
+    return records
+
+
+# 【职责】顺序模式 select 臂：对每个 seed 跑 QueenBee topology_select。
 def _run_select_arm(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -1340,6 +1781,19 @@ def _run_select_arm(
     return records
 
 
+
+# 【职责】按信息目标过滤母题证据行：sink 与 all_agents 的结构证据绝不混入同一先验。
+# - 行缺 information_goal 视为 legacy sink 行（只服务 sink 聚合）。
+def _motif_rows_for_goal(
+    rows: list[dict[str, Any]], goal: str
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if str(row.get("information_goal") or "sink") == (goal or "sink")
+    ]
+
+# 【职责】顺序模式 graphgen 臂：对每个 seed 生成/选择 DAG，并把新母题证据返回给后续条件。
 def _run_graphgen_arm(
     instance: BenchmarkInstance,
     cfg_base: RunConfig,
@@ -1361,7 +1815,10 @@ def _run_graphgen_arm(
     caller for subsequent conditions. A failed or resumed (skipped) run
     contributes no motif evidence (it has no fresh selected-topology/loss signal).
     """
-    motif_stats = aggregate_motif_losses(motif_rows) if motif_rows else None
+    goal_rows = _motif_rows_for_goal(
+        motif_rows, getattr(cfg_base, "silo_eval_mode", "sink")
+    )
+    motif_stats = aggregate_motif_losses(goal_rows) if goal_rows else None
     records: list[dict[str, Any]] = []
     new_motif_rows: list[dict[str, Any]] = []
     for seed in seeds:
@@ -1385,18 +1842,32 @@ def _run_graphgen_arm(
             seed=seed,
             topology=None,
             extra_from_score=lambda s: {
+                "planner_mode": "graph_generate",
                 "generated_steps": s.extra.get("generated_steps"),
-                "graph_fallback_reason": s.extra.get("graph_fallback_reason"),
+                "graph_generation_failed": s.extra.get("graph_generation_failed"),
+                "provenance": s.extra.get("provenance"),
+                "graph_artifacts_dir": s.extra.get("graph_artifacts_dir"),
+                "information_goal": s.extra.get("information_goal")
+                or s.extra.get("silo_eval_mode"),
             },
             progress=progress,
         )
+        # 中文：真实成功/失败运行会把（选中拓扑，loss）反馈成母题证据，让先验跨条件累积；
+        # 带 error 的失败记录没有新拓扑/损失信号，因此不贡献母题证据。
         # A real run feeds its (selected topology, loss) back as motif evidence so
         # the prior accumulates across conditions; a failed run (carrying
         # ``error``) has no fresh topology/loss signal and contributes none.
-        if "error" not in record:
+        if "error" not in record and not record.get("graph_generation_failed"):
             new_motif_rows.append(
                 {
-                    "motif_keys": [f"topology={record.get('topology')}"],
+                    # 中文：母题键带 information_goal 命名空间，sink 与 all_agents 的
+                    #   结构证据互不可见。
+                    # Motif keys are namespaced by information_goal so sink and
+                    # all_agents structural evidence never mix.
+                    "information_goal": getattr(cfg_base, "silo_eval_mode", "sink"),
+                    "motif_keys": [
+                        f"goal={getattr(cfg_base, 'silo_eval_mode', 'sink')}|topology={record.get('topology')}"
+                    ],
                     "mean_primary_loss": 0.0 if record["success"] else 1.0,
                 }
             )
@@ -1405,6 +1876,109 @@ def _run_graphgen_arm(
     return records, new_motif_rows
 
 
+def _run_programgen_arm(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seeds: list[int],
+    client: LLMClient,
+    ckpt: _Checkpoint,
+    *,
+    program_candidates: int,
+    motif_rows: list[dict[str, Any]],
+    progress: _Progress | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run the independent ``phase_program_v1`` arm over every seed."""
+    goal = getattr(cfg_base, "silo_eval_mode", "sink")
+    goal_rows = _motif_rows_for_goal(motif_rows, goal)
+    motif_stats = aggregate_motif_losses(goal_rows) if goal_rows else None
+    records: list[dict[str, Any]] = []
+    new_motif_rows: list[dict[str, Any]] = []
+    for seed in seeds:
+        key = ("programgen", instance.case_id, instance.n_agents, seed, None)
+        if ckpt.done(key):
+            continue
+        cfg = _cfg_for(
+            cfg_base,
+            instance.n_agents,
+            use_planner=True,
+            planner_mode="program_generate",
+            num_graph_candidates=program_candidates,
+            seed=seed,
+        )
+        record = _run_unit(
+            lambda c=cfg: run_instance(
+                instance, c, llm_client=client, motif_stats=motif_stats
+            ),
+            arm="programgen",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra_from_score=lambda s: {
+                "planner_mode": "program_generate",
+                "generated_steps": s.extra.get("generated_steps"),
+                "program_generation_failed": s.extra.get(
+                    "program_generation_failed"
+                ),
+                "program_format": s.extra.get("program_format"),
+                "provenance": s.extra.get("provenance"),
+                "program_artifacts_dir": s.extra.get("program_artifacts_dir"),
+                "information_goal": s.extra.get("information_goal")
+                or s.extra.get("silo_eval_mode"),
+            },
+            progress=progress,
+        )
+        if "error" not in record and not record.get("program_generation_failed"):
+            new_motif_rows.append(
+                {
+                    "information_goal": goal,
+                    "motif_keys": [
+                        f"goal={goal}|program={record.get('topology')}"
+                    ],
+                    "mean_primary_loss": 0.0 if record["success"] else 1.0,
+                }
+            )
+        ckpt.append(record)
+        records.append(record)
+    return records, new_motif_rows
+
+
+def _run_pycodegen_arm(
+    instance: BenchmarkInstance,
+    cfg_base: RunConfig,
+    seeds: list[int],
+    client: LLMClient,
+    ckpt: _Checkpoint,
+    *,
+    progress: _Progress | None = None,
+) -> list[dict[str, Any]]:
+    """Run the isolated ``python_generate`` arm over every seed."""
+    records: list[dict[str, Any]] = []
+    for seed in seeds:
+        key = ("pycodegen", instance.case_id, instance.n_agents, seed, None)
+        if ckpt.done(key):
+            continue
+        cfg = _cfg_for(
+            cfg_base,
+            instance.n_agents,
+            use_planner=True,
+            planner_mode="python_generate",
+            seed=seed,
+        )
+        record = _run_unit(
+            lambda c=cfg: run_instance(instance, c, llm_client=client),
+            arm="pycodegen",
+            instance=instance,
+            seed=seed,
+            topology=None,
+            extra_from_score=_pycodegen_score_extra,
+            progress=progress,
+        )
+        ckpt.append(record)
+        records.append(record)
+    return records
+
+
+# 【职责】顺序模式 evolved 臂：必要时跑一次进化环，再在留出测试种子上评估进化后的策略。
 def _run_evolved_arm(
     instance: BenchmarkInstance,
     adapter: SiloBenchAdapter,
@@ -1444,6 +2018,7 @@ def _run_evolved_arm(
     n_agents = instance.n_agents
     _, test_seeds = _train_test_seeds(seeds, cfg_base.evolved_test_seeds)
 
+    # 中文：找出当前实例还有哪些 eval seed 未完成。
     # Which eval seeds still need running for THIS instance?
     pending_seeds = [
         seed
@@ -1451,10 +2026,12 @@ def _run_evolved_arm(
         if not ckpt.done(("evolved", instance.case_id, n_agents, seed, None))
     ]
     if not pending_seeds:
+        # 中文：当前实例全部 eval 已 checkpoint：无需重新进化或评测，恢复记录已经带有 gate/summary 字段。
         # Everything for this instance is already checkpointed -> no evolution,
         # no eval; the resumed records carry the gate/summary fields already.
         return []
 
+    # 中文：惰性计算并缓存重型 evolution summary：只有确认有 eval 需要跑时才付这笔成本。
     # Lazily compute (and cache) the heavy evolution summary -- only now that we
     # know an eval actually needs it.
     if n_agents not in cache:
@@ -1506,6 +2083,7 @@ def _run_evolved_arm(
         "skill_bank_mutated": summary["skill_bank_mutated"],
     }
 
+    # 中文：在当前实例的留出/test seeds 上评估 evolved 策略：可能是选中的具名拓扑，也可能是自设计 DAG。
     # Evaluate the evolved policy on the held-out/test seeds for this instance:
     # a SELECTED named topology, or a self-designed DAG (evolved_mode).
     records: list[dict[str, Any]] = []
@@ -1520,10 +2098,12 @@ def _run_evolved_arm(
 
 
 # --------------------------------------------------------------------------- #
+# 中文：聚合块：把原始 run 记录折成每条件/全局表格字段。                     #
 # Aggregation blocks.                                                         #
 # --------------------------------------------------------------------------- #
 
 
+# 【职责】构建单个条件块：每个 arm 的聚合、fixed oracle 与 evolved gate 摘要。
 def _aggregate_condition_block(
     instance: BenchmarkInstance, cond_runs: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -1535,11 +2115,13 @@ def _aggregate_condition_block(
         "arms": arms_agg,
     }
 
+    # 中文：evolved 臂每条记录带验证门决策；在条件聚合里把它提到 arm 摘要层。
     # The 'evolved' arm carries a gate decision: surface it on the aggregate.
     evolved_runs = [r for r in cond_runs if r["arm"] == "evolved"]
     if evolved_runs and "gate" in evolved_runs[0]:
         block["arms"]["evolved"]["gate"] = evolved_runs[0]["gate"]
 
+    # 中文：fixed 臂报告 oracle（每个条件下最佳 topology）以及每 topology 明细。
     # Fixed arm: report the oracle (best topology per condition) + breakdown.
     fixed_runs = [r for r in cond_runs if r["arm"] == "fixed"]
     if fixed_runs:
@@ -1551,6 +2133,8 @@ def _aggregate_condition_block(
             for topo, rows in by_topology.items()
         }
         block["fixed_by_topology"] = fixed_by_topology
+        # 中文：oracle fixed = 平均成功率最高的 topology（平局时 token 更少者优先），
+        # 并使用该 topology 自己的聚合指标。
         # Oracle fixed = the topology with the highest mean success (tie-break:
         # lower tokens), recomputed as that topology's own aggregate.
         best_topo = max(
@@ -1564,14 +2148,17 @@ def _aggregate_condition_block(
     return block
 
 
+# 【职责】对一组扁平 run 记录计算所有展示指标的 mean/std。
 def _aggregate_metric_block(runs: list[dict[str, Any]]) -> dict[str, Any]:
     """mean +/- std for the metric keys over a flat list of run records."""
     entry: dict[str, Any] = {"n": len(runs)}
     for metric in _METRIC_KEYS:
         entry[metric] = _mean_std([float(r[metric]) for r in runs])
+    _add_optional_paper_metrics(entry, runs)
     return entry
 
 
+# 【职责】跨全部条件聚合每个 arm 的整体指标。
 def _aggregate_overall(
     runs: list[dict[str, Any]], arms: list[str]
 ) -> dict[str, Any]:
@@ -1585,10 +2172,12 @@ def _aggregate_overall(
 
 
 # --------------------------------------------------------------------------- #
+# 中文：报告渲染与文件输出。                                                 #
 # Rendering / output.                                                         #
 # --------------------------------------------------------------------------- #
 
 
+# 【职责】把 mean/std 指标格式化为报告文本；success/partial 可按百分比显示。
 def _fmt(stat: dict[str, float], *, pct: bool = False) -> str:
     """Render a mean +/- std stat. ``pct`` shows success/partial as percentages."""
     mean, std = stat["mean"], stat["std"]
@@ -1599,11 +2188,20 @@ def _fmt(stat: dict[str, float], *, pct: bool = False) -> str:
     return f"{mean:.2f}±{std:.2f}"
 
 
+# 【职责】把 results dict 渲染成 Table-1 风格 Markdown 报告。
 def render_report(results: dict[str, Any]) -> str:
     """Render the Table-1-style markdown report from a results dict."""
     arms = results["arms"]
     lines: list[str] = ["# masbench bench report", ""]
+    mode = results.get("silo_eval_mode")
+    if mode:
+        lines.append(
+            f"**Silo eval mode: `{mode}`** "
+            f"(clean_run={results.get('clean_run', False)})"
+        )
+        lines.append("")
 
+    # 中文：顶部摘要行：每个 arm 的整体成功率。
     # Top summary line: overall success per arm.
     overall = results.get("overall", {})
     summary_bits = [
@@ -1622,6 +2220,7 @@ def render_report(results: dict[str, Any]) -> str:
     for cond_key, block in results["conditions"].items():
         lines.append(f"## {block['case_id']} (n={block['n_agents']})  `{cond_key}`")
         lines.append("")
+        # 中文：每个条件下按平均成功率选最佳 arm；平局时 token 更少者优先。
         # Best arm per condition by mean success (tie-break: lower tokens).
         arm_aggs = block["arms"]
         present_arms = [a for a in arms if a in arm_aggs]
@@ -1648,6 +2247,32 @@ def render_report(results: dict[str, Any]) -> str:
                 f"| {_fmt(agg['tokens'])} |"
             )
             lines.append(row)
+        paper_arms = [
+            arm
+            for arm in present_arms
+            if all(metric in arm_aggs[arm] for metric in _PAPER_METRIC_KEYS)
+        ]
+        if paper_arms:
+            lines.append("")
+            lines.append(
+                "Paper metrics (S = mean correct-agent fraction; a run is solved "
+                "only when S=100%):"
+            )
+            lines.append("")
+            lines.append(
+                "| arm | S | P | C output tok/round | D |\n"
+                "| --- | --- | --- | --- | --- |"
+            )
+            for arm in paper_arms:
+                agg = arm_aggs[arm]
+                lines.append(
+                    f"| {arm} "
+                    f"| {_fmt(agg['paper_S'], pct=True)}% "
+                    f"| {_fmt(agg['paper_P'], pct=True)}% "
+                    f"| {_fmt(agg['paper_C'])} "
+                    f"| {_fmt(agg['paper_D'])} |"
+                )
+        # 中文：若 fixed 臂存在，追加 oracle fixed 说明和逐拓扑明细。
         # Oracle-fixed annotation + per-topology breakdown when the fixed arm ran.
         if "oracle_fixed" in block:
             oracle = block["oracle_fixed"]
@@ -1678,6 +2303,7 @@ def render_report(results: dict[str, Any]) -> str:
                     f"| {_fmt(agg['n_model_calls'])} "
                     f"| {_fmt(agg['tokens'])} |"
                 )
+        # 中文：若 evolved 臂存在，追加验证门决策说明。
         # Gate annotation when the evolved arm ran.
         if "evolved" in arm_aggs and "gate" in arm_aggs["evolved"]:
             gate = arm_aggs["evolved"]["gate"]
@@ -1689,6 +2315,7 @@ def render_report(results: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# 【职责】把每条件 x arm 的聚合摊平成 CSV 行。
 def _csv_rows(results: dict[str, Any]) -> list[dict[str, Any]]:
     """Flatten the per-condition aggregates into one row per condition x arm."""
     rows: list[dict[str, Any]] = []
@@ -1704,10 +2331,15 @@ def _csv_rows(results: dict[str, Any]) -> list[dict[str, Any]]:
             for metric in _METRIC_KEYS:
                 row[f"{metric}_mean"] = agg[metric]["mean"]
                 row[f"{metric}_std"] = agg[metric]["std"]
+            for metric in _PAPER_METRIC_KEYS:
+                stat = agg.get(metric)
+                row[f"{metric}_mean"] = stat["mean"] if stat else ""
+                row[f"{metric}_std"] = stat["std"] if stat else ""
             rows.append(row)
     return rows
 
 
+# 【职责】把完整结果、CSV 表和 Markdown 报告写到输出目录。
 def _write_outputs(results: dict[str, Any], out: Path) -> None:
     """Write results.json + results.csv + report.md under ``out``."""
     out.mkdir(parents=True, exist_ok=True)

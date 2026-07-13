@@ -1,4 +1,10 @@
 """masbench command-line interface."""
+# ============================================================
+# 【模块导读】masbench 命令行入口。
+# 定义 argparse 解析器与六个子命令：run(单实例)/run-suite(网格批量)/
+# report(汇总运行目录)/evolve(带留出集验证门的自进化)/bench(四臂对比→表1)/
+# curve(进化学习曲线)。每个子命令对应一个 _cmd_* 处理函数。
+# ============================================================
 
 from __future__ import annotations
 
@@ -20,6 +26,8 @@ from masbench.evolve import (
 )
 
 
+# 【职责】按 benchmark 名选择并构造对应的 BenchmarkAdapter。
+# - jssp 走 JSSPBenchAdapter；silo_bench 走 SiloBenchAdapter；其它名报错退出。
 def _adapter(benchmark: str, benchmarks_dir: str) -> SiloBenchAdapter:
     if benchmark == "jssp":
         from masbench.adapters.jssp_bench import JSSPBenchAdapter
@@ -30,6 +38,7 @@ def _adapter(benchmark: str, benchmarks_dir: str) -> SiloBenchAdapter:
     return SiloBenchAdapter(benchmarks_dir)
 
 
+# 【职责】从 argparse 命名空间组装一个 RunConfig(用 getattr 兜底缺省的可选项)。
 def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         benchmark=args.benchmark,
@@ -46,9 +55,35 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
         api_key_env=getattr(args, "api_key_env", None),
         seed=args.seed,
         request_timeout=getattr(args, "request_timeout", 90.0),
+        silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
+        python_repair_attempts=getattr(args, "python_repair_attempts", 3),
+        python_gen_temperature=getattr(args, "python_gen_temperature", None),
+        python_execution_timeout=getattr(args, "python_execution_timeout", 30.0),
+        python_cpu_seconds=getattr(args, "python_cpu_seconds", 10),
+        python_memory_mb=getattr(args, "python_memory_mb", 512),
+        python_max_output_bytes=getattr(args, "python_max_output_bytes", 1_000_000),
+        python_artifacts_dir=getattr(args, "python_artifacts_dir", None),
+        python_dry_run=getattr(args, "python_dry_run", True),
+        python_worker_contract=getattr(
+            args, "python_worker_contract", "action_json_v1"
+        ),
+        python_max_model_calls=getattr(args, "python_max_model_calls", 20),
+        python_max_completion_tokens=getattr(
+            args, "python_max_completion_tokens", 4000
+        ),
+        python_max_messages=getattr(args, "python_max_messages", 30),
+        hot_start_enabled=getattr(args, "hot_start_enabled", False),
+        hot_start_protocols=getattr(args, "hot_start_protocols", "auto"),
+        hot_start_topologies=getattr(args, "hot_start_topologies", "auto"),
+        hot_start_seed_count=getattr(args, "hot_start_seed_count", 1),
+        hot_start_dual_branch=getattr(args, "hot_start_dual_branch", True),
+        hot_start_innovation_mode=getattr(
+            args, "hot_start_innovation_mode", "auto"
+        ),
     )
 
 
+# 【职责】从命令行参数收集实例过滤条件(levels/agent_counts/cases)成字典。
 def _filters(args: argparse.Namespace) -> dict:
     filters: dict = {}
     if getattr(args, "levels", None):
@@ -60,6 +95,7 @@ def _filters(args: argparse.Namespace) -> dict:
     return filters
 
 
+# 【职责】把一次运行的实例信息+配置+评分打包成一条可序列化记录字典。
 def _record(instance: BenchmarkInstance, cfg: RunConfig, score: ScoreResult) -> dict:
     return {
         "benchmark": instance.benchmark,
@@ -71,6 +107,7 @@ def _record(instance: BenchmarkInstance, cfg: RunConfig, score: ScoreResult) -> 
     }
 
 
+# 【职责】run 子命令：跑单个实例并把记录 JSON 打印到标准输出。
 def _cmd_run(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
     base_cfg = _cfg_from_args(args)
@@ -81,6 +118,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+# 【职责】run-suite 子命令：按过滤条件跑一批实例，逐个落盘并写 summary.json。
 def _cmd_run_suite(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
     cfg = _cfg_from_args(args)
@@ -102,6 +140,7 @@ def _cmd_run_suite(args: argparse.Namespace) -> int:
     return 0
 
 
+# 【职责】report 子命令：读取一个运行目录下的所有记录 JSON，汇总后打印。
 def _cmd_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir)
     records = [
@@ -114,12 +153,17 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# 【职责】evolve 子命令：在 Silo-Bench 上跑带留出集验证门的自进化循环。
+# - 打开 planner 与技能进化；默认注入合成留出集使门控判定生效(见函数体注释)。
+# - 打印门控接受与否、J_before/J_after、训练/验证成功率与技能库变化。
 def _cmd_evolve(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
     cfg = RunConfig(
         benchmark=args.benchmark,
         use_planner=True,
         use_skill_evolution=True,
+        planner_mode=getattr(args, "planner_mode", "topology_select"),
+        evolved_mode=getattr(args, "planner_mode", "topology_select"),
         objective=args.objective,
         merge_mode=args.merge_mode,
         init_mode=args.init_mode,
@@ -129,7 +173,32 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
         api_key_env=getattr(args, "api_key_env", None),
         seed=args.seed,
         request_timeout=getattr(args, "request_timeout", 90.0),
+        silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
+        max_rounds=args.max_rounds,
+        python_repair_attempts=args.python_repair_attempts,
+        python_gen_temperature=args.python_gen_temperature,
+        python_execution_timeout=args.python_execution_timeout,
+        python_cpu_seconds=args.python_cpu_seconds,
+        python_memory_mb=args.python_memory_mb,
+        python_max_output_bytes=args.python_max_output_bytes,
+        python_artifacts_dir=args.python_artifacts_dir,
+        python_dry_run=args.python_dry_run,
+        python_worker_contract=args.python_worker_contract,
+        python_max_model_calls=args.python_max_model_calls,
+        python_max_completion_tokens=args.python_max_completion_tokens,
+        python_max_messages=args.python_max_messages,
+        hot_start_enabled=args.hot_start_enabled,
+        hot_start_protocols=args.hot_start_protocols,
+        hot_start_topologies=args.hot_start_topologies,
+        hot_start_seed_count=args.hot_start_seed_count,
+        hot_start_dual_branch=args.hot_start_dual_branch,
+        hot_start_innovation_mode=args.hot_start_innovation_mode,
     )
+    # 中文：离线(fake LLM)的 Silo 运行在成功时与拓扑无关，故默认注入一个合成的
+    #   多拓扑留出集加一个基线 incumbent，让门控判定变真实(见 masbench.evolve)。
+    #   用真实 LLM 时，传 --no-synthetic-held-out 让门控只按真实留出 Silo 运行打分；
+    #   该模式下不再播种合成基线 incumbent(它没有真实留出测量)，于是门控比较的是
+    #   planner 基于真实证据的兜底 vs 进化后的技能。
     # Offline (fake LLM) Silo runs are topology-invariant on success, so by
     # default we inject a synthetic multi-topology held-out set plus a baseline
     # incumbent to make the gate decision real (see masbench.evolve). With a real
@@ -173,8 +242,13 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
     return 0
 
 
+# 【职责】bench 子命令：论文级多臂对比，产出表1。
+# - base 配置只带共享旋钮；每臂的 planner 开关由 benchmark 框架自设。
+# - 支持断点续跑、并行 worker，写 results.json/csv 与 report.md。
 def _cmd_bench(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
+    # 中文：benchmark 框架会自行设置每个实验臂的 planner 开关，故 base 配置只携带
+    #   共享的运行旋钮(provider/model/objective/merge/init)。
     # The benchmark harness sets per-arm planner flags itself, so the base config
     # only carries the shared run knobs (provider/model/objective/merge/init).
     cfg_base = RunConfig(
@@ -191,6 +265,26 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         graph_validation_seeds=getattr(args, "graph_validation_seeds", 0),
         use_llm_insights=getattr(args, "use_llm_insights", False),
         evolved_test_seeds=getattr(args, "evolved_test_seeds", 1),
+        max_rounds=args.max_rounds,
+        silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
+        python_repair_attempts=args.python_repair_attempts,
+        python_gen_temperature=args.python_gen_temperature,
+        python_execution_timeout=args.python_execution_timeout,
+        python_cpu_seconds=args.python_cpu_seconds,
+        python_memory_mb=args.python_memory_mb,
+        python_max_output_bytes=args.python_max_output_bytes,
+        python_artifacts_dir=args.python_artifacts_dir,
+        python_dry_run=args.python_dry_run,
+        python_worker_contract=args.python_worker_contract,
+        python_max_model_calls=args.python_max_model_calls,
+        python_max_completion_tokens=args.python_max_completion_tokens,
+        python_max_messages=args.python_max_messages,
+        hot_start_enabled=args.hot_start_enabled,
+        hot_start_protocols=args.hot_start_protocols,
+        hot_start_topologies=args.hot_start_topologies,
+        hot_start_seed_count=args.hot_start_seed_count,
+        hot_start_dual_branch=args.hot_start_dual_branch,
+        hot_start_innovation_mode=args.hot_start_innovation_mode,
     )
     results = run_benchmark(
         adapter,
@@ -218,6 +312,8 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+# 【职责】curve 子命令：在互斥的留出案例划分上画进化学习曲线。
+# - 同时给出「训练案例数」的数据曲线与「自进化轮数」的轮数曲线，写 curves.json。
 def _cmd_curve(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
     cfg = RunConfig(
@@ -234,6 +330,25 @@ def _cmd_curve(args: argparse.Namespace) -> int:
         num_graph_candidates=args.graphgen_candidates,
         graph_validation_seeds=getattr(args, "graph_validation_seeds", 0),
         use_llm_insights=getattr(args, "use_llm_insights", False),
+        silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
+        python_repair_attempts=args.python_repair_attempts,
+        python_gen_temperature=args.python_gen_temperature,
+        python_execution_timeout=args.python_execution_timeout,
+        python_cpu_seconds=args.python_cpu_seconds,
+        python_memory_mb=args.python_memory_mb,
+        python_max_output_bytes=args.python_max_output_bytes,
+        python_artifacts_dir=args.python_artifacts_dir,
+        python_dry_run=args.python_dry_run,
+        python_worker_contract=args.python_worker_contract,
+        python_max_model_calls=args.python_max_model_calls,
+        python_max_completion_tokens=args.python_max_completion_tokens,
+        python_max_messages=args.python_max_messages,
+        hot_start_enabled=args.hot_start_enabled,
+        hot_start_protocols=args.hot_start_protocols,
+        hot_start_topologies=args.hot_start_topologies,
+        hot_start_seed_count=args.hot_start_seed_count,
+        hot_start_dual_branch=args.hot_start_dual_branch,
+        hot_start_innovation_mode=args.hot_start_innovation_mode,
     )
     from masbench.curve import run_curves
 
@@ -268,6 +383,7 @@ def _cmd_curve(args: argparse.Namespace) -> int:
     return 0
 
 
+# 【职责】把一批运行记录聚合为汇总(实例数/成功率/token/消息数/按案例细分)。
 def _summarize(records: list[dict]) -> dict:
     n = len(records)
     successes = sum(1 for r in records if r["score"]["success"])
@@ -286,10 +402,13 @@ def _summarize(records: list[dict]) -> dict:
     }
 
 
+# 【职责】构建 argparse 顶层解析器与全部子命令(run/run-suite/report/evolve/bench/curve)。
+# - add_common 挂载各子命令共享的参数；每个子命令用 set_defaults(func=...) 绑定处理函数。
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="masbench", description="Clean MAS benchmark pipeline")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    # 【职责】给一个子解析器挂载所有子命令共享的参数(benchmark/拓扑/LLM/planner 等)。
     def add_common(p: argparse.ArgumentParser) -> None:
         p.add_argument("--benchmark", default="silo_bench")
         p.add_argument("--benchmarks-dir", default="third_party/acl26-silo-bench/benchmarks")
@@ -314,10 +433,89 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--planner", action="store_true",
                        help="enable the QueenBee planner + generalized ProtocolRunner")
         p.add_argument("--planner-mode", dest="planner_mode",
-                       choices=["topology_select", "graph_generate"],
+                       choices=[
+                           "topology_select",
+                           "graph_generate",
+                           "program_generate",
+                           "python_generate",
+                       ],
                        default="topology_select",
                        help="(planner) topology_select picks a named topology; "
-                            "graph_generate has the emperor LLM invent a temporal DAG")
+                            "graph_generate invents a free temporal DAG; "
+                            "program_generate independently emits restricted "
+                            "phase_program_v1 stages; python_generate emits and "
+                            "sandboxes a complete constrained program.py")
+        p.add_argument("--python-repair-attempts", type=int, default=3,
+                       help="maximum bounded replace-code repairs for python_generate")
+        p.add_argument("--python-gen-temperature", type=float, default=None,
+                       help="architect temperature for python_generate (default: worker temperature)")
+        p.add_argument("--python-execution-timeout", type=float, default=30.0)
+        p.add_argument("--python-cpu-seconds", type=int, default=10)
+        p.add_argument("--python-memory-mb", type=int, default=512)
+        p.add_argument("--python-max-output-bytes", type=int, default=1_000_000)
+        p.add_argument("--python-artifacts-dir", default=None)
+        p.add_argument("--no-python-dry-run", dest="python_dry_run",
+                       action="store_false",
+                       help="disable the fake canary preflight (not recommended)")
+        p.set_defaults(python_dry_run=True)
+        p.add_argument("--python-max-model-calls", type=int, default=20)
+        p.add_argument("--python-max-completion-tokens", type=int, default=4000)
+        p.add_argument("--python-max-messages", type=int, default=30)
+        p.add_argument("--python-worker-contract", dest="python_worker_contract",
+                       choices=["action_json_v1", "message_only_v1",
+                                "message_only_v2"],
+                       default="action_json_v1",
+                       help="PythonGen worker output contract: action_json_v1 "
+                            "(legacy worker action JSON), message_only_v1 "
+                            "(planner-source routing and plain-text workers), "
+                            "or message_only_v2 (synchronized final submit)")
+        p.add_argument("--silo-eval-mode", dest="silo_eval_mode",
+                       choices=["sink", "all_agents"], default="sink",
+                       help="information goal: sink grades ONLY the designated "
+                            "sink agent; all_agents requires EVERY agent to "
+                            "independently hold the correct answer (prompts, "
+                            "graph validation, scoring, skill banks, caches and "
+                            "reports are all namespaced by this mode)")
+        p.add_argument(
+            "--hot-start",
+            dest="hot_start_enabled",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help="pretrain evolution from measured paper protocols/fixed "
+                 "topologies before normal gated learning",
+        )
+        p.add_argument(
+            "--hot-start-protocols",
+            default="auto",
+            help="comma-separated p2p,broadcast,sfs; auto enables all three "
+                 "only in all_agents mode",
+        )
+        p.add_argument(
+            "--hot-start-topologies",
+            default="auto",
+            help="comma-separated executable fixed topologies; auto picks "
+                 "goal-appropriate defaults",
+        )
+        p.add_argument("--hot-start-seed-count", type=int, default=1)
+        p.add_argument(
+            "--hot-start-dual-branch",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="for each train pair run both existing-skill reuse and fresh "
+                 "parent-conditioned generation",
+        )
+        p.add_argument(
+            "--hot-start-innovation-mode",
+            choices=[
+                "auto",
+                "graph_generate",
+                "program_generate",
+                "python_generate",
+            ],
+            default="auto",
+            help="planner used by the fresh branch (auto follows the evolved "
+                 "generator, or graph_generate for topology_select)",
+        )
 
     p_run = sub.add_parser("run", help="run a single instance")
     add_common(p_run)
@@ -363,7 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_bench = sub.add_parser(
         "bench",
-        help="paper-grade arm comparison (fixed/select/graphgen/evolved) -> Table 1",
+        help="paper-grade arm comparison (graphgen/programgen/pycodegen) -> Table 1",
     )
     add_common(p_bench)
     p_bench.add_argument("--levels", nargs="+", default=None)
@@ -374,8 +572,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--arms",
         nargs="+",
         default=list(DEFAULT_ARMS),
-        choices=["fixed", "select", "graphgen", "evolved"],
-        help="which arms to compare (default: fixed select graphgen)",
+        choices=[
+            "fixed",
+            "select",
+            "graphgen",
+            "programgen",
+            "pycodegen",
+            "evolved",
+            "p2p",
+            "broadcast",
+            "sfs",
+        ],
+        help=(
+            "which arms to compare; graphgen, programgen, and pycodegen are independent; "
+            "p2p/broadcast/sfs reproduce the three "
+            "SILO-BENCH paper transports and require --silo-eval-mode all_agents"
+        ),
     )
     p_bench.add_argument(
         "--fixed-topologies",
@@ -418,11 +630,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_bench.add_argument(
         "--evolved-mode",
         dest="evolved_mode",
-        choices=["topology_select", "graph_generate", "select_then_refine"],
+        choices=[
+            "topology_select",
+            "graph_generate",
+            "program_generate",
+            "python_generate",
+            "select_then_refine",
+        ],
         default="topology_select",
         help="the evolved arm's mode. topology_select (default): evolution tunes "
              "the skill bank, then PICKS a named topology. graph_generate: the "
-             "emperor DESIGNS a bespoke DAG from scratch. select_then_refine: "
+             "emperor DESIGNS a bespoke DAG from scratch. program_generate: "
+             "evolve and deploy the independent restricted phase DSL. "
+             "python_generate: evolve and deploy validated full Python programs. "
+             "select_then_refine: "
              "evidence via select (bank gets the WORKING topologies' reference "
              "specs), then the emperor REFINES a DAG from those references "
              "(anchor-on-what-works).",
@@ -469,7 +690,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_curve.add_argument("--use-llm-insights", dest="use_llm_insights", action="store_true")
     p_curve.add_argument(
         "--evolved-mode", dest="evolved_mode",
-        choices=["topology_select", "graph_generate", "select_then_refine"],
+        choices=[
+            "topology_select",
+            "graph_generate",
+            "program_generate",
+            "python_generate",
+            "select_then_refine",
+        ],
         default="graph_generate",
     )
     p_curve.add_argument(
@@ -501,6 +728,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# 【职责】CLI 入口：解析 argv，分发到所选子命令的 func 并返回其退出码。
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)

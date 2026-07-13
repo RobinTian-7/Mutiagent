@@ -1,6 +1,12 @@
 import masbench  # noqa: F401  (bootstraps exp_graph path)
 from masbench.core.instance import BenchmarkInstance
-from masbench.core.task_bridge import BenchmarkTaskAdapter, canonical_answer
+import json
+
+from masbench.core.task_bridge import (
+    BenchmarkTaskAdapter,
+    canonical_answer,
+    private_answer_key,
+)
 
 
 def _instance():
@@ -27,12 +33,19 @@ def test_canonical_answer_scalar_and_json():
 def test_build_global_task_and_adjudication_hides_truth():
     adapter = BenchmarkTaskAdapter(_instance())
     gt = adapter.build_global_task()
-    assert gt["answer_key"] == "9"
+    # Ground truth now lives ONLY in the private scoring payload.
+    assert private_answer_key(gt) == "9"
+    assert "answer_key" not in gt
     assert gt["n_agents"] == 2
-    # Ground truth and raw shards must not leak into adjudication context.
+    # The model-visible context is an explicit allowlist: no answers, no
+    # shards, no meta, no lookupable case_id -- only the opaque task_ref.
     context = adapter.format_adjudication_context(gt)
-    assert "answer_key" not in context
+    assert "answer_key" not in json.dumps(context)
+    assert "expected_output" not in json.dumps(context)
     assert "shards" not in context
+    assert "meta" not in context
+    assert "case_id" not in context
+    assert context["task_ref"]
 
 
 def test_split_gives_each_agent_only_its_shard():

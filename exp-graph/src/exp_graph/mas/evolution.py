@@ -1,5 +1,11 @@
 """Minister analysts and batch consolidation for MAS skill evolution."""
 
+# ============================================================
+# 【模块导读】面向 MAS 技能进化的大臣分析器与批次固化(合并入库)。
+# - 结果/成本/反例/轨迹四类大臣从证据中提炼技能补丁(冠军选择、避雷、触发条件等生成规则)。
+# - classify_topology / make_skill_card 把拓扑证据组装成带触发条件的技能卡。
+# - consolidate_batch 把 add/merge/discard 补丁作为一个批次应用到技能库。
+# ============================================================
 from __future__ import annotations
 
 import hashlib
@@ -13,10 +19,23 @@ from exp_graph.mas.ingest import (
     aggregate_rows_to_evidence,
     load_experiment_directory,
 )
-from exp_graph.mas.schemas import EvidenceRecord, EvolutionBatch, SkillCard, SkillPatch
+from exp_graph.mas.schemas import (
+    EvidenceRecord,
+    EvolutionBatch,
+    GraphSkillPayload,
+    ModeSkillPayload,
+    NamedTopologySkillPayload,
+    PhaseProgramSkillPayload,
+    PythonSkillPayload,
+    SkillCard,
+    SkillPatch,
+)
 from exp_graph.mas.skill_bank import SkillBank
+from exp_graph.mas.skill_payloads import skill_type_for_payload
 
 
+# 【职责】结果分析大臣：从聚合指标中提炼精度/拓扑模式。
+# - 证据按拓扑(生成图叠加条件桶)分组，逐组生成合并补丁，并追加避雷(反例)补丁。
 class ResultAnalystMinister:
     """Extract accuracy/topology patterns from aggregate metrics."""
 
@@ -42,6 +61,8 @@ class ResultAnalystMinister:
         return patches
 
 
+# 【职责】成本分析大臣：从聚合指标中提炼预算优先的观察。
+# - 需≥2 种拓扑可比才出手：按(平均 token 成本, 平均消息数)选最便宜拓扑生成补丁(置信度 0.9)。
 class CostAnalystMinister:
     """Extract budget-first observations from aggregate metrics."""
 
@@ -96,6 +117,7 @@ class CostAnalystMinister:
         ]
 
 
+# 【职责】反例大臣：把不稳定或被支配的拓扑记录为反例(避雷技能补丁)。
 class CounterexampleMinister:
     """Record unstable or dominated topologies as counterexamples."""
 
@@ -111,6 +133,7 @@ class CounterexampleMinister:
         return build_negative_patches(evidence, task_family=task_family)
 
 
+# 【职责】轨迹分析大臣：不要求 CF 结果完美，也能从轨迹证据中提炼可复用的动态信号。
 class TraceAnalystMinister:
     """Extract trace-to-skill dynamics without requiring perfect CF outcomes."""
 
@@ -127,6 +150,8 @@ class TraceAnalystMinister:
             )
         ] if trace_rows else []
 
+    # 【职责】按拓扑聚合 trace 证据：汇总 risk_tags 生成风险注记与回退提示(置信度 0.7)。
+    # - sink_quality_gap→回退中庸 mesh_star；合并重试/解析错误→改用 LLM 信念合并或投票。
     def analyze_evidence(
         self,
         records: list[EvidenceRecord],
@@ -195,6 +220,7 @@ class TraceAnalystMinister:
         return patches
 
 
+# 【职责】从实验目录加载聚合数据，由结果/成本两位大臣生成引导(bootstrap)进化批次。
 def build_evolution_batch_from_experiment_dir(
     directory: Path | str,
     *,
@@ -210,6 +236,8 @@ def build_evolution_batch_from_experiment_dir(
     )
 
 
+# 【职责】从只追加(append-only)的证据记录构建补丁候选批次。
+# - 汇集结果/成本/反例/轨迹四路大臣的补丁为一个 EvolutionBatch。
 def build_evolution_batch_from_evidence(
     records: list[EvidenceRecord],
     *,
@@ -230,6 +258,8 @@ def build_evolution_batch_from_evidence(
     )
 
 
+# 【职责】把 add/merge/discard 补丁作为一个批次应用(固化/合并入库)到技能库。
+# - discard 跳过；目标技能已在库→按 merge 应用；否则有候选技能卡→按 add 应用。
 def consolidate_batch(batch: EvolutionBatch, bank: SkillBank | None = None) -> SkillBank:
     """Apply add/merge/discard patches as one batch."""
     skill_bank = bank or SkillBank()
@@ -243,6 +273,9 @@ def consolidate_batch(batch: EvolutionBatch, bank: SkillBank | None = None) -> S
     return skill_bank
 
 
+# 【职责】结果补丁生成规则：取 observed 的 aggregate/run 证据，按拓扑(生成图叠加条件桶)分组。
+# - 每组汇总 rmse/token 成本/消息数/精确匹配率的均值写入期望权衡，并附经验教训。
+# - 产出 merge 补丁并把教训写入 rationale_rules，置信度 0.75。
 def build_result_patches_from_evidence(
     records: list[EvidenceRecord],
     *,
@@ -312,6 +345,9 @@ def build_result_patches_from_evidence(
     return patches
 
 
+# 【职责】成本补丁生成规则：证据须覆盖≥2 种拓扑才可比，否则不产出。
+# - 按(token 成本, 消息数)取最便宜记录，为其技能卡生成 merge 补丁。
+# - 期望权衡写明"最低观测通信成本/与对等(peer)传播相比可能牺牲精度"，置信度 0.9。
 def build_cost_patches_from_evidence(
     records: list[EvidenceRecord],
     *,
@@ -370,6 +406,9 @@ def build_cost_patches_from_evidence(
     ]
 
 
+# 【职责】反例(避雷)补丁生成规则：按 n_agents 分组比较各拓扑 rmse。
+# - rmse 超过组内最优 1.75 倍判为"被支配"，为其生成 cf_avoid_* 避雷技能补丁。
+# - 补丁附"该拓扑在观测证据中被支配"的风险注记，置信度 0.7。
 def build_counterexample_patches_from_evidence(
     records: list[EvidenceRecord],
     *,
@@ -447,6 +486,7 @@ def build_counterexample_patches_from_evidence(
     return patches
 
 
+# 【职责】为单个拓扑的证据行生成结果合并补丁：汇总 rmse/token/消息均值并构造技能卡(置信度 0.75)。
 def build_skill_patch_for_topology(
     topology: str,
     rows: list[dict[str, Any]],
@@ -463,6 +503,8 @@ def build_skill_patch_for_topology(
         "mean_messages": avg_messages,
         "lesson": lesson,
     }
+    # 中文：通用(非 CF)证据带有换算后的主损失及其指标名；把两者透传到技能卡，
+    #   让评分逻辑直接从技能卡读取损失。CF 行从不携带这些键，故该分支对 CF 技能是空操作。
     # Generic (non-CF) evidence carries a converted primary loss + its name;
     # propagate them so scoring reads the loss directly from the skill card.
     # CF rows never carry these keys, so this branch is a no-op for CF skills.
@@ -501,6 +543,8 @@ def build_skill_patch_for_topology(
     )
 
 
+# 【职责】dict 证据版避雷补丁规则：同 n_agents 组内 rmse > 最优×1.75 判为被支配。
+# - 为被支配拓扑生成 cf_avoid_* 避雷技能补丁(置信度 0.7)。
 def build_negative_patches(
     evidence: list[dict[str, Any]],
     *,
@@ -555,6 +599,8 @@ def build_negative_patches(
     return patches
 
 
+# 【职责】把拓扑名映射为(目标, 算子, 技能 id, 经验教训)：补丁命名与技能定位的基础规则。
+# - peer+star=精度优先；tree=预算优先；mesh_star=中庸；其余拓扑走通用兜底 id。
 def classify_topology(topology: str) -> tuple[str, list[str], str, str]:
     if topology == "one_peer_exponential_dag_star":
         return (
@@ -585,6 +631,100 @@ def classify_topology(topology: str) -> tuple[str, list[str], str, str]:
     )
 
 
+# 【职责】从证据行推断 information_goal；混合模式的证据违反隔离不变式，直接报错。
+def _evidence_information_goal(evidence: list[dict[str, Any]]) -> str:
+    goals = {
+        str(row.get("information_goal"))
+        for row in evidence
+        if row.get("information_goal")
+    }
+    if len(goals) > 1:
+        raise ValueError(
+            f"skill evidence mixes information goals {sorted(goals)}; "
+            "sink and all_agents evidence must never merge into one card"
+        )
+    return goals.pop() if goals else "sink"
+
+
+# 【职责】推断卡片 provenance：证据行显式值优先；否则按拓扑名推断
+#   (generated:* -> llm_generated，具名拓扑 -> fixed_named)。
+def _evidence_provenance(
+    evidence: list[dict[str, Any]], topology_name: str
+) -> str:
+    allowed = {
+        "llm_generated",
+        "program_generated",
+        "llm_generated_python",
+        "skill_replay",
+        "fixed_named",
+        "named_fallback",
+        "fake",
+    }
+    explicit = [
+        str(row.get("provenance"))
+        for row in evidence
+        if str(row.get("provenance")) in allowed
+    ]
+    if explicit:
+        # 中文：若同时出现具名与生成来源，取"最脏"者，防止具名兜底伪装成生成结构。
+        # If named and generated provenances co-occur, keep the dirtiest one so a
+        # named fallback can never masquerade as a generated structure.
+        for dirty in ("fake", "named_fallback", "fixed_named"):
+            if dirty in explicit:
+                return dirty
+        if "program_generated" in explicit:
+            return "program_generated"
+        if "llm_generated_python" in explicit:
+            return "llm_generated_python"
+        if "llm_generated" in explicit:
+            return "llm_generated"
+        if "skill_replay" in explicit:
+            return "skill_replay"
+        return explicit[0]
+    if str(topology_name).startswith("program:"):
+        return "program_generated"
+    if str(topology_name).startswith("python:"):
+        return "llm_generated_python"
+    return (
+        "llm_generated"
+        if str(topology_name).startswith("generated:")
+        else "fixed_named"
+    )
+
+
+def _evidence_planner_mode(
+    evidence: list[dict[str, Any]], topology_name: str
+) -> str:
+    modes = {
+        (
+            "topology_select"
+            if str(row.get("planner_mode")) == "fixed_named"
+            else str(row.get("planner_mode"))
+        )
+        for row in evidence
+        if row.get("planner_mode")
+    }
+    if len(modes) > 1:
+        raise ValueError(
+            f"skill evidence mixes planner modes {sorted(modes)}; generated "
+            "program and free-graph evidence must never merge into one card"
+        )
+    if modes:
+        return modes.pop()
+    if str(topology_name).startswith("program:"):
+        return "program_generate"
+    if str(topology_name).startswith("python:"):
+        return "python_generate"
+    if str(topology_name).startswith("generated:"):
+        return "graph_generate"
+    return "topology_select"
+
+
+# 【职责】把证据组装成一张技能卡：推断条件范围、结构特征、最佳协议规格与操作建议。
+# - 触发条件记录任务族与 agent/数组规模条件桶；skill_id 先按条件桶、再按任务族限定命名。
+# - 回退默认指向预算优先 cf_budget_tree；非 CF 的 cf_avoid_* 额外打 counterexample 标签。
+# - information_goal/provenance：显式参数优先，否则从证据行推断。skill_id 追加模式
+#   后缀，trigger 记录 information_goal —— sink 与 all_agents 的卡从命名到检索全隔离。
 def make_skill_card(
     *,
     skill_id: str,
@@ -597,14 +737,51 @@ def make_skill_card(
     evidence_refs: list[str] | None = None,
     counterexamples: list[dict[str, object]] | None = None,
     task_family: str = "count_frequency",
+    information_goal: str | None = None,
+    provenance: str | None = None,
 ) -> SkillCard:
     feature_evidence = analysis_evidence if analysis_evidence is not None else evidence
+    # 中文：目标显式性判定：显式参数或证据行携带 information_goal 才启用模式命名空间
+    #   （Silo 行自泄漏修复起总是携带）；CF 等 legacy 证据不携带 -> 卡片字节级不变。
+    # Mode namespacing activates only when the goal is EXPLICIT (param or rows;
+    # Silo rows always carry it since the leakage fix). Legacy CF evidence has
+    # no goal signal, so those cards stay byte-identical.
+    _rows_goal = _evidence_information_goal(feature_evidence)
+    _goal_explicit = information_goal is not None or any(
+        row.get("information_goal") for row in feature_evidence
+    )
+    resolved_goal = information_goal or _rows_goal
+    resolved_provenance = provenance or (
+        _evidence_provenance(feature_evidence, topology_name)
+        if _goal_explicit
+        or any(row.get("provenance") for row in feature_evidence)
+        else None
+    )
+    resolved_planner_mode = _evidence_planner_mode(
+        feature_evidence,
+        topology_name,
+    )
+    _planner_mode_explicit = any(
+        row.get("planner_mode") for row in feature_evidence
+    ) or str(topology_name).startswith(("program:", "python:"))
     condition_scope = infer_condition_scope(feature_evidence)
     structure_features = infer_topology_structure_features(
         topology_name,
         feature_evidence,
     )
     protocol_spec = _best_protocol_spec(feature_evidence)
+    reasoning_policy = _reasoning_policy_from_spec(protocol_spec)
+    python_policy = (
+        _best_python_policy(feature_evidence)
+        if resolved_planner_mode == "python_generate"
+        else None
+    )
+    if resolved_planner_mode == "python_generate":
+        reasoning_policy = _python_reasoning_policy(
+            str((python_policy or {}).get("worker_contract") or "action_json_v1")
+        )
+    observed_failure_modes = _failure_modes_from_evidence(feature_evidence)
+    observed_counterexamples = _failure_counterexamples(feature_evidence)
     operation_recommendations = default_operation_recommendations(
         topology_name,
         structure_features,
@@ -618,6 +795,12 @@ def make_skill_card(
         ),
         task_family,
     )
+    # 中文：显式目标时 skill_id 追加信息目标后缀（sink 卡与 all_agents 卡不可能同名，
+    #   consolidation 的按 id 路由天然隔离），trigger 记录 information_goal。
+    # With an explicit goal the skill_id gets the goal suffix (sink and
+    # all_agents cards can never share an id) and the trigger records the goal.
+    if _goal_explicit:
+        final_skill_id = f"{final_skill_id}__{resolved_goal}"
     trigger = {
         "task_family": task_family,
         "min_agents": condition_scope.get("min_agents", 1),
@@ -625,6 +808,10 @@ def make_skill_card(
         "agent_bucket": condition_scope.get("agent_bucket", "agents_any"),
         "condition_key": condition_scope.get("condition_key", "agents_any__arrays_any"),
     }
+    if _goal_explicit:
+        trigger["information_goal"] = resolved_goal
+    if _planner_mode_explicit:
+        trigger["planner_mode"] = resolved_planner_mode
     if condition_scope.get("min_array_size") is not None:
         trigger.update(
             {
@@ -641,36 +828,61 @@ def make_skill_card(
     if condition_scope.get("array_sizes"):
         trigger["array_sizes"] = condition_scope["array_sizes"]
     budget_fallback_id = family_scoped_skill_id("cf_budget_tree", task_family)
+    if _goal_explicit:
+        budget_fallback_id = f"{budget_fallback_id}__{resolved_goal}"
     tags = ["mas", "emperor-skill", _family_tag(task_family), objective]
+    # 中文：CF 的避雷技能靠 ``cf_avoid_`` id 前缀识别(``is_avoid_skill``)。
+    #   非 CF 的 id 带任务族命名空间(``silo__cf_avoid_*``)，该前缀检查不再命中，
+    #   故显式打标签使其保持"仅负面约束"；CF 的标签保持逐字节不变(不加标签)。
     # For CF, avoid skills are detected by their ``cf_avoid_`` id prefix
     # (``is_avoid_skill``). Non-CF ids are family-namespaced (``silo__cf_avoid_*``)
     # so that prefix check no longer fires; tag them explicitly so they stay
     # negative-only constraints. CF tags are left byte-identical (no tag added).
     if task_family != "count_frequency" and skill_id.startswith("cf_avoid_"):
         tags.append("counterexample")
+    validity_observations = [
+        float(row["program_validity"])
+        for row in feature_evidence
+        if row.get("program_validity") is not None
+    ]
+    if validity_observations and max(validity_observations) <= 0.0:
+        tags.append("counterexample")
+    organization_policy: dict[str, object] = {
+        "planner_mode": resolved_planner_mode,
+        "topology_name": topology_name,
+        "operators": operators,
+        "protocol_spec": protocol_spec,
+        "structure_features": structure_features,
+        "operation_recommendations": operation_recommendations,
+    }
+    if python_policy is not None:
+        organization_policy.update(python_policy)
+    mode_payload = _build_mode_payload(
+        planner_mode=resolved_planner_mode,
+        topology_name=topology_name,
+        protocol_spec=protocol_spec,
+        python_policy=python_policy,
+    )
     return SkillCard(
         skill_id=final_skill_id,
         version="0.1.0",
         task_family=task_family,
+        skill_type=skill_type_for_payload(mode_payload),
         trigger=trigger,
+        information_goal=(resolved_goal if _goal_explicit else None),  # type: ignore[arg-type]
+        provenance=resolved_provenance,  # type: ignore[arg-type]
         objective=objective,  # type: ignore[arg-type]
-        organization_policy={
-            "planner_mode": (
-                "graph_generate"
-                if topology_name.startswith("generated:")
-                else "topology_select"
-            ),
-            "topology_name": topology_name,
-            "operators": operators,
-            "protocol_spec": protocol_spec,
-            "structure_features": structure_features,
-            "operation_recommendations": operation_recommendations,
-        },
+        mode_payload=mode_payload,
+        organization_policy=organization_policy,
+        reasoning_policy=reasoning_policy,
         expected_tradeoff=expected_tradeoff,
         expected_dynamics={
             "condition_scope": condition_scope,
             "structure_features": structure_features,
             "protocol_spec_hash": _protocol_spec_hash(protocol_spec),
+            "program_sha256": (
+                python_policy.get("program_sha256") if python_policy else None
+            ),
         },
         evidence=evidence,
         evidence_refs=evidence_refs or [],
@@ -679,8 +891,94 @@ def make_skill_card(
             if final_skill_id != budget_fallback_id
             else None
         },
-        counterexamples=counterexamples or [],
+        failure_modes=observed_failure_modes,
+        counterexamples=[*(counterexamples or []), *observed_counterexamples],
         tags=tags,
+    )
+
+
+def _build_mode_payload(
+    *,
+    planner_mode: str,
+    topology_name: str,
+    protocol_spec: dict[str, object] | None,
+    python_policy: dict[str, object] | None,
+) -> ModeSkillPayload | None:
+    """Build one mode-owned executable payload for a newly learned skill."""
+    if planner_mode == "python_generate":
+        if python_policy is None:
+            return None
+        source = python_policy.get("source_code")
+        if not isinstance(source, str) or not source.strip():
+            return None
+        runtime_summary = python_policy.get("observed_runtime_trace_summary")
+        return PythonSkillPayload(
+            source_code=source,
+            program_sha256=str(python_policy.get("program_sha256") or ""),
+            ast_policy_version=str(python_policy.get("ast_policy_version") or ""),
+            execution_contract_version=str(
+                python_policy.get("execution_contract_version") or ""
+            ),
+            worker_contract=(
+                str(python_policy.get("worker_contract"))
+                if python_policy.get("worker_contract")
+                in {"message_only_v1", "message_only_v2"}
+                else "action_json_v1"
+            ),
+            repair_attempts=int(python_policy.get("repair_attempts", 0) or 0),
+            artifact_reference=(
+                str(python_policy["artifact_reference"])
+                if python_policy.get("artifact_reference")
+                else None
+            ),
+            runtime_trace_summary=(
+                dict(runtime_summary) if isinstance(runtime_summary, dict) else {}
+            ),
+        )
+    if not isinstance(protocol_spec, dict):
+        return None
+    metadata = protocol_spec.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    if planner_mode == "program_generate":
+        phase_program = metadata.get("phase_program")
+        if not isinstance(phase_program, dict):
+            return None
+        compilation = metadata.get("phase_program_compilation")
+        compilation = compilation if isinstance(compilation, dict) else {}
+        return PhaseProgramSkillPayload(
+            topology_name=topology_name,
+            phase_program=phase_program,
+            compiled_protocol_spec=protocol_spec,
+            compiler_version=str(compilation.get("compiler_version") or "1"),
+            program_sha256=str(compilation.get("source_hash") or ""),
+        )
+    if planner_mode == "graph_generate":
+        topology_program = metadata.get("topology_program")
+        return GraphSkillPayload(
+            topology_name=topology_name,
+            protocol_spec=protocol_spec,
+            topology_program=(
+                dict(topology_program) if isinstance(topology_program, dict) else None
+            ),
+            structure_code={
+                "schema_version": "graph_skill_code_v1",
+                "language": (
+                    "topology_program_v1"
+                    if isinstance(topology_program, dict)
+                    else "protocol_graph_spec_v1"
+                ),
+                "execution": "compile_or_direct_protocol_spec",
+            },
+        )
+    return NamedTopologySkillPayload(
+        topology_name=topology_name,
+        protocol_spec=protocol_spec,
+        structure_code={
+            "schema_version": "named_topology_skill_code_v1",
+            "language": "named_topology_v1",
+            "source": f"build_protocol_schedule({topology_name!r}, n_agents)",
+            "execution": "direct_protocol_spec",
+        },
     )
 
 
@@ -693,6 +991,7 @@ def _mean_record_metric(records: list[EvidenceRecord], *keys: str) -> float:
     return statistics.fmean(values) if values else 0.0
 
 
+# 【职责】在证据中选 rmse 最低行携带的 protocol_spec 作为最佳协议规格(无则返回 None)。
 def _best_protocol_spec(evidence: list[dict[str, Any]]) -> dict[str, object] | None:
     candidates: list[tuple[float, dict[str, object]]] = []
     for row in evidence:
@@ -701,12 +1000,240 @@ def _best_protocol_spec(evidence: list[dict[str, Any]]) -> dict[str, object] | N
             spec = row["metrics"].get("protocol_spec")  # type: ignore[index]
         if not isinstance(spec, dict) or not spec.get("steps"):
             continue
-        rmse = _evidence_float(row, "mean_rmse", "final_rmse")
-        candidates.append((rmse if rmse is not None else float("inf"), spec))
+        loss = _evidence_float(
+            row,
+            "mean_primary_loss",
+            "mean_rmse",
+            "final_rmse",
+        )
+        candidates.append((loss if loss is not None else float("inf"), spec))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
+
+
+def _best_python_policy(
+    evidence: list[dict[str, Any]],
+) -> dict[str, object] | None:
+    """Select the lowest-loss validated Python program and its audit contract."""
+    candidates: list[tuple[float, dict[str, object]]] = []
+    for row in evidence:
+        source = row.get("python_source")
+        if source is None and isinstance(row.get("metrics"), dict):
+            source = row["metrics"].get("python_source")  # type: ignore[index]
+        if not isinstance(source, str) or not source.strip():
+            continue
+        validity = _evidence_float(row, "program_validity")
+        if validity is not None and validity < 1.0:
+            continue
+        policy: dict[str, object] = {
+            "source_code": source,
+            "program_sha256": str(row.get("program_sha256") or ""),
+            "ast_policy_version": str(row.get("ast_policy_version") or ""),
+            "execution_contract_version": str(
+                row.get("execution_contract_version") or ""
+            ),
+            "worker_contract": str(
+                row.get("worker_contract") or "action_json_v1"
+            ),
+            "repair_attempts": int(row.get("repair_attempts", 0) or 0),
+            "observed_runtime_trace_summary": row.get("runtime_trace_summary")
+            if isinstance(row.get("runtime_trace_summary"), dict)
+            else {},
+        }
+        artifact = row.get("python_artifacts_dir")
+        if artifact:
+            policy["artifact_reference"] = str(artifact)
+        loss = _evidence_float(
+            row,
+            "mean_primary_loss",
+            "mean_rmse",
+            "final_rmse",
+        )
+        candidates.append((loss if loss is not None else float("inf"), policy))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def _python_reasoning_policy(
+    worker_contract: str = "action_json_v1",
+) -> dict[str, object]:
+    """Describe the verified Worker contract independently of graph schedules."""
+    if worker_contract == "message_only_v2":
+        return {
+            "worker_contract": "message_only_v2",
+            "planner_control_schema": ["mode", "recipients"],
+            "communication_control_modes": ["send", "reflect", "idle"],
+            "submit_barrier": (
+                "after all planned communication and final delivery, every "
+                "required agent submits from one frozen logical snapshot"
+            ),
+            "worker_output": (
+                "plain text during send/reflect; exactly one JSON value during "
+                "the synchronized submit barrier"
+            ),
+            "state_retention": (
+                "the runtime keeps each agent's previous worker output and "
+                "merges source_ids on delivery"
+            ),
+            "message_contract": {
+                "delivery": "round r messages become visible in round r+1",
+                "preserve_source_provenance": True,
+                "deduplicate_by_source": True,
+                "provenance_author": "runtime",
+            },
+            "answer_contract": "single_json_value",
+            "verified_instruction_summary": (
+                "The Planner designs communication only; the runtime owns the "
+                "global submit barrier, and workers return benchmark-ready "
+                "JSON answer values without prose."
+            ),
+        }
+    if worker_contract == "message_only_v1":
+        return {
+            "worker_contract": "message_only_v1",
+            "planner_control_schema": ["mode", "recipients"],
+            "control_modes": ["send", "reflect", "submit", "idle"],
+            "worker_output": (
+                "plain text only: a rolling-summary message body or the final "
+                "answer; workers never author state, recipients, source_ids "
+                "or submit flags"
+            ),
+            "state_retention": (
+                "the runtime keeps each agent's previous worker output and "
+                "merges source_ids on delivery"
+            ),
+            "message_contract": {
+                "delivery": "round r messages become visible in round r+1",
+                "preserve_source_provenance": True,
+                "deduplicate_by_source": True,
+                "provenance_author": "runtime",
+            },
+            "submit_guard": (
+                "submitted agents receive no later calls and send no messages"
+            ),
+            "verified_instruction_summary": (
+                "The Planner source routes, the runtime owns state and "
+                "provenance, and each worker turns its local prompt, previous "
+                "output and delivered inbox into one plain-text message or "
+                "answer."
+            ),
+        }
+    return {
+        "worker_action_schema": [
+            "state",
+            "should_send",
+            "recipients",
+            "message",
+            "source_ids",
+            "submit",
+            "answer",
+        ],
+        "state_retention": "retain previous state; update only explicit fields",
+        "message_contract": {
+            "delivery": "round r messages become visible in round r+1",
+            "preserve_source_provenance": True,
+            "deduplicate_by_source": True,
+        },
+        "submit_guard": "submitted agents receive no later calls and send no messages",
+        "verified_instruction_summary": (
+            "Each active agent acts from the same previous-round snapshot using only "
+            "its own local prompt plus explicitly delivered worker-output messages."
+        ),
+    }
+
+
+def _reasoning_policy_from_spec(
+    protocol_spec: dict[str, object] | None,
+) -> dict[str, object]:
+    if not isinstance(protocol_spec, dict):
+        return {}
+    metadata = protocol_spec.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    instructions = []
+    for index, raw_step in enumerate(protocol_spec.get("steps") or []):
+        if not isinstance(raw_step, dict):
+            continue
+        instruction = raw_step.get("instruction")
+        if instruction:
+            instructions.append(
+                {"step_index": index, "instruction": str(instruction)}
+            )
+    policy: dict[str, object] = {}
+    for key in ("state_retention", "allow_no_send", "submit_when"):
+        if key in metadata:
+            policy[key] = metadata[key]
+    if instructions:
+        policy["step_instructions"] = instructions
+        policy["merge_contract"] = {
+            "preserve_source_provenance": True,
+            "deduplicate_by_source": True,
+        }
+    return policy
+
+
+def _failure_modes_from_evidence(
+    evidence: list[dict[str, Any]],
+) -> list[dict[str, object]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in evidence:
+        stage = str(row.get("evolution_stage") or "")
+        if stage and stage != "success":
+            grouped[stage].append(row)
+    result: list[dict[str, object]] = []
+    for stage, rows in sorted(grouped.items()):
+        result.append(
+            {
+                "stage": stage,
+                "count": len(rows),
+                "mean_structural_coverage": statistics.fmean(
+                    float(row.get("structural_coverage", 0.0) or 0.0)
+                    for row in rows
+                ),
+                "mean_submission_rate": statistics.fmean(
+                    float(row.get("submission_rate", 0.0) or 0.0)
+                    for row in rows
+                ),
+                "mean_partial": statistics.fmean(
+                    float(row.get("evolution_partial", 0.0) or 0.0)
+                    for row in rows
+                ),
+            }
+        )
+    return result
+
+
+def _failure_counterexamples(
+    evidence: list[dict[str, Any]],
+) -> list[dict[str, object]]:
+    examples: list[dict[str, object]] = []
+    for row in evidence:
+        stage = str(row.get("evolution_stage") or "")
+        if not stage or stage == "success":
+            continue
+        examples.append(
+            {
+                "case_id": row.get("case_id"),
+                "seed": row.get("seed"),
+                "stage": stage,
+                "structural_coverage": row.get("structural_coverage"),
+                "submission_rate": row.get("submission_rate"),
+                "partial": row.get("evolution_partial"),
+                "failure_reason": (
+                    row.get("python_generation_failed")
+                    or row.get("program_generation_failed")
+                    or row.get("graph_generation_failed")
+                ),
+                "failure_category": row.get("python_failure_category"),
+                "artifact_reference": row.get("python_artifacts_dir"),
+            }
+        )
+        if len(examples) >= 5:
+            break
+    return examples
 
 
 def _protocol_spec_hash(protocol_spec: dict[str, object] | None) -> str | None:
@@ -732,6 +1259,7 @@ def _has_comparative_record_evidence(records: list[EvidenceRecord]) -> bool:
     return len({record.topology_name for record in records}) >= 2
 
 
+# 【职责】归纳技能有证据支撑的条件桶：agent 数与数组规模的最小/最大范围、桶名与 condition_key。
 def infer_condition_scope(evidence: list[dict[str, Any]]) -> dict[str, object]:
     """Summarize the condition bucket where a skill has evidence."""
     agent_counts = sorted(
@@ -783,6 +1311,8 @@ def infer_condition_scope(evidence: list[dict[str, Any]]) -> dict[str, object]:
     return scope
 
 
+# 【职责】显式记录拓扑结构信号(而非只记名字)：由名字识别结构母题(motif)。
+# - 并汇总聚合模式、汇点模式、协议步数/消息数、生成图标志与候选 id 等特征。
 def infer_topology_structure_features(
     topology_name: str,
     evidence: list[dict[str, Any]],
@@ -870,6 +1400,9 @@ def infer_topology_structure_features(
     return features
 
 
+# 【职责】由结构证据产出操作级规划器提示(preserve/mutate 操作建议)。
+# - 默认保留条件触发：仅在有记录的 agent/数组规模条件桶内应用该技能。
+# - 分层归约/时序流母题保留分阶段归约边；单主汇点保留最终归约器；生成图允许受限变异。
 def default_operation_recommendations(
     topology_name: str,
     structure_features: dict[str, object],
@@ -932,6 +1465,7 @@ def default_operation_recommendations(
     return recommendations
 
 
+# 【职责】生成图类拓扑把条件桶键编码进 skill_id 后缀(如 __a4arr128)；通用桶保持原 id。
 def condition_specific_skill_id(
     skill_id: str,
     topology_name: str,
@@ -946,6 +1480,9 @@ def condition_specific_skill_id(
     return f"{skill_id}__{suffix}"
 
 
+# 【职责】按任务族给 skill_id 加命名空间，防止非 CF 技能与 CF 技能在同一技能库中撞 id。
+# - 技能库以 skill_id 为字典键存储；Silo 与 CF 若归类到同一 id 会互相覆盖。
+# - count_frequency 的 id 逐字节不变(历史默认)，其他任务族加前缀；幂等：已带前缀则不变。
 def family_scoped_skill_id(skill_id: str, task_family: str) -> str:
     """Namespace a skill_id by family so non-CF skills cannot collide with CF.
 
@@ -963,6 +1500,7 @@ def family_scoped_skill_id(skill_id: str, task_family: str) -> str:
     return f"{prefix}{skill_id}"
 
 
+# 【职责】生成镜像任务族的装饰性 tags 项(CF 固定为 count-frequency，其余下划线转连字符)。
 def _family_tag(task_family: str) -> str:
     """Cosmetic ``tags`` entry mirroring the family (CF stays ``count-frequency``)."""
     if task_family == "count_frequency":
@@ -970,6 +1508,7 @@ def _family_tag(task_family: str) -> str:
     return task_family.replace("_", "-")
 
 
+# 【职责】按拓扑分组 dict 证据行；生成图拓扑在分组键上叠加条件桶(agents__arrays)。
 def _group_dict_evidence_for_skills(
     evidence: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -1010,6 +1549,7 @@ def _records_to_analysis_evidence(
     return rows
 
 
+# 【职责】仅 "generated:" 前缀的生成图拓扑使用条件桶身份。
 def _topology_uses_condition_bucket(topology_name: str) -> bool:
     return topology_name.startswith("generated:")
 

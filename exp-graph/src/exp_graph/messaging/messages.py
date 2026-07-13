@@ -1,10 +1,15 @@
 """Structured messages exchanged between neighbors."""
+# ============================================================
+# 【模块导读】agent 邻居之间交换的结构化消息。
+# ProtocolRunner 不直接搬运完整 BeliefState，而是通过 OutboxMessage 暴露可传播的短摘要。
+# ============================================================
 
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
 
+# 【职责】从 agent 信念状态抽出的外部视图：用于跨边传输候选答案、共识键与少量解释。
 class OutboxMessage(BaseModel):
     """External view derived from an agent belief state."""
 
@@ -19,6 +24,7 @@ class OutboxMessage(BaseModel):
     structured_payload: dict = Field(default_factory=dict)
 
     @classmethod
+    # 【职责】从 BeliefState 和运行时元数据派生精简 outbox；只带邻居需要看的字段。
     def from_belief_state(
         cls,
         agent_id: int,

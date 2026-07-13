@@ -1,4 +1,11 @@
 """Synchronous multi-round experiment runner."""
+# ============================================================
+# 【模块导读】同步多轮实验执行器（传统 planner-OFF 路径）。
+# 仅在 masbench run / run-suite 不带 --planner 时使用；
+# 真实实验主要走 runner/protocol.py 的 ProtocolRunner。
+# 每轮：按拓扑取邻居 -> 投递上一轮发件箱 -> 并行推进各 agent ->
+# 提交屏障统一落地 -> 运行时共识检测，达阈值提前停止。
+# ============================================================
 
 from __future__ import annotations
 
@@ -33,6 +40,7 @@ from exp_graph.topology import create_topology
 from exp_graph.tracing import AgentStepTrace, append_traces_jsonl, reset_trace_jsonl
 
 
+# 【职责】单个同步轮次的结构化日志（邻居表/共识检测结果/本轮模型调用与 token 用量）。
 class RoundLog(BaseModel):
     """Structured log for one synchronous round."""
 
@@ -44,6 +52,7 @@ class RoundLog(BaseModel):
     completion_tokens: int
 
 
+# 【职责】一次同步实验运行的完整结果（终局结果/指标汇总/轮日志/停止原因）。
 class ExperimentResult(BaseModel):
     """Full result of one experiment run."""
 
@@ -59,6 +68,8 @@ class ExperimentResult(BaseModel):
     stop_reason: str
 
 
+# 【职责】带轮间提交屏障的同步执行器：全体 agent 每轮并行推进、屏障后统一提交。
+# - 传统 planner-OFF 路径；邻居由拓扑对象逐轮动态给出，而非 ProtocolRunner 的有限调度。
 class SynchronousRunner:
     """Synchronous runner with commit barriers between rounds."""
 
@@ -76,6 +87,10 @@ class SynchronousRunner:
         self.topology = create_topology(config.topology_name)
         self.llm_client = llm_client or create_llm_client(config.llm_provider)
 
+    # 【职责】主循环：运行至运行时共识或 max_rounds 上限。
+    # - 每轮把上一轮发件箱按邻居关系投递为收件箱，线程池并行执行各 agent 的 step。
+    # - 全部完成后经提交屏障统一落地新信念/发件箱，再做共识检测，达阈值提前停止。
+    # - 结束后运行最终归约器与指标汇总，返回 ExperimentResult。
     def run(self) -> ExperimentResult:
         """Run the experiment to consensus or max_rounds."""
         run_id = self._make_run_id()

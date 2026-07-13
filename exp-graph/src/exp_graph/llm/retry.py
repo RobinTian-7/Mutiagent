@@ -1,4 +1,9 @@
 """JSON retry prompts for structured belief-state outputs."""
+# ============================================================
+# 【模块导读】结构化信念状态(belief state)输出的 JSON 重试提示词。
+# - BELIEF_STATE_SCHEMA_HINT：重试时随附给模型的目标 JSON schema 示例。
+# - build_json_retry_prompt：JSON 解析/校验失败后构造紧凑的重试提示。
+# ============================================================
 
 from __future__ import annotations
 
@@ -19,6 +24,9 @@ BELIEF_STATE_SCHEMA_HINT = """{
 }"""
 
 
+# 【职责】在 JSON 解析或校验失败后构造紧凑的重试提示词。
+# - 依次包含：失败说明与重试序号、只输出单个 JSON 对象的要求、目标 schema、
+# - 截断后的校验错误(≤1200 字符)与上次非法应答(≤2000 字符)、作为事实来源的原始提示。
 def build_json_retry_prompt(
     *,
     original_prompt: str,
@@ -46,6 +54,7 @@ def build_json_retry_prompt(
     )
 
 
+# 【职责】把文本截断到 max_chars 以内，超长时收尾附 "..."。
 def _truncate(value: str, max_chars: int) -> str:
     text = str(value)
     if len(text) <= max_chars:

@@ -37,9 +37,9 @@ from exp_graph.messaging import OutboxMessage
 from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 
 from masbench.core.task_bridge import (
-    GROUND_TRUTH_KEY,
     BenchmarkTaskAdapter,
     canonical_answer,
+    private_answer_key,
 )
 
 JSSP_PROTOCOL_TASK_NAME = "jssp"
@@ -172,13 +172,13 @@ def validate_schedule(
 
 
 def _upper_bound(global_task: dict[str, Any]) -> int | None:
-    """Known upper bound for this task (meta first, canonical key as fallback)."""
+    """Known upper bound for this task (meta first, private payload fallback)."""
     meta = global_task.get("meta") or {}
     bound = _as_int(meta.get("upper_bound"))
     if bound is not None:
         return bound
     try:
-        return _as_int(json.loads(str(global_task.get(GROUND_TRUTH_KEY, ""))))
+        return _as_int(json.loads(str(private_answer_key(global_task) or "")))
     except (TypeError, ValueError):
         return None
 

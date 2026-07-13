@@ -18,6 +18,11 @@ train-shard literals.
 Borrowings: Reflexion (verbal feedback retry), STaR (keep only verified
 traces), AWM (workflow induction), Voyager (skill = executable + use note).
 """
+# ============================================================
+# 【模块导读】M10 训练期 verified recipe 搜索。
+# 这里让 LLM 先提出“通信结构 + 每步接收者该做什么”的过程配方，再用真实训练种子验证；
+# 只有所有验证种子都通过的配方才会转成 SkillCard，避免把一次走运的结构写入技能库。
+# ============================================================
 
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ from exp_graph.llm.base import LLMClient
 from exp_graph.mas.schemas import SkillCard
 from exp_graph.protocols.spec import ProtocolGraphSpec, ProtocolStepSpec
 
+# 【职责】让 LLM 产出可执行 recipe 的提示词模板；运行时字符串保持英文，避免影响模型行为。
 RECIPE_PROMPT = """You are designing a communication + computation procedure for {n_agents} agents that each privately hold one shard of the data. Design BOTH the message structure and what each step's receivers must do.
 
 Task statement (placeholders like {{agent_id}}/{{input_shard}} stand for per-agent values):
@@ -44,6 +50,7 @@ Constraints:
 Reply ONLY JSON:
 {{"name": "short_snake_case", "selected_primary": <id>, "steps": [{{"edges": [[src,dst],...], "instruction": "..."}}, ...]}}"""
 
+# 【职责】失败后给 LLM 的过程级反馈模板：说明结构、错的 agent、答案持有者状态。
 FEEDBACK_TEMPLATE = """Previous attempt '{name}' FAILED verification. Procedural feedback:
 - structure tried: {structure}
 - agents with wrong final answers: {wrong_agents}
@@ -52,6 +59,7 @@ Fix the PROCEDURE (different structure and/or clearer per-step computation roles
 """
 
 
+# 【职责】把 LLM 的 JSON 回复解析成带 step instruction 的 ProtocolGraphSpec；坏格式返回 None。
 def parse_recipe(
     text: str, *, n_agents: int, max_steps: int
 ) -> ProtocolGraphSpec | None:
@@ -99,6 +107,7 @@ def parse_recipe(
         return None
 
 
+# 【职责】检查 recipe 指令是否泄漏训练分片里的具体数据值；泄漏则拒绝入库。
 def leaks_shard_literals(spec: ProtocolGraphSpec, shards: list[Any]) -> bool:
     """True when any instruction embeds a concrete shard value (>=3 chars)."""
     blob = " ".join(
@@ -113,6 +122,7 @@ def leaks_shard_literals(spec: ProtocolGraphSpec, shards: list[Any]) -> bool:
     return False
 
 
+# 【职责】循环“提出 recipe -> 执行验证 -> 用反馈修正”，返回验证通过的 spec 与诊断 trace。
 def search_recipe(
     *,
     task_brief: str,
@@ -169,6 +179,7 @@ def search_recipe(
             )
             trace.append({"attempt": attempt, "status": "failed_seed0", "name": spec.name, "em": em})
             continue
+        # 中文：seed-0 通过后，再用剩余验证种子确认（信任门 n>=2），防止一次走运就部署。
         # Seed-0 solved: confirm on the remaining verify seeds (trust bar n>=2).
         confirmations = [(em, feedback)]
         ok = True
@@ -192,6 +203,7 @@ def search_recipe(
     return None, trace
 
 
+# 【职责】把验证通过的 recipe 封装成可部署且立即可信的技能卡。
 def recipe_skill_card(
     spec: ProtocolGraphSpec,
     *,
@@ -205,6 +217,8 @@ def recipe_skill_card(
     """Wrap a verified recipe as a deployable, immediately-trusted skill."""
     topology = f"generated:{spec.name}"
     ledger_rows: dict = {"n": verify_count, "em_sum": float(verify_count)}
+    # 中文：M19（dev-11）：验证种子只来自单个案例。记录来源后，trust 逻辑能把它放进
+    # 直接匹配槽位，同时拒绝从单案例证据泛化到 shape-sibling/breadth 槽位。
     # M19 (dev-11): verification seeds are ONE case's evidence. Recording the
     # provenance lets trust decide the recipe's direct slot while refusing
     # shape-sibling/breadth extrapolation from a single-case card.
@@ -214,6 +228,9 @@ def recipe_skill_card(
         skill_id=f"{task_family}__recipe_{spec.name}__a{n_agents}",
         objective="balanced",
         task_family=task_family,
+        # 中文：与 minister 卡保持 specificity 对齐（round-9 screen 里 recipe 卡 specificity 约 2，
+        # 被 condition-keyed minister 卡 12 挤出 top-3，导致验证过的 recipe 没有部署）。
+        # 同一条件形状下，让 LCB loss 决定顺序。
         # Specificity parity with minister cards (round-9 screen: recipe cards
         # at specificity ~2 were pushed out of the top-3 seeded candidates by
         # condition-keyed minister cards at 12; the verified recipe never
@@ -240,6 +257,7 @@ def recipe_skill_card(
             "mean_primary_loss": 0.0,
             "mean_rmse": 0.0,
             "active_evidence_count": verify_count,
+            # 中文：M19a：单案例 provenance 会喂给检索侧悲观性，避免过度泛化。
             # M19a: single-case provenance feeds retrieval-side pessimism.
             "evidence_case_count": 1,
             "lesson": "verified procedure from train-time recipe search",

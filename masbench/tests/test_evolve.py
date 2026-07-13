@@ -82,6 +82,12 @@ def test_evolution_loop_runs_offline() -> None:
     else:
         assert summary["skill_bank_mutated"] is False
 
+    snapshots = summary["skill_bank_snapshots"]
+    assert set(snapshots) == {"before", "candidate", "deployed"}
+    assert snapshots["deployed"] == summary["evolved_skills"]
+    if summary["gate"]["accepted"]:
+        assert snapshots["candidate"] == snapshots["deployed"]
+
     # The post-evolution selection probe genuinely ran the E/F selection logic on
     # the populated bank: the breakdown carries the LCB (E) diagnostics and the
     # objective's uncertainty weight is the knob-on value.
@@ -127,6 +133,9 @@ def test_evolution_gate_rejects_regressing_update() -> None:
     # On rejection the held-out bank is left untouched.
     assert summary["skill_bank_mutated"] is False
     assert summary["skill_bank_size_after"] == summary["skill_bank_size_before"]
+    snapshots = summary["skill_bank_snapshots"]
+    assert snapshots["deployed"] == snapshots["before"]
+    assert snapshots["deployed"] == summary["evolved_skills"]
 
 
 def test_evolution_loop_is_deterministic_offline() -> None:

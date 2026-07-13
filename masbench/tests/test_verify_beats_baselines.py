@@ -14,6 +14,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from verify_beats_baselines import (  # noqa: E402
+    FIXED_ARM_PREFIX,
+    _expand_fixed_baselines,
     _pick_fixed_best,
     _stable_rounds,
     _verdict,
@@ -82,6 +84,101 @@ def test_stable_rounds_needs_last_k_above_all_baselines():
     assert _stable_rounds(curves, k=3) is False  # round 2 in last-3 window? last3 = r2,r3,r4 -> r2 below
     curves["rounds_curve"][2]["score"] = 0.45
     assert _stable_rounds(curves, k=3) is True
+
+
+def test_expand_fixed_baselines_off_is_identity():
+    baselines = ("p2p", "broadcast", "sfs", "pycodegen", "fixed")
+    topos = ["one_peer_exponential_dag", "static_exponential"]
+    # Flag off -> unchanged, no supplementary arm (behavior-preserving default).
+    out, supp = _expand_fixed_baselines(baselines, topos, per_topology=False)
+    assert out == baselines
+    assert supp == frozenset()
+
+
+def test_expand_fixed_baselines_promotes_each_topology_and_keeps_aggregate():
+    baselines = ("p2p", "broadcast", "sfs", "pycodegen", "fixed")
+    topos = ["one_peer_exponential_dag", "static_exponential"]
+    out, supp = _expand_fixed_baselines(baselines, topos, per_topology=True)
+    # Each fixed topology becomes its OWN independent paired arm; the aggregate
+    # fixed_best_on_train is retained at the end as a supplementary arm.
+    assert out == (
+        "p2p",
+        "broadcast",
+        "sfs",
+        "pycodegen",
+        f"{FIXED_ARM_PREFIX}one_peer_exponential_dag",
+        f"{FIXED_ARM_PREFIX}static_exponential",
+        "fixed",
+    )
+    assert supp == frozenset({"fixed"})
+    # The two named transports are now distinct, gate-eligible baselines while
+    # 'fixed' (best-on-train) is reported-only.
+    primary = tuple(b for b in out if b not in supp)
+    assert primary == (
+        "p2p",
+        "broadcast",
+        "sfs",
+        "pycodegen",
+        f"{FIXED_ARM_PREFIX}one_peer_exponential_dag",
+        f"{FIXED_ARM_PREFIX}static_exponential",
+    )
+
+
+def test_expand_fixed_baselines_noop_without_fixed_or_topologies():
+    # No 'fixed' baseline requested -> nothing to expand even with the flag on.
+    out, supp = _expand_fixed_baselines(("p2p", "sfs"), ["chain"], per_topology=True)
+    assert out == ("p2p", "sfs") and supp == frozenset()
+    # 'fixed' requested but no topologies -> unchanged.
+    out2, supp2 = _expand_fixed_baselines(("fixed",), [], per_topology=True)
+    assert out2 == ("fixed",) and supp2 == frozenset()
+
+
+def test_offline_fake_run_per_topology_fixed_arms(tmp_path, capsys, monkeypatch):
+    """Per-topology fixed arms: two independent paired arms + supplementary
+    fixed_best, offline. Machinery OK, exit 1 (topology-invariant fake Silo)."""
+    monkeypatch.delenv("MASBENCH_EVOLVE_DUMP_DIR", raising=False)
+    argv = [
+        "verify_beats_baselines.py",
+        "--benchmarks-dir", str(DATA),
+        "--llm", "fake", "--model-name", "fake",
+        "--merge-mode", "deterministic", "--init-mode", "deterministic",
+        "--levels", "I", "--cases", "I-01", "--n-agents", "2",
+        "--rounds", "2", "--train-seeds", "1", "--val-seeds", "2",
+        "--eval-seeds", "11", "12",
+        "--baselines", "fixed",
+        "--fixed-topologies", "one_peer_exponential_dag", "static_exponential",
+        "--fixed-per-topology-arms",
+        "--workers", "1", "--out", str(tmp_path),
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    code = main()
+    out = capsys.readouterr().out
+    assert code == 1, "offline arms tie -> no verified win"
+    assert "machinery" in out and "OK" in out
+    report = json.loads((tmp_path / "verify_beats_baselines_n2.json").read_text())
+    assert report["passed"] is False
+    # Two named fixed topologies are independent paired arms; aggregate fixed
+    # is retained (supplementary).
+    assert set(report["arm_means"]) == {
+        "evolved",
+        f"{FIXED_ARM_PREFIX}one_peer_exponential_dag",
+        f"{FIXED_ARM_PREFIX}static_exponential",
+        "fixed",
+    }
+    assert report["fixed_per_topology_arms"] is True
+    assert report["supplementary_baselines"] == ["fixed"]
+    assert f"{FIXED_ARM_PREFIX}one_peer_exponential_dag" in report["primary_baselines"]
+    assert f"{FIXED_ARM_PREFIX}static_exponential" in report["primary_baselines"]
+    assert "fixed" not in report["primary_baselines"]
+    # fixed_best_on_train is still selected and reported.
+    assert report["fixed_best_topology"] in {
+        "one_peer_exponential_dag",
+        "static_exponential",
+    }
+    # Each fixed topology arm carries its own paper metrics in pair_details.
+    for detail in report["pair_details"]:
+        assert f"{FIXED_ARM_PREFIX}one_peer_exponential_dag" in detail["arms"]
+        assert f"{FIXED_ARM_PREFIX}static_exponential" in detail["arms"]
 
 
 def test_offline_fake_run_machinery_ok_exit_1(tmp_path, capsys, monkeypatch):

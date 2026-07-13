@@ -41,6 +41,16 @@ strings (e.g. the ``answer_key`` masbench stores in ``global_task``); they are
 coerced via the same parsing ``canonical_answer`` uses, so ``"9"`` and ``9`` or
 ``"[3, 1]"`` and ``[3, 1]`` grade identically.
 """
+# ============================================================
+# 【模块导读】Silo-Bench 的分级 partial 部分正确度评分。
+# 严格信号是精确匹配(1.0/0.0)；论文级数据还需 [0,1] 的连续质量分 P，用 P-S 的差定位
+# 协调在哪里崩。核心函数 silo_partial_score(answer, ground_truth, output_type)。
+# 不直接调 Silo 官方 compute_partial_correctness：其签名是「逐 agent 提交列表」，与本处
+# 「单一全局答案」对不齐，故采用按结构分派的稳健兜底评分。但复用其官方 LIS(最长递增子
+# 序列)原语做序列排序质量：按文件位置惰性 import、ImportError 兜底到本地实现，
+# uses_official_lis() 报告当前走哪条路。分派：精确→1.0/数值→归一距离/列表→位置命中与
+# LIS 排序比的混合/集合→Jaccard/字典→键值命中率/字符串→词元 F1/其余→0.0。
+# ============================================================
 
 from __future__ import annotations
 
@@ -58,6 +68,7 @@ _UNKNOWN_SENTINELS = {"UNKNOWN", "NONE", "NULL"}
 # --------------------------------------------------------------------------- #
 # Official LIS primitive (lazy, guarded). Reused for sequence ordering quality.
 # --------------------------------------------------------------------------- #
+# 【职责】最长严格递增子序列长度(官方 LIS 不可用时的本地兜底实现)。
 def _local_lis_length(seq: list[Any]) -> int:
     """Longest strictly-increasing subsequence length (local fallback)."""
     if not seq:
@@ -74,6 +85,10 @@ def _local_lis_length(seq: list[Any]) -> int:
     return len(tails)
 
 
+# 【职责】加载 Silo 官方 LIS 原语，返回(lis 函数, 是否用了官方)。
+# - 按文件位置 import：parents[3] 是仓库根，官方度量在
+#   third_party/acl26-silo-bench/src/utils/metrics.py(该目录非包，只能按路径加载)。
+# - 任何 import/属性/IO/类型错误都兜底到本地 _local_lis_length。
 def _load_official_lis() -> tuple[Callable[[list[Any]], int], bool]:
     """Return (lis_fn, used_official). Import Silo's helper by file location."""
     metrics_path = (
@@ -93,6 +108,7 @@ def _load_official_lis() -> tuple[Callable[[list[Any]], int], bool]:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         fn = module._longest_increasing_subsequence_length  # type: ignore[attr-defined]
+        # 中文：冒烟校验契约，防止上游重构悄悄把我们弄坏。
         # Smoke-check the contract so a refactor upstream can't silently break us.
         if fn([0, 2, 1, 3]) != 3:
             raise ImportError("silo LIS contract changed")
@@ -112,6 +128,9 @@ def uses_official_lis() -> bool:
 # --------------------------------------------------------------------------- #
 # Coercion helpers (mirror canonical_answer parsing, but return live values)
 # --------------------------------------------------------------------------- #
+# 【职责】尽力把值解析为实时 Python 值；未知/空哨兵返回 None。
+# - 数字/JSON 样式的字符串会被解析，布尔归并，其余原样返回；与 canonical_answer 对齐，
+#   使原始值与其规范字符串形解析结果一致。
 def _coerce(value: Any) -> Any:
     """Best-effort parse to a live Python value; None for unknown/empty sentinels.
 
@@ -138,6 +157,7 @@ def _coerce(value: Any) -> Any:
     return value
 
 
+# 【职责】数值强制转换，拒绝布尔(避免 True/1 被当数字评分)。
 def _as_number(value: Any) -> float | None:
     """Numeric coercion that rejects booleans (so True/1 don't grade as numbers)."""
     if value is None or isinstance(value, bool):
@@ -157,12 +177,14 @@ def _tokenize(text: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # Per-structure graders (each returns a score in [0, 1])
 # --------------------------------------------------------------------------- #
+# 【职责】数值评分：相等得 1，否则按归一化距离 max(0, 1-|a-t|/max(1,|t|))。
 def _score_numeric(a: float, t: float) -> float:
     if a == t:
         return 1.0
     return max(0.0, 1.0 - abs(a - t) / max(1.0, abs(t)))
 
 
+# 【职责】集合评分：两个集合的 Jaccard 重叠(交/并)。
 def _score_set(a: Any, t: Any) -> float:
     try:
         a_set, t_set = set(a), set(t)
@@ -176,6 +198,9 @@ def _score_set(a: Any, t: Any) -> float:
     return len(a_set & t_set) / len(union)
 
 
+# 【职责】序列评分：位置命中比与基于 LIS 的排序比取均值。
+# - 位置比奖励「对的值在对的槽」；排序比(最长正确顺序子序列/目标长度，用官方 LIS)奖励整体
+#   有序但个别位置错位的排序类答案。取均值使 [1,2,4,3] vs [1,2,3,4] 之类近似严格落在(0,1)。
 def _score_sequence(a: list[Any], t: list[Any]) -> float:
     """Blend positional-match fraction with an LIS-based ordering ratio.
 
@@ -192,6 +217,8 @@ def _score_sequence(a: list[Any], t: list[Any]) -> float:
 
     positional = sum(1 for x, y in zip(a, t) if x == y) / len(t)
 
+    # 中文：把每个答案元素映射到它在目标中首次出现的位置，这些位置上的 LIS 即最长的
+    #   正确顺序连段。
     # Map each answer element to the position of its first occurrence in target,
     # then the LIS over those positions is the longest correctly-ordered run.
     target_pos: dict[Any, int] = {}
@@ -209,6 +236,7 @@ def _score_sequence(a: list[Any], t: list[Any]) -> float:
     return (positional + ordering) / 2.0
 
 
+# 【职责】字典评分：键值对完全匹配的比例(按键的并集)。
 def _score_dict(a: dict[Any, Any], t: dict[Any, Any]) -> float:
     if not a and not t:
         return 1.0
@@ -219,6 +247,7 @@ def _score_dict(a: dict[Any, Any], t: dict[Any, Any]) -> float:
     return matches / len(keys)
 
 
+# 【职责】字符串评分：分词后的词元重叠 F1(精确率与召回率的调和平均)。
 def _score_string(a: str, t: str) -> float:
     a_tokens, t_tokens = _tokenize(a), _tokenize(t)
     if not a_tokens and not t_tokens:
@@ -241,6 +270,10 @@ def _score_string(a: str, t: str) -> float:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+# 【职责】对一个 Silo 全局答案给出 [0,1] 的分级部分正确度——本模块对外主入口。
+# - answer/ground_truth 可为原始值或规范化 JSON 串；output_type 只是粗提示，真正分派看
+#   值的结构，「set」类提示会把列表比较路由到 Jaccard。
+# - 无法解析、null/哨兵、或结构无法与真值合理比较的答案一律 0.0；精确(规范)匹配恒为 1.0。
 def silo_partial_score(answer: Any, ground_truth: Any, output_type: str) -> float:
     """Graded partial-correctness in [0, 1] for one Silo global answer.
 
@@ -250,6 +283,7 @@ def silo_partial_score(answer: Any, ground_truth: Any, output_type: str) -> floa
     null/sentinel, or an answer whose structure cannot be sensibly compared to the
     truth all score 0.0. Exact (canonical) matches always score 1.0.
     """
+    # 中文：精确匹配快捷路径，保证 partial >= 严格信号，并避免命中时的浮点漂移。
     # Exact-match shortcut keeps partial >= the strict signal and avoids
     # float drift on clean hits.
     if canonical_answer(answer) == canonical_answer(ground_truth) != "UNKNOWN":
@@ -262,11 +296,13 @@ def silo_partial_score(answer: Any, ground_truth: Any, output_type: str) -> floa
 
     hint = (output_type or "").strip().lower()
 
+    # 中文：数值标量(拒绝布尔，使其落到仅精确匹配的处理)。
     # Numeric scalar (reject bools so they fall through to exact-only handling).
     a_num, t_num = _as_number(a), _as_number(t)
     if a_num is not None and t_num is not None:
         return _score_numeric(a_num, t_num)
 
+    # 中文：set 提示：把列表/序列答案当作无序集合评分。
     # Set hint: grade list/sequence answers as unordered sets.
     if hint in {"set", "set_of_values", "unordered_set"} and isinstance(
         a, (list, tuple)
@@ -287,5 +323,6 @@ def silo_partial_score(answer: Any, ground_truth: Any, output_type: str) -> floa
     if isinstance(t, bool):
         return 1.0 if a == t else 0.0
 
+    # 中文：未知/不可比较的结构。
     # Unknown / incomparable structure.
     return 0.0

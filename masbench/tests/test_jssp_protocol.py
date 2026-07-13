@@ -10,6 +10,7 @@ from exp_graph.messaging import OutboxMessage
 from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 
 from masbench.adapters.jssp_bench import JSSPBenchAdapter
+from masbench.core.task_bridge import private_answer_key
 from masbench.adapters.jssp_protocol import (
     JSSPProtocolAdapter,
     score_protocol_answer,
@@ -192,7 +193,8 @@ def test_malformed_answers_rejected():
 def test_scoring_math():
     adapter = JSSPProtocolAdapter(_tiny_instance())
     global_task = adapter.build_global_task()
-    assert global_task["answer_key"] == "5"
+    assert private_answer_key(global_task) == "5"
+    assert "answer_key" not in global_task
 
     optimal = adapter.score_protocol_answer(_optimal_answer(), global_task)
     assert optimal["exact_match"] == 1.0
@@ -218,7 +220,7 @@ def test_scoring_with_loose_upper_bound_caps_at_one():
     global_task = {
         "shards": TINY_JOBS,
         "meta": {"n_machines": TINY_N_MACHINES, "upper_bound": 9},
-        "answer_key": "9",
+        "_private_scoring": {"answer_key": "9"},
     }
     scored = score_protocol_answer(_optimal_answer(), global_task)
     assert scored["exact_match"] == 1.0
@@ -355,8 +357,8 @@ def test_prompts_and_adjudication_context_hide_upper_bound():
     ctx = adapter.format_adjudication_context(global_task)
     assert "shards" not in ctx
     assert "answer_key" not in ctx
-    assert "upper_bound" not in ctx["meta"]
-    assert ctx["meta"]["n_machines"] == 2
+    # The allowlisted public view carries no meta at all (nested-safe).
+    assert "meta" not in ctx
     # The original global task is NOT mutated.
     assert global_task["meta"]["upper_bound"] == TINY_UB
 
@@ -493,6 +495,6 @@ def test_engine_partial_routes_to_jssp_scorer():
         "benchmark": "jssp",
         "shards": [[[0, 2], [1, 2]], [[1, 3], [0, 2]]],
         "meta": {"n_machines": 2, "upper_bound": 5},
-        "answer_key": "5",
+        "_private_scoring": {"answer_key": "5"},
     }
     assert abs(_partial_score(answer, global_task) - 5.0 / 7.0) < 1e-9

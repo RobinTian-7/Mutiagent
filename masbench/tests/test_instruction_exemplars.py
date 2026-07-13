@@ -205,6 +205,37 @@ def test_exemplar_phase_stores_on_verified_success(monkeypatch):
     assert stored[bucket]["em"] == 1.0
 
 
+def test_exemplar_budget_environment_can_disable_phase(monkeypatch):
+    from pathlib import Path
+    from masbench.adapters.silo_bench import SiloBenchAdapter
+
+    inst = next(
+        SiloBenchAdapter(Path(__file__).parent / "data").iter_instances(
+            levels=["I"], agent_counts=[2], cases=["I-01"]
+        )
+    )
+    cfg = RunConfig(exemplar_search_budget=6)
+    monkeypatch.setenv("MASBENCH_EXEMPLAR_BUDGET", "0")
+    monkeypatch.setattr(
+        evolve,
+        "classify_task",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled exemplar phase must not classify")
+        ),
+    )
+
+    traces, runs = evolve._exemplar_phase(
+        [inst],
+        cfg,
+        skill_bank=SkillBank(skills=[_card(with_exemplar=False)]),
+        train_seeds=[1],
+        llm_client=create_llm_client("fake"),
+    )
+
+    assert traces == []
+    assert runs == 0
+
+
 def test_rewrite_helper_parses_real_response_shape():
     # dev-15 lesson: the earlier test monkeypatched the function under test
     # and missed a missing module import (every live rewrite died with a
