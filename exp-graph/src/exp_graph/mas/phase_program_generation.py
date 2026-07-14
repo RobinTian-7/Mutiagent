@@ -111,8 +111,21 @@ def build_phase_program_prompt(
     max_receiver_fan_in: int,
     num_candidates: int,
     task_brief: str | None,
+    include_failure_feedback: bool = False,
 ) -> str:
     """Render the strict stage-only architect contract as JSON."""
+    negative_skills: list[SkillCard] = []
+    seen_negative: set[str] = set()
+    negative_sources = [*avoid_skills]
+    if include_failure_feedback:
+        negative_sources = [*skills, *negative_sources]
+    for skill in negative_sources:
+        if not (skill.failure_modes or skill.counterexamples or skill.risk_notes):
+            continue
+        if skill.skill_id in seen_negative:
+            continue
+        negative_skills.append(skill)
+        seen_negative.add(skill.skill_id)
     payload = {
         "role": "You design executable multi-agent collaboration programs.",
         "mode": "program_generate",
@@ -218,7 +231,10 @@ def build_phase_program_prompt(
             "Keep each instruction under 300 characters.",
         ],
         "skill_evidence": [_skill_context(skill) for skill in skills[:6]],
-        "failure_evidence": [_failure_context(skill) for skill in avoid_skills[:6]],
+        "failure_evidence": _bounded_context_items(
+            [_failure_context(skill) for skill in negative_skills[:6]],
+            max_chars=4_000,
+        ),
         "required_output": {
             "candidates": [
                 {
@@ -307,6 +323,7 @@ def plan_phase_program(
                 max_receiver_fan_in=runtime.graph_max_receiver_fan_in,
                 num_candidates=remaining,
                 task_brief=task_brief,
+                include_failure_feedback=runtime.failure_feedback_enabled,
             )
             if runtime.leakage_audit:
                 assert_prompt_clean(
@@ -782,12 +799,70 @@ def _skill_context(skill: SkillCard) -> dict[str, Any]:
 
 
 def _failure_context(skill: SkillCard) -> dict[str, Any]:
-    return {
+    return _scrub_failure_context({
         "skill_id": skill.skill_id,
         "failure_modes": skill.failure_modes[:5],
         "counterexamples": skill.counterexamples[:5],
         "risk_notes": skill.risk_notes[:3],
-    }
+    })
+
+
+_FAILURE_CONTEXT_FORBIDDEN_KEYS = {
+    "answer",
+    "final_answer",
+    "ground_truth",
+    "expected_output",
+    "expected_outputs",
+    "expected_answer",
+    "expected_answers",
+    "prompt",
+    "task_prompt",
+    "agent_prompt",
+    "local_prompt",
+    "private_prompt",
+    "private_data",
+    "source_code",
+    "python_source",
+    "protocol_spec",
+    "phase_program",
+    "topology_program",
+    "structure_code",
+    "code",
+    "steps",
+    "edges",
+    "mode_payload",
+    "shard",
+    "shards",
+}
+
+
+def _scrub_failure_context(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _scrub_failure_context(item)
+            for key, item in value.items()
+            if str(key).lower() not in _FAILURE_CONTEXT_FORBIDDEN_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_failure_context(item) for item in value]
+    return value
+
+
+def _bounded_context_items(
+    items: list[dict[str, Any]],
+    *,
+    max_chars: int,
+) -> list[dict[str, Any]]:
+    """Bound answer-free failure context without emitting partial JSON."""
+    output: list[dict[str, Any]] = []
+    used = 2
+    for item in items:
+        encoded = json.dumps(item, ensure_ascii=True, sort_keys=True)
+        if used + len(encoded) > max_chars:
+            break
+        output.append(item)
+        used += len(encoded) + 1
+    return output
 
 
 def _safe_id(value: str) -> str:

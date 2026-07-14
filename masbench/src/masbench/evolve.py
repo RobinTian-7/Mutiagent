@@ -85,6 +85,12 @@ from exp_graph.mas.insights import (
 from exp_graph.mas.planner import EmperorPlanner
 from exp_graph.mas.phase_program_generation import PhaseProgramGenerationError
 from exp_graph.mas.python_code_generation import PythonGenerationError
+from exp_graph.mas.python_code import validate_python_source
+from exp_graph.mas.python_mutation import (
+    PythonMutationError,
+    PythonMutationSkipped,
+    extract_evolve_blocks,
+)
 from exp_graph.mas.motifs import aggregate_motif_losses, spec_motif_keys
 from exp_graph.mas.runner import summary_to_aggregate_row
 from exp_graph.mas.scoring import score_skill
@@ -103,6 +109,8 @@ from exp_graph.mas.skill_payloads import (
     planner_mode_from_skill,
     program_sha256_from_skill,
     protocol_spec_from_skill,
+    python_source_from_skill,
+    python_worker_contract_from_skill,
     skill_type_for_payload,
 )
 from exp_graph.mas.skill_bank import SkillBank
@@ -121,6 +129,16 @@ from masbench.adapters.silo_paper_protocols import (
 from masbench.adapters.silo_protocol import SiloProtocolAdapter
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
+from masbench.failures import (
+    AlgorithmFailureError,
+    FailureClass,
+    FailureRecord,
+    classify_exception,
+    cluster_failure_records,
+    make_failure_record,
+    zero_scored_metrics,
+)
+from masbench.gates import evaluate_strict_dense_gate
 from masbench.engine import (
     _build_llm_client,
     _plan_graph_generate,
@@ -197,24 +215,47 @@ _PAPER_PROTOCOL_REASONING: dict[str, dict[str, object]] = {
 }
 
 
+def _validate_v2_config(cfg: RunConfig) -> None:
+    failure_policy = getattr(cfg, "failure_policy", "legacy_drop")
+    if failure_policy not in {"legacy_drop", "honest_v2"}:
+        raise ValueError(f"unknown failure_policy {failure_policy!r}")
+    gate_policy = getattr(
+        cfg,
+        "evolution_gate_policy",
+        "legacy_non_regression",
+    )
+    if gate_policy not in {"legacy_non_regression", "strict_dense_v2"}:
+        raise ValueError(f"unknown evolution_gate_policy {gate_policy!r}")
+    if float(getattr(cfg, "strict_gate_min_dense_delta", 0.01)) < 0.0:
+        raise ValueError("strict_gate_min_dense_delta must be non-negative")
+    if float(getattr(cfg, "strict_gate_partial_tolerance", 0.0)) < 0.0:
+        raise ValueError("strict_gate_partial_tolerance must be non-negative")
+    if int(getattr(cfg, "strict_gate_bootstrap_samples", 2000)) < 1:
+        raise ValueError("strict_gate_bootstrap_samples must be at least 1")
+
+
 def _failed_generation_row(
     instance: BenchmarkInstance,
     cfg: RunConfig,
     *,
     seed: int,
     classification: dict[str, Any],
-    error: GraphGenerationError | PhaseProgramGenerationError | PythonGenerationError,
+    error: BaseException,
+    branch: str = "main",
 ) -> dict[str, Any]:
     """Turn a structurally invalid generated candidate into learnable evidence."""
     mode = cfg.planner_mode
     is_program = mode == "program_generate"
     is_python = mode == "python_generate"
+    is_graph = mode == "graph_generate"
     failure_key = (
         "python_generation_failed"
         if is_python
         else "program_generation_failed"
         if is_program
         else "graph_generation_failed"
+        if is_graph
+        else "algorithm_failure"
     )
     topology = (
         "python:invalid"
@@ -222,13 +263,33 @@ def _failed_generation_row(
         else "program:invalid"
         if is_program
         else "generated:invalid"
+        if is_graph
+        else f"{mode}:invalid"
     )
     n_agents = cfg.n_agents or instance.n_agents
     array_size = sum(
         len(shard) if isinstance(shard, (list, tuple, dict)) else 1
         for shard in instance.shards
     )
-    return {
+    costs = zero_scored_metrics(error)
+    artifact_reference = getattr(error, "artifacts_dir", None)
+    record = make_failure_record(
+        exc=error,
+        planner_mode=mode,
+        information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+        worker_contract=getattr(cfg, "python_worker_contract", "n/a"),
+        case_id=instance.case_id,
+        seed=seed,
+        n_agents=n_agents,
+        branch=branch,
+        parent_skill_id=getattr(cfg, "python_parent_skill_id", None),
+        program_sha256=getattr(error, "program_sha256", None),
+        artifact_reference=artifact_reference,
+        structural_signature=(
+            str(getattr(error, "structural_signature", "unknown"))
+        ),
+    )
+    row = {
         "Topology": topology,
         "Agents": n_agents,
         "ArraySize": array_size,
@@ -243,9 +304,9 @@ def _failed_generation_row(
         "PrimaryMetricName": "success_rate",
         "PartialCorrectness": 0.0,
         "MeanTotalSteps": 0.0,
-        "MeanTotalMessages": 0.0,
-        "MeanTotalModelCalls": 0.0,
-        "MeanTokenCost": 0.0,
+        "MeanTotalMessages": float(costs["messages"]),
+        "MeanTotalModelCalls": float(costs["model_calls"]),
+        "MeanTokenCost": float(costs["tokens"]),
         "MeanVoteTopRatio": 0.0,
         "case_id": instance.case_id,
         "seed": seed,
@@ -262,6 +323,8 @@ def _failed_generation_row(
             else "program_generated"
             if is_program
             else "llm_generated"
+            if is_graph
+            else "fixed_named"
         ),
         "program_validity": 0.0,
         "structural_coverage": 0.0,
@@ -273,10 +336,78 @@ def _failed_generation_row(
         "mean_primary_loss": 1.0,
         "paper_S": 0.0,
         "paper_P": 0.0,
-        "paper_C": 0.0,
-        "paper_D": 0.0,
-        failure_key: error.reason,
+        "paper_C": float(costs["C"]),
+        "paper_D": float(costs["D"]),
+        failure_key: str(getattr(error, "reason", None) or error),
     }
+    if getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2":
+        row.update(
+            {
+                "failure_class": FailureClass.ALGORITHM.value,
+                "failure_record": record.model_dump(mode="json"),
+            }
+        )
+    return row
+
+
+def _handle_evolution_exception(
+    exc: BaseException,
+    *,
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    seed: int,
+    llm_client: LLMClient,
+    branch: str,
+    failure_records: list[FailureRecord] | None = None,
+    failure_lock: threading.Lock | None = None,
+) -> dict[str, Any] | None:
+    """Apply legacy or honest-v2 semantics to one evolution run exception."""
+    if getattr(cfg, "failure_policy", "legacy_drop") != "honest_v2":
+        return None
+    failure_class = classify_exception(exc)
+    record = make_failure_record(
+        exc=exc,
+        planner_mode=cfg.planner_mode,
+        information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+        worker_contract=getattr(cfg, "python_worker_contract", "n/a"),
+        case_id=instance.case_id,
+        seed=seed,
+        n_agents=cfg.n_agents or instance.n_agents,
+        branch=branch,
+        parent_skill_id=getattr(cfg, "python_parent_skill_id", None),
+        program_sha256=getattr(exc, "program_sha256", None),
+        artifact_reference=getattr(exc, "artifacts_dir", None),
+        structural_signature=str(
+            getattr(exc, "structural_signature", "unknown")
+        ),
+    )
+    if failure_records is not None:
+        if failure_lock is None:
+            failure_records.append(record)
+        else:
+            with failure_lock:
+                failure_records.append(record)
+    if failure_class == FailureClass.ALGORITHM:
+        classification = classify_task(
+            instance.task_prompt,
+            llm_client=llm_client,
+            model_name=cfg.model_name,
+            llm_provider=cfg.llm_provider,
+            source=getattr(cfg, "task_feature_source", "llm"),
+        )
+        return _failed_generation_row(
+            instance,
+            cfg,
+            seed=seed,
+            classification=classification,
+            error=exc,
+            branch=branch,
+        )
+    if failure_class == FailureClass.INFRASTRUCTURE:
+        if getattr(cfg, "require_complete_runs", False):
+            raise exc
+        return None
+    raise exc
 
 
 def _apply_information_goal_score(
@@ -416,6 +547,87 @@ def _apply_precomputed_information_goal_score(
             "mean_primary_loss": 1.0 - staged,
         }
     )
+
+
+def _annotate_structured_algorithm_failure(
+    row: dict[str, Any],
+    *,
+    instance: BenchmarkInstance,
+    cfg: RunConfig,
+    seed: int,
+    branch: str = "main",
+) -> None:
+    """Classify non-exception V/K/U failures without persisting answers."""
+    if getattr(cfg, "failure_policy", "legacy_drop") != "honest_v2":
+        return
+    if row.get("failure_record"):
+        return
+    stage = str(row.get("evolution_stage") or "")
+    if stage not in {"validity", "coverage", "submission"}:
+        return
+    submissions = list(row.get("per_agent_submissions", []) or [])
+    missing_submitters = [
+        int(item.get("agent_id", index))
+        for index, item in enumerate(submissions)
+        if isinstance(item, dict) and not _is_real_submission(item.get("answer"))
+    ]
+    if stage == "submission" and not submissions:
+        if (getattr(cfg, "silo_eval_mode", "sink") or "sink") == "all_agents":
+            missing_submitters = list(range(cfg.n_agents or instance.n_agents))
+        else:
+            missing_submitters = [int(row.get("sink_id", 0) or 0)]
+    partial_values = list(row.get("per_agent_partial", []) or [])
+    per_agent_partial = {
+        agent_id: float(value or 0.0)
+        for agent_id, value in enumerate(partial_values)
+        if isinstance(value, (int, float))
+    }
+    costs = {
+        "C": row.get("paper_C", row.get("MeanTokenCost", 0.0)),
+        "D": row.get("paper_D", row.get("MeanTotalMessages", 0.0)),
+        "messages": row.get("MeanTotalMessages", 0.0),
+        "model_calls": row.get("MeanTotalModelCalls", 0.0),
+        "tokens": row.get("MeanTokenCost", 0.0),
+    }
+    exc = AlgorithmFailureError(
+        f"structured {stage} requirement was not met",
+        stage=stage,
+        metrics=costs,
+    )
+    artifact_reference = next(
+        (
+            row.get(key)
+            for key in (
+                "python_artifacts_dir",
+                "program_artifacts_dir",
+                "graph_artifacts_dir",
+            )
+            if row.get(key)
+        ),
+        None,
+    )
+    record = make_failure_record(
+        exc=exc,
+        planner_mode=cfg.planner_mode,
+        information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+        worker_contract=(
+            cfg.python_worker_contract
+            if cfg.planner_mode == "python_generate"
+            else "n/a"
+        ),
+        case_id=instance.case_id,
+        seed=seed,
+        n_agents=cfg.n_agents or instance.n_agents,
+        branch=branch,
+        parent_skill_id=getattr(cfg, "python_parent_skill_id", None),
+        program_sha256=(str(row["program_sha256"]) if row.get("program_sha256") else None),
+        missing_submitters=missing_submitters,
+        per_agent_partial=per_agent_partial,
+        artifact_reference=artifact_reference,
+        structural_signature=f"{row.get('Topology', 'unknown')}:{stage}",
+    )
+    row["failure_class"] = FailureClass.ALGORITHM.value
+    row["failure_record"] = record.model_dump(mode="json")
 
 
 def _is_real_submission(answer: Any) -> bool:
@@ -576,6 +788,11 @@ def _run_one(
     ``ObjectiveSpec`` and a shared ``SkillBank`` so the Plan-3 E/F selection knobs
     genuinely influence topology selection during evidence collection.
     """
+    # A run's explicit seed is authoritative.  Evolution calls this helper with
+    # many seeds while sharing one immutable base config; binding the seed here
+    # keeps generation, execution, cache keys, and audit paths on the same run.
+    run_cfg = replace(cfg, seed=seed)
+    cfg = run_cfg
     _goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
     task_adapter = _protocol_adapter(instance, information_goal=_goal)
     global_task = task_adapter.build_global_task()
@@ -672,6 +889,20 @@ def _run_one(
             skill_bank, motif_stats, feature_bucket,
             kind=feature_slot, mode=transfer_mode, fallback_tier=_ft,
         )
+        if (
+            cfg.planner_mode == "python_generate"
+            and getattr(cfg, "python_innovation_branch", None) is not None
+            and getattr(cfg, "python_parent_skill_id", None)
+        ):
+            # Hot-start innovation deliberately pins one parent.  The generic
+            # transfer gate may reject that still-unproven card, which would
+            # turn an explicit mutation request into an empty-bank skip.  Keep
+            # the caller-provided, already contract-checked parent view for
+            # this isolated branch; normal deployment and replay still use the
+            # transfer-filtered bank above.
+            view_bank = skill_bank
+            abstained = False
+            transfer_tier = "explicit_python_parent"
         try:
             if cfg.planner_mode == "python_generate":
                 planning, _planner_extra = _plan_python_generate(
@@ -741,6 +972,24 @@ def _run_one(
                         ),
                         "repair_attempts": max(0, len(planning.attempts) - 1),
                         "python_artifacts_dir": str(planning.artifacts_dir),
+                        "clean_pythongen": _planner_extra.get(
+                            "clean_pythongen", True
+                        ),
+                        "python_innovation_strategy": _planner_extra.get(
+                            "python_innovation_strategy"
+                        ),
+                        "python_parent_skill_id": _planner_extra.get(
+                            "python_parent_skill_id"
+                        ),
+                        "python_exposed_insight_ids": _planner_extra.get(
+                            "python_exposed_insight_ids", []
+                        ),
+                        "python_used_insight_ids": _planner_extra.get(
+                            "python_used_insight_ids", []
+                        ),
+                        "python_mutation_provenance": _planner_extra.get(
+                            "python_mutation_provenance", {}
+                        ),
                         "runtime_trace_summary": {
                             "rounds": int(output.rounds_executed) if output else 0,
                             "messages": len(output.messages) if output else 0,
@@ -749,6 +998,13 @@ def _run_one(
                             "completion_tokens": int(usage.completion_tokens),
                         },
                     }
+                )
+                _annotate_structured_algorithm_failure(
+                    row,
+                    instance=instance,
+                    cfg=cfg,
+                    seed=seed,
+                    branch=diag_phase or "main",
                 )
                 if diag.enabled():
                     diag.dump_eval_run(
@@ -795,6 +1051,7 @@ def _run_one(
                     client=llm_client,
                     skill_bank=view_bank,
                     motif_stats=view_motif,
+                    instance=instance,
                 )
         except (
             PhaseProgramGenerationError,
@@ -894,6 +1151,13 @@ def _run_one(
             if transfer_mode != "off"
             else raw_motif_keys
         )
+    _annotate_structured_algorithm_failure(
+        row,
+        instance=instance,
+        cfg=cfg,
+        seed=seed,
+        branch=diag_phase or "main",
+    )
     if diag.enabled():
         record: dict[str, Any] = {
             "case_id": instance.case_id,
@@ -1029,6 +1293,13 @@ def _run_fixed_one(
             ],
             metadata=metadata,
         ).model_dump(mode="json")
+    _annotate_structured_algorithm_failure(
+        row,
+        instance=instance,
+        cfg=replace(cfg, planner_mode="fixed_named"),
+        seed=seed,
+        branch=diag_phase or f"fixed:{topology}",
+    )
     if diag.enabled():
         diag.dump_eval_run(
             {
@@ -1083,6 +1354,7 @@ def _collect_portfolio_rows(
     workers: int = 1,
     progress: bool = False,
     phase: str = "",
+    failure_records: list[FailureRecord] | None = None,
 ) -> list[dict[str, Any]]:
     """Fixed-topology evidence rows (bank-independent -> cacheable)."""
     tasks = [
@@ -1096,6 +1368,7 @@ def _collect_portfolio_rows(
     results: list[dict[str, Any] | None] = [None] * len(tasks)
     prog = _EvolveProgress(phase, len(tasks)) if progress else None
     cache = open_cache()
+    failure_lock = threading.Lock()
 
     def _do(index: int) -> tuple[int, dict[str, Any] | None]:
         inst, topology, seed = tasks[index]
@@ -1120,13 +1393,27 @@ def _collect_portfolio_rows(
             if cache is not None and cache_key is not None:
                 cache.put(cache_key, row)
             return index, row
-        except Exception as exc:  # noqa: BLE001 - one bad run must not abort evolution
+        except Exception as exc:  # noqa: BLE001 - centrally classified below
             print(
                 f"  [evolve {phase}] portfolio {topology} run FAILED:"
                 f" {type(exc).__name__}: {exc}",
                 flush=True,
             )
-            return index, None
+            row = _handle_evolution_exception(
+                exc,
+                instance=inst,
+                cfg=replace(cfg, planner_mode="fixed_named"),
+                seed=seed,
+                llm_client=llm_client,
+                branch=f"portfolio:{topology}",
+                failure_records=failure_records,
+                failure_lock=failure_lock,
+            )
+            if row is not None:
+                row["Topology"] = topology
+                row["planner_mode"] = "fixed_named"
+                row["provenance"] = "fixed_named"
+            return index, row
 
     if workers and workers > 1 and len(tasks) > 1:
         with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as executor:
@@ -1292,6 +1579,17 @@ def _paper_protocol_row(
         score=score,
         information_goal="all_agents",
     )
+    _annotate_structured_algorithm_failure(
+        row,
+        instance=instance,
+        cfg=replace(
+            cfg,
+            planner_mode="paper_protocol",
+            silo_eval_mode="all_agents",
+        ),
+        seed=seed,
+        branch=f"hot_start_protocol:{selected}",
+    )
     return row
 
 
@@ -1304,6 +1602,7 @@ def _collect_hot_start_protocol_rows(
     llm_client: LLMClient,
     workers: int,
     progress: bool,
+    failure_records: list[FailureRecord] | None = None,
 ) -> list[dict[str, Any]]:
     tasks = [
         (instance, protocol, seed)
@@ -1314,6 +1613,7 @@ def _collect_hot_start_protocol_rows(
     if not tasks:
         return []
     prog = _EvolveProgress("hot-start protocols", len(tasks)) if progress else None
+    failure_lock = threading.Lock()
 
     def _do(task: tuple[BenchmarkInstance, str, int]) -> dict[str, Any] | None:
         instance, protocol, seed = task
@@ -1325,13 +1625,38 @@ def _collect_hot_start_protocol_rows(
                 seed=seed,
                 llm_client=llm_client,
             )
-        except Exception as exc:  # noqa: BLE001 - preserve the rest of the warm-up
+        except Exception as exc:  # noqa: BLE001 - centrally classified below
             print(
                 f"  [evolve hot-start] paper {protocol} {instance.case_id} "
                 f"seed={seed} FAILED: {type(exc).__name__}: {exc}",
                 flush=True,
             )
-            return None
+            row = _handle_evolution_exception(
+                exc,
+                instance=instance,
+                cfg=replace(
+                    cfg,
+                    planner_mode="paper_protocol",
+                    silo_eval_mode="all_agents",
+                ),
+                seed=seed,
+                llm_client=llm_client,
+                branch=f"hot_start_protocol:{protocol}",
+                failure_records=failure_records,
+                failure_lock=failure_lock,
+            )
+            if row is not None:
+                selected = normalize_paper_protocol(protocol)
+                row.update(
+                    {
+                        "Topology": f"paper_{selected}",
+                        "planner_mode": "paper_protocol",
+                        "provenance": "fixed_named",
+                        "hot_start_source": "paper_protocol",
+                        "hot_start_protocol": selected,
+                    }
+                )
+            return row
 
     if workers and workers > 1 and len(tasks) > 1:
         with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as executor:
@@ -1606,6 +1931,7 @@ def _seed_hot_start_bank(
     workers: int,
     progress: bool,
     batch_id: str,
+    failure_records: list[FailureRecord] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Measure supplied organizations once and seed the persistent bank."""
     existing_hot = [
@@ -1666,6 +1992,7 @@ def _seed_hot_start_bank(
         workers=workers,
         progress=progress,
         phase=f"n={cfg.n_agents} hot-start fixed",
+        failure_records=failure_records,
     )
     for row in fixed_rows:
         row["hot_start_source"] = "fixed_topology"
@@ -1677,6 +2004,7 @@ def _seed_hot_start_bank(
         llm_client=llm_client,
         workers=workers,
         progress=progress,
+        failure_records=failure_records,
     )
     rows = [*fixed_rows, *protocol_rows]
     if not rows:
@@ -1820,6 +2148,63 @@ def _fallback_parent_skill_id(
     return ranked[0][1]
 
 
+def _fallback_python_parent_skill_id(
+    bank: SkillBank,
+    cfg: RunConfig,
+    *,
+    n_agents: int,
+    objective: ObjectiveSpec,
+) -> str | None:
+    """Choose a validated, same-worker-contract parent with editable blocks."""
+    request = PlannerRequest(
+        task_family=SILO_TASK_FAMILY,
+        n_agents=n_agents,
+        objective=objective,
+        planner_mode="python_generate",
+        information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+        python_worker_contract=getattr(
+            cfg, "python_worker_contract", "action_json_v1"
+        ),
+        include_reference_skills=True,
+    )
+    candidates: list[SkillCard] = []
+    seen: set[str] = set()
+    for skill in [
+        *bank.retrieve(request),
+        *bank.retrieve_generation_context(request),
+    ]:
+        if skill.skill_id in seen:
+            continue
+        seen.add(skill.skill_id)
+        if planner_mode_from_skill(skill) != "python_generate":
+            continue
+        if python_worker_contract_from_skill(skill) != cfg.python_worker_contract:
+            continue
+        source = python_source_from_skill(skill)
+        if not isinstance(source, str) or not validate_python_source(
+            source,
+            worker_contract=cfg.python_worker_contract,
+        ).valid:
+            continue
+        try:
+            extract_evolve_blocks(source)
+        except PythonMutationError:
+            continue
+        candidates.append(skill)
+    if not candidates:
+        return None
+    ranked: list[tuple[float, str]] = []
+    for skill in candidates:
+        score, _breakdown = score_skill(
+            skill,
+            objective=objective,
+            peers=candidates,
+        )
+        ranked.append((score, skill.skill_id))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
 def _reuse_bank_and_mode(
     bank: SkillBank,
     *,
@@ -1884,12 +2269,14 @@ def _collect_hot_start_dual_rows(
     llm_client: LLMClient,
     workers: int,
     progress: bool,
+    failure_records: list[FailureRecord] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """For every pair, run existing-skill reuse then parent-conditioned novelty."""
+    """Measure reuse plus configured fresh/mutation branches for every pair."""
     if not settings.get("dual_branch"):
         return [], {
             "enabled": False,
             "innovation_mode": settings.get("innovation_mode"),
+            "python_context_exposed": False,
             "branches": {},
             "cost": _runtime_cost_summary([]),
         }
@@ -1899,7 +2286,33 @@ def _collect_hot_start_dual_rows(
         for seed in (seeds or [0])
     ]
     innovation_mode = str(settings["innovation_mode"])
-    prog = _EvolveProgress("hot-start dual", len(tasks) * 2) if progress else None
+    python_strategy = str(
+        getattr(cfg, "python_innovation_strategy", "mutate_and_fresh")
+    )
+    if python_strategy not in {"fresh", "mutate", "mutate_and_fresh"}:
+        raise ValueError(
+            "python_innovation_strategy must be fresh, mutate, or mutate_and_fresh"
+        )
+    run_mutate = innovation_mode == "python_generate" and python_strategy in {
+        "mutate",
+        "mutate_and_fresh",
+    }
+    run_fresh = innovation_mode != "python_generate" or python_strategy in {
+        "fresh",
+        "mutate_and_fresh",
+    }
+    branch_names = ["reuse"]
+    if run_mutate:
+        branch_names.append("mutate")
+    if run_fresh:
+        branch_names.append("innovation")
+    prog = (
+        _EvolveProgress("hot-start branches", len(tasks) * len(branch_names))
+        if progress
+        else None
+    )
+    failure_lock = threading.Lock()
+    skipped_mutations: list[dict[str, Any]] = []
 
     def _pair(task: tuple[BenchmarkInstance, int]) -> list[dict[str, Any]]:
         instance, seed = task
@@ -1948,12 +2361,17 @@ def _collect_hot_start_dual_rows(
                     "hot_start_parent_skill_id": (
                         reuse_row.get("selected_skill_id") or predicted_parent
                     ),
+                    "hot_start_associated_insight_ids": _skill_insight_ids(
+                        skill_bank.get(
+                            str(reuse_row.get("selected_skill_id") or predicted_parent or "")
+                        )
+                    ),
                 }
             )
             rows.append(reuse_row)
             if prog is not None:
                 prog.tick(ok=True)
-        except Exception as exc:  # noqa: BLE001 - innovation still runs
+        except Exception as exc:  # noqa: BLE001 - centrally classified below
             print(
                 f"  [evolve hot-start] reuse {pair_id} FAILED: "
                 f"{type(exc).__name__}: {exc}",
@@ -1961,59 +2379,223 @@ def _collect_hot_start_dual_rows(
             )
             if prog is not None:
                 prog.tick(ok=False)
+            reuse_row = _handle_evolution_exception(
+                exc,
+                instance=instance,
+                cfg=replace(cfg, planner_mode=reuse_mode),
+                seed=seed,
+                llm_client=llm_client,
+                branch="reuse",
+                failure_records=failure_records,
+                failure_lock=failure_lock,
+            )
+            if reuse_row is not None:
+                reuse_row.update(
+                    {
+                        "hot_start_branch": "reuse",
+                        "hot_start_pair_id": pair_id,
+                        "hot_start_parent_skill_id": predicted_parent,
+                        "hot_start_associated_insight_ids": _skill_insight_ids(
+                            skill_bank.get(predicted_parent or "")
+                        ),
+                    }
+                )
+                rows.append(reuse_row)
 
         parent_id = (
             str(reuse_row.get("selected_skill_id"))
             if reuse_row is not None and reuse_row.get("selected_skill_id")
             else predicted_parent
         )
-        innovation_bank, context_ids = _innovation_context_bank(
-            skill_bank,
-            parent_skill_id=parent_id,
-        )
-        innovation_cfg = replace(
-            cfg,
-            planner_mode=innovation_mode,
-            replay_first=False,
-            graph_gen_temperature=(
-                0.7 if innovation_mode != "python_generate" else cfg.graph_gen_temperature
-            ),
-            python_gen_temperature=(
-                0.7 if innovation_mode == "python_generate" else cfg.python_gen_temperature
-            ),
-        )
-        try:
-            innovation_row = _run_one(
-                instance,
-                innovation_cfg,
+        if run_mutate:
+            mutation_parent_id = _fallback_python_parent_skill_id(
+                skill_bank,
+                cfg,
+                n_agents=cfg.n_agents or instance.n_agents,
                 objective=objective,
-                skill_bank=innovation_bank,
-                seed=seed,
-                llm_client=llm_client,
-                diag_phase="hot_start_innovation",
             )
-            innovation_row.update(
-                {
-                    "hot_start_branch": "innovation",
-                    "hot_start_pair_id": pair_id,
-                    "hot_start_parent_skill_id": parent_id,
-                    "hot_start_context_skill_ids": context_ids,
-                    "hot_start_context_exposed_to_architect": (
-                        innovation_mode != "python_generate"
-                    ),
+            if mutation_parent_id is None:
+                skipped = {
+                    "pair_id": pair_id,
+                    "branch": "mutate",
+                    "status": "skipped_with_reason",
+                    "reason": "no same-contract Python parent with EVOLVE-BLOCK",
                 }
+                with failure_lock:
+                    skipped_mutations.append(skipped)
+                if prog is not None:
+                    prog.tick(ok=True)
+            else:
+                mutation_bank, _mode = _reuse_bank_and_mode(
+                    skill_bank,
+                    parent_skill_id=mutation_parent_id,
+                    fallback_mode="python_generate",
+                )
+                mutation_cfg = replace(
+                    cfg,
+                    planner_mode="python_generate",
+                    replay_first=False,
+                    python_innovation_branch="mutate",
+                    python_parent_skill_id=mutation_parent_id,
+                    python_gen_temperature=0.7,
+                )
+                try:
+                    mutation_row = _run_one(
+                        instance,
+                        mutation_cfg,
+                        objective=objective,
+                        skill_bank=mutation_bank,
+                        seed=seed,
+                        llm_client=llm_client,
+                        diag_phase="hot_start_mutate",
+                    )
+                    mutation_row.update(
+                        {
+                            "hot_start_branch": "mutate",
+                            "hot_start_pair_id": pair_id,
+                            "hot_start_parent_skill_id": mutation_parent_id,
+                            "hot_start_context_skill_ids": [mutation_parent_id],
+                            "hot_start_context_exposed_to_architect": True,
+                            "hot_start_used_insight_ids": list(
+                                mutation_row.get("python_used_insight_ids", []) or []
+                            ),
+                        }
+                    )
+                    rows.append(mutation_row)
+                    if prog is not None:
+                        prog.tick(ok=True)
+                except PythonMutationSkipped as exc:
+                    with failure_lock:
+                        skipped_mutations.append(
+                            {
+                                "pair_id": pair_id,
+                                "branch": "mutate",
+                                "status": "skipped_with_reason",
+                                "reason": str(exc),
+                                "parent_skill_id": mutation_parent_id,
+                            }
+                        )
+                    if prog is not None:
+                        prog.tick(ok=True)
+                except Exception as exc:  # noqa: BLE001 - centrally classified
+                    print(
+                        f"  [evolve hot-start] mutate {pair_id} FAILED: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    if prog is not None:
+                        prog.tick(ok=False)
+                    mutation_row = _handle_evolution_exception(
+                        exc,
+                        instance=instance,
+                        cfg=mutation_cfg,
+                        seed=seed,
+                        llm_client=llm_client,
+                        branch="mutate",
+                        failure_records=failure_records,
+                        failure_lock=failure_lock,
+                    )
+                    if mutation_row is not None:
+                        mutation_row.update(
+                            {
+                                "hot_start_branch": "mutate",
+                                "hot_start_pair_id": pair_id,
+                                "hot_start_parent_skill_id": mutation_parent_id,
+                                "hot_start_context_exposed_to_architect": True,
+                                "hot_start_used_insight_ids": list(
+                                    mutation_row.get("python_used_insight_ids", []) or []
+                                ),
+                            }
+                        )
+                        rows.append(mutation_row)
+
+        if run_fresh:
+            innovation_bank, context_ids = _innovation_context_bank(
+                skill_bank,
+                parent_skill_id=parent_id,
             )
-            rows.append(innovation_row)
-            if prog is not None:
-                prog.tick(ok=True)
-        except Exception as exc:  # noqa: BLE001 - one failed candidate is evidence loss
-            print(
-                f"  [evolve hot-start] innovation {pair_id} FAILED: "
-                f"{type(exc).__name__}: {exc}",
-                flush=True,
+            innovation_cfg = replace(
+                cfg,
+                planner_mode=innovation_mode,
+                replay_first=False,
+                graph_gen_temperature=(
+                    0.7
+                    if innovation_mode != "python_generate"
+                    else cfg.graph_gen_temperature
+                ),
+                python_gen_temperature=(
+                    0.7
+                    if innovation_mode == "python_generate"
+                    else cfg.python_gen_temperature
+                ),
+                python_innovation_branch=(
+                    "fresh" if innovation_mode == "python_generate" else None
+                ),
+                python_parent_skill_id=(
+                    parent_id if innovation_mode == "python_generate" else None
+                ),
             )
-            if prog is not None:
-                prog.tick(ok=False)
+            try:
+                innovation_row = _run_one(
+                    instance,
+                    innovation_cfg,
+                    objective=objective,
+                    skill_bank=innovation_bank,
+                    seed=seed,
+                    llm_client=llm_client,
+                    diag_phase="hot_start_innovation",
+                )
+                innovation_row.update(
+                    {
+                        "hot_start_branch": "innovation",
+                        "hot_start_pair_id": pair_id,
+                        "hot_start_parent_skill_id": parent_id,
+                        "hot_start_context_skill_ids": context_ids,
+                        "hot_start_context_exposed_to_architect": bool(parent_id),
+                        "hot_start_exposed_insight_ids": list(
+                            innovation_row.get("python_exposed_insight_ids", [])
+                            or _context_insight_ids(skill_bank, context_ids)
+                        ),
+                    }
+                )
+                rows.append(innovation_row)
+                if prog is not None:
+                    prog.tick(ok=True)
+            except Exception as exc:  # noqa: BLE001 - centrally classified below
+                print(
+                    f"  [evolve hot-start] innovation {pair_id} FAILED: "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+                if prog is not None:
+                    prog.tick(ok=False)
+                innovation_row = _handle_evolution_exception(
+                    exc,
+                    instance=instance,
+                    cfg=innovation_cfg,
+                    seed=seed,
+                    llm_client=llm_client,
+                    branch="innovation",
+                    failure_records=failure_records,
+                    failure_lock=failure_lock,
+                )
+                if innovation_row is not None:
+                    innovation_row.update(
+                        {
+                            "hot_start_branch": "innovation",
+                            "hot_start_pair_id": pair_id,
+                            "hot_start_parent_skill_id": parent_id,
+                            "hot_start_context_skill_ids": context_ids,
+                            "hot_start_context_exposed_to_architect": bool(
+                                parent_id
+                            ),
+                            "hot_start_exposed_insight_ids": list(
+                                innovation_row.get("python_exposed_insight_ids", [])
+                                or _context_insight_ids(skill_bank, context_ids)
+                            ),
+                        }
+                    )
+                    rows.append(innovation_row)
         return rows
 
     if workers and workers > 1 and len(tasks) > 1:
@@ -2023,7 +2605,7 @@ def _collect_hot_start_dual_rows(
         nested = [_pair(task) for task in tasks]
     rows = [row for pair_rows in nested for row in pair_rows]
     branch_summary: dict[str, Any] = {}
-    for branch in ("reuse", "innovation"):
+    for branch in branch_names:
         branch_rows = [row for row in rows if row.get("hot_start_branch") == branch]
         branch_summary[branch] = {
             "n_rows": len(branch_rows),
@@ -2043,6 +2625,13 @@ def _collect_hot_start_dual_rows(
                     "provenance": row.get("provenance"),
                     "program_validity": row.get("program_validity"),
                     "parent_skill_id": row.get("hot_start_parent_skill_id"),
+                    "context_exposed": bool(
+                        row.get("hot_start_context_exposed_to_architect", False)
+                    ),
+                    "used_insight_ids": row.get("python_used_insight_ids", []),
+                    "exposed_insight_ids": row.get(
+                        "python_exposed_insight_ids", []
+                    ),
                 }
                 for row in branch_rows
             ],
@@ -2051,13 +2640,25 @@ def _collect_hot_start_dual_rows(
     return rows, {
         "enabled": True,
         "innovation_mode": innovation_mode,
+        "python_context_exposed": any(
+            bool(row.get("hot_start_context_exposed_to_architect", False))
+            for row in rows
+            if row.get("planner_mode") == "python_generate"
+        ),
+        "python_innovation_strategy": (
+            python_strategy if innovation_mode == "python_generate" else None
+        ),
         "n_pairs_requested": len(tasks),
         "n_rows": len(rows),
         "branches": branch_summary,
         "cost": _runtime_cost_summary(rows),
+        "mutation_skips": sorted(
+            skipped_mutations,
+            key=lambda item: (str(item.get("pair_id")), str(item.get("reason"))),
+        ),
         "python_context_note": (
-            "Python architect remains SkillBank-blind; innovation is independent "
-            "after replay source removal."
+            "Fresh Python generation receives sanitized parent lessons; mutation "
+            "receives only the parent's EVOLVE-BLOCK contents plus those lessons."
             if innovation_mode == "python_generate"
             else None
         ),
@@ -2167,6 +2768,10 @@ def _recipe_search_phase(
                     _inst, cfg, spec=spec, seed=seed, llm_client=llm_client
                 )
             except Exception as exc:  # noqa: BLE001 - a failed attempt is feedback
+                if getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2":
+                    failure_class = classify_exception(exc)
+                    if failure_class != FailureClass.ALGORITHM:
+                        raise
                 return 0.0, {"wrong_agents": "run failed", "holder_state": f"{type(exc).__name__}"}
 
         # M18: a VERIFIED recipe is a deterministic-keyed artifact -- resume
@@ -2253,7 +2858,12 @@ def _rewrite_instructions_for_case(
             candidate = data.get("instructions")
             if isinstance(candidate, list) and candidate:
                 return [str(s).strip()[:300] for s in candidate if str(s).strip()]
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        except Exception as exc:
+            if getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2":
+                if classify_exception(exc) != FailureClass.ALGORITHM:
+                    raise
             continue
     return None
 
@@ -2415,13 +3025,15 @@ def _generation_gate(
     state. Offline Silo is topology-invariant so ``j_before == j_after`` (accept).
     """
     cache = open_cache()
+    legacy_gate_failure_records: list[FailureRecord] = []
+    legacy_gate_failure_lock = threading.Lock()
 
     def _one_loss(
         task: tuple[BenchmarkInstance, int],
         bank: SkillBank,
         stats: dict[str, dict] | None,
         phase_label: str,
-    ) -> float:
+    ) -> float | None:
         inst, seed = task
         # j_before (empty bank, no prior, cold generation) is round-
         # invariant -> cacheable; j_after depends on the bank -> never.
@@ -2444,7 +3056,7 @@ def _generation_gate(
                 llm_client=llm_client, motif_stats=stats,
                 diag_phase=phase_label,
             )
-        except Exception as exc:  # noqa: BLE001 - one wedged call must not abort evolution
+        except Exception as exc:  # noqa: BLE001 - policy controls disposition
             # A run that cannot complete IS a deployment failure for its
             # arm: charge max loss and keep gating (per-run isolation,
             # mirroring _collect_rows).
@@ -2453,6 +3065,31 @@ def _generation_gate(
                 f" {type(exc).__name__}: {exc}",
                 flush=True,
             )
+            if getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2":
+                failure_class = classify_exception(exc)
+                record = make_failure_record(
+                    exc=exc,
+                    planner_mode=cfg.planner_mode,
+                    information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+                    worker_contract=(
+                        cfg.python_worker_contract
+                        if cfg.planner_mode == "python_generate"
+                        else "n/a"
+                    ),
+                    case_id=inst.case_id,
+                    seed=seed,
+                    n_agents=cfg.n_agents or inst.n_agents,
+                    branch=phase_label,
+                    artifact_reference=getattr(exc, "artifacts_dir", None),
+                )
+                with legacy_gate_failure_lock:
+                    legacy_gate_failure_records.append(record)
+                if failure_class == FailureClass.INFRASTRUCTURE:
+                    if getattr(cfg, "require_complete_runs", False):
+                        raise
+                    return None
+                if failure_class == FailureClass.HARNESS:
+                    raise
             return 1.0
         loss = float(
             row.get("mean_primary_loss", 1.0 - float(row.get("ExactMatchRate", 0.0)))
@@ -2471,16 +3108,164 @@ def _generation_gate(
         seed + 1009 * k for k in range(max(1, factor)) for seed in (val_seeds or [0])
     ]
 
-    def _mean_loss(
+    if getattr(cfg, "evolution_gate_policy", "legacy_non_regression") == "strict_dense_v2":
+        tasks = [
+            (inst, seed)
+            for inst in val_instances
+            for seed in gate_seeds
+        ]
+        gate_failure_records: list[FailureRecord] = []
+        gate_failure_lock = threading.Lock()
+
+        def _strict_one(
+            task: tuple[BenchmarkInstance, int],
+            bank: SkillBank,
+            stats: dict[str, dict] | None,
+            phase_label: str,
+        ) -> dict[str, Any] | None:
+            inst, seed = task
+            try:
+                return _run_one(
+                    inst,
+                    cfg,
+                    objective=objective,
+                    skill_bank=bank,
+                    seed=seed,
+                    llm_client=llm_client,
+                    motif_stats=stats,
+                    diag_phase=phase_label,
+                )
+            except Exception as exc:  # noqa: BLE001 - typed strict semantics
+                failure_class = classify_exception(exc)
+                record = make_failure_record(
+                    exc=exc,
+                    planner_mode=cfg.planner_mode,
+                    information_goal=getattr(cfg, "silo_eval_mode", "sink") or "sink",
+                    worker_contract=(
+                        cfg.python_worker_contract
+                        if cfg.planner_mode == "python_generate"
+                        else "n/a"
+                    ),
+                    case_id=inst.case_id,
+                    seed=seed,
+                    n_agents=cfg.n_agents or inst.n_agents,
+                    branch=phase_label,
+                    artifact_reference=getattr(exc, "artifacts_dir", None),
+                    structural_signature=str(
+                        getattr(exc, "structural_signature", "unknown")
+                    ),
+                )
+                with gate_failure_lock:
+                    gate_failure_records.append(record)
+                if failure_class == FailureClass.INFRASTRUCTURE:
+                    if getattr(cfg, "require_complete_runs", False):
+                        raise
+                    return None
+                if failure_class == FailureClass.HARNESS:
+                    raise
+                classification = classify_task(
+                    inst.task_prompt,
+                    llm_client=llm_client,
+                    model_name=cfg.model_name,
+                    llm_provider=cfg.llm_provider,
+                    source=getattr(cfg, "task_feature_source", "llm"),
+                )
+                return _failed_generation_row(
+                    inst,
+                    cfg,
+                    seed=seed,
+                    classification=classification,
+                    error=exc,
+                    branch=phase_label,
+                )
+
+        before_bank = (
+            incumbent_bank
+            if incumbent_bank is not None and len(incumbent_bank) > 0
+            else SkillBank()
+        )
+
+        def _collect_strict(
+            bank: SkillBank,
+            stats: dict[str, dict] | None,
+            phase_label: str,
+        ) -> list[dict[str, Any] | None]:
+            if workers and workers > 1 and len(tasks) > 1:
+                with ThreadPoolExecutor(max_workers=min(workers, len(tasks))) as ex:
+                    return list(
+                        ex.map(
+                            lambda task: _strict_one(task, bank, stats, phase_label),
+                            tasks,
+                        )
+                    )
+            return [
+                _strict_one(task, bank, stats, phase_label) for task in tasks
+            ]
+
+        before_rows_raw = _collect_strict(
+            before_bank,
+            None,
+            "gate:strict_incumbent",
+        )
+        after_rows_raw = _collect_strict(
+            evolved_bank,
+            motif_stats,
+            "gate:strict_candidate",
+        )
+        before_rows: list[dict[str, Any]] = []
+        after_rows: list[dict[str, Any]] = []
+        dropped_infrastructure_pairs = 0
+        for before_row, after_row in zip(
+            before_rows_raw,
+            after_rows_raw,
+            strict=True,
+        ):
+            if before_row is None or after_row is None:
+                dropped_infrastructure_pairs += 1
+                continue
+            before_rows.append(before_row)
+            after_rows.append(after_row)
+        strict_result = evaluate_strict_dense_gate(
+            before_rows,
+            after_rows,
+            min_dense_delta=float(
+                getattr(cfg, "strict_gate_min_dense_delta", 0.01)
+            ),
+            partial_tolerance=float(
+                getattr(cfg, "strict_gate_partial_tolerance", 0.0)
+            ),
+            bootstrap_samples=int(
+                getattr(cfg, "strict_gate_bootstrap_samples", 2000)
+            ),
+            bootstrap_seed=int(
+                getattr(cfg, "strict_gate_bootstrap_seed", 20260713)
+            ),
+        )
+        strict_result.update(
+            {
+                "mode": "strict_dense_ratchet",
+                "dropped_infrastructure_pairs": dropped_infrastructure_pairs,
+                "failure_records": [
+                    {
+                        "record_id": record.record_id,
+                        **record.model_dump(mode="json"),
+                    }
+                    for record in gate_failure_records
+                ],
+            }
+        )
+        return strict_result
+
+    def _loss_map(
         bank: SkillBank, stats: dict[str, dict] | None, phase_label: str
-    ) -> float:
+    ) -> dict[tuple[str, int], float | None]:
         tasks = [
             (inst, seed)
             for inst in val_instances
             for seed in gate_seeds
         ]
         if not tasks:
-            return 1.0
+            return {}
         # The (instance, seed) gate runs are independent; replayed organizations
         # are message-heavy (many serial merge calls), so a serial gate loop was
         # the longest pole of a round. Mean is order-independent -> parallel
@@ -2492,7 +3277,10 @@ def _generation_gate(
                 )
         else:
             losses = [_one_loss(t, bank, stats, phase_label) for t in tasks]
-        return sum(losses) / len(losses)
+        return {
+            (task[0].case_id, task[1]): loss
+            for task, loss in zip(tasks, losses, strict=True)
+        }
 
     # M2 ratchet: when this round inherited a bank, the bar is the INCUMBENT
     # state's held-out generation loss, not the empty-bank cold loss -- a
@@ -2501,23 +3289,48 @@ def _generation_gate(
     # incumbent is measured without the motif prior (the prior is merged
     # outside run_evolution); documented approximation.
     if incumbent_bank is not None and len(incumbent_bank) > 0:
-        j_before = _mean_loss(incumbent_bank, None, "gate:incumbent")
+        before_losses = _loss_map(incumbent_bank, None, "gate:incumbent")
         gate_mode_label = "generation_ratchet"
     else:
-        j_before = _mean_loss(SkillBank(), None, "gate:before")
+        before_losses = _loss_map(SkillBank(), None, "gate:before")
         gate_mode_label = "generation"
-    j_after = _mean_loss(evolved_bank, motif_stats, "gate:after")
+    after_losses = _loss_map(evolved_bank, motif_stats, "gate:after")
+    retained_keys = [
+        key
+        for key in sorted(set(before_losses) & set(after_losses))
+        if before_losses[key] is not None and after_losses[key] is not None
+    ]
+    j_before = (
+        sum(float(before_losses[key]) for key in retained_keys) / len(retained_keys)
+        if retained_keys
+        else 1.0
+    )
+    j_after = (
+        sum(float(after_losses[key]) for key in retained_keys) / len(retained_keys)
+        if retained_keys
+        else 1.0
+    )
     # M5 noise floor: tolerate exactly ONE discordant miss across the gate
     # grid (binary outcomes make j quantized in steps of 1/n); two or more
     # extra misses still reject. epsilon keeps its caller-set floor.
-    n_samples = max(1, len(val_instances) * len(gate_seeds))
-    epsilon_eff = max(epsilon, 1.0 / n_samples)
+    n_samples = len(retained_keys)
+    epsilon_eff = max(epsilon, 1.0 / max(1, n_samples))
     return {
-        "accepted": bool(j_after <= j_before + epsilon_eff),
+        "accepted": bool(n_samples > 0 and j_after <= j_before + epsilon_eff),
         "j_before": j_before,
         "j_after": j_after,
         "epsilon": epsilon_eff,
         "n_samples": n_samples,
+        "dropped_infrastructure_pairs": (
+            len(val_instances) * len(gate_seeds) - n_samples
+        ),
+        "failure_records": [
+            {
+                "record_id": record.record_id,
+                **record.model_dump(mode="json"),
+            }
+            for record in legacy_gate_failure_records
+        ],
         "mode": gate_mode_label,
     }
 
@@ -2876,6 +3689,287 @@ def _training_signal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _failure_records_from_rows(rows: list[dict[str, Any]]) -> list[FailureRecord]:
+    records: dict[str, FailureRecord] = {}
+    for row in rows:
+        payload = row.get("failure_record")
+        if not isinstance(payload, dict):
+            continue
+        record = FailureRecord.model_validate(payload)
+        records[record.record_id] = record
+    return [records[key] for key in sorted(records)]
+
+
+def _cluster_matches_skill(cluster: Any, skill: SkillCard) -> bool:
+    mode = str(planner_mode_from_skill(skill) or "")
+    goal = str(skill.information_goal or skill.trigger.get("information_goal") or "sink")
+    if mode != cluster.planner_mode or goal != cluster.information_goal:
+        return False
+    if mode == "python_generate":
+        return python_worker_contract_from_skill(skill) == cluster.worker_contract
+    return True
+
+
+def _merge_failure_clusters_into_skill(
+    skill: SkillCard,
+    clusters: list[Any],
+) -> SkillCard:
+    relevant = [cluster for cluster in clusters if _cluster_matches_skill(cluster, skill)]
+    if not relevant:
+        return skill
+    failure_modes = [dict(item) for item in skill.failure_modes]
+    counterexamples = [dict(item) for item in skill.counterexamples]
+    known_clusters = {
+        str(item.get("cluster_id"))
+        for item in [*failure_modes, *counterexamples]
+        if item.get("cluster_id")
+    }
+    for cluster in sorted(relevant, key=lambda item: (-item.count, item.cluster_id))[:5]:
+        if cluster.cluster_id in known_clusters:
+            continue
+        failure_modes.append(
+            {
+                "cluster_id": cluster.cluster_id,
+                "stage": cluster.failure_stage,
+                "error_type": cluster.error_type,
+                "structural_signature": cluster.structural_signature,
+                "count": cluster.count,
+                "summary": cluster.summary,
+            }
+        )
+        for counterexample in cluster.counterexamples[:2]:
+            counterexamples.append(
+                {
+                    "cluster_id": cluster.cluster_id,
+                    **dict(counterexample),
+                }
+            )
+        known_clusters.add(cluster.cluster_id)
+    return skill.model_copy(
+        update={
+            "failure_modes": failure_modes[-12:],
+            "counterexamples": counterexamples[-12:],
+        },
+        deep=True,
+    )
+
+
+def _merge_failure_clusters_into_patches(
+    patches: list[SkillPatch],
+    clusters: list[Any],
+) -> list[SkillPatch]:
+    output: list[SkillPatch] = []
+    for patch in patches:
+        candidate = patch.candidate_skill
+        if candidate is not None:
+            candidate = _merge_failure_clusters_into_skill(candidate, clusters)
+            patch = patch.model_copy(update={"candidate_skill": candidate})
+        output.append(patch)
+    return output
+
+
+def _skill_insight_ids(skill: SkillCard | None) -> list[str]:
+    if skill is None:
+        return []
+    return list(
+        dict.fromkeys(
+            str(item["insight_id"])
+            for item in skill.design_insights
+            if isinstance(item, dict) and item.get("insight_id")
+        )
+    )
+
+
+def _context_insight_ids(bank: SkillBank, skill_ids: list[str]) -> list[str]:
+    result: list[str] = []
+    for skill_id in skill_ids:
+        result.extend(_skill_insight_ids(bank.get(skill_id)))
+    return list(dict.fromkeys(result))
+
+
+def _paired_insight_associations(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Measure branch/insight association; this is deliberately not causal."""
+    by_pair: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        pair_id = row.get("hot_start_pair_id")
+        branch = row.get("hot_start_branch")
+        if pair_id and branch in {"reuse", "mutate", "innovation"}:
+            by_pair[str(pair_id)].append(row)
+    stats: dict[tuple[str, str], dict[str, Any]] = {}
+    for pair_rows in by_pair.values():
+        for row in pair_rows:
+            branch = str(row["hot_start_branch"])
+            branch_label = "fresh" if branch == "innovation" else branch
+            if branch == "mutate":
+                insight_ids = list(row.get("hot_start_used_insight_ids", []) or [])
+            elif branch == "innovation":
+                insight_ids = list(row.get("hot_start_exposed_insight_ids", []) or [])
+            else:
+                insight_ids = list(
+                    row.get("hot_start_associated_insight_ids", []) or []
+                )
+            if not insight_ids:
+                continue
+            comparators = [
+                float(other.get("evolution_stage_score", 0.0) or 0.0)
+                for other in pair_rows
+                if other is not row
+            ]
+            if not comparators:
+                continue
+            score = float(row.get("evolution_stage_score", 0.0) or 0.0)
+            delta = score - (sum(comparators) / len(comparators))
+            for insight_id in dict.fromkeys(str(item) for item in insight_ids):
+                item = stats.setdefault(
+                    (branch_label, insight_id),
+                    {
+                        "branch": branch_label,
+                        "insight_id": insight_id,
+                        "exposures": 0,
+                        "wins": 0,
+                        "losses": 0,
+                        "ties": 0,
+                        "delta_sum": 0.0,
+                    },
+                )
+                item["exposures"] += 1
+                item["delta_sum"] += delta
+                if delta > 1e-12:
+                    item["wins"] += 1
+                elif delta < -1e-12:
+                    item["losses"] += 1
+                else:
+                    item["ties"] += 1
+    output: list[dict[str, Any]] = []
+    for key in sorted(stats):
+        item = stats[key]
+        output.append(
+            {
+                "branch": item["branch"],
+                "insight_id": item["insight_id"],
+                "exposures": item["exposures"],
+                "wins": item["wins"],
+                "losses": item["losses"],
+                "ties": item["ties"],
+                "mean_delta_stage_score": (
+                    item["delta_sum"] / item["exposures"]
+                ),
+                "interpretation": "paired_association_not_causal",
+            }
+        )
+    return output
+
+
+def _apply_insight_associations(
+    bank: SkillBank,
+    associations: list[dict[str, Any]],
+) -> None:
+    by_insight: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in associations:
+        by_insight[str(item["insight_id"])].append(dict(item))
+    for skill_id, skill in list(bank.skills.items()):
+        confidence = dict(skill.confidence)
+        prior = [
+            dict(item)
+            for item in confidence.get("insight_paired_association", [])
+            if isinstance(item, dict) and item.get("insight_id")
+        ]
+        owned = set(_skill_insight_ids(skill))
+        owned.update(
+            str(item["insight_id"])
+            for item in skill.risk_notes
+            if isinstance(item, dict) and item.get("insight_id")
+        )
+        owned.update(str(item["insight_id"]) for item in prior)
+        current = [
+            item for insight in owned for item in by_insight.get(insight, [])
+        ]
+        if not current and not prior:
+            continue
+        cumulative: dict[tuple[str, str], dict[str, Any]] = defaultdict(
+            lambda: {
+                "exposures": 0,
+                "wins": 0,
+                "losses": 0,
+                "ties": 0,
+                "delta_sum": 0.0,
+            }
+        )
+        for item in [*prior, *current]:
+            insight_id = str(item["insight_id"])
+            branch = str(item.get("branch") or "unknown")
+            target = cumulative[(branch, insight_id)]
+            exposures = int(item.get("exposures", 0) or 0)
+            target["exposures"] += exposures
+            target["wins"] += int(item.get("wins", 0) or 0)
+            target["losses"] += int(item.get("losses", 0) or 0)
+            target["ties"] += int(item.get("ties", 0) or 0)
+            target["delta_sum"] += (
+                float(item.get("mean_delta_stage_score", 0.0) or 0.0)
+                * exposures
+            )
+        cumulative_records = [
+            {
+                "branch": branch,
+                "insight_id": insight_id,
+                "exposures": values["exposures"],
+                "wins": values["wins"],
+                "losses": values["losses"],
+                "ties": values["ties"],
+                "mean_delta_stage_score": (
+                    values["delta_sum"] / values["exposures"]
+                    if values["exposures"]
+                    else 0.0
+                ),
+                "interpretation": "paired_association_not_causal",
+            }
+            for (branch, insight_id), values in sorted(cumulative.items())
+        ]
+        aggregate: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"exposures": 0, "wins": 0, "losses": 0, "ties": 0}
+        )
+        for item in cumulative_records:
+            target = aggregate[str(item["insight_id"])]
+            for key in target:
+                target[key] += int(item[key])
+        negative_ids = {
+            insight_id
+            for insight_id, item in aggregate.items()
+            if item["exposures"] >= 3 and item["losses"] > item["wins"]
+        }
+        design_insights = [
+            dict(item)
+            for item in skill.design_insights
+            if str(item.get("insight_id")) not in negative_ids
+        ]
+        risk_notes = [dict(item) for item in skill.risk_notes]
+        known_negative = {
+            str(item.get("insight_id"))
+            for item in risk_notes
+            if item.get("insight_id")
+        }
+        for insight_id in sorted(negative_ids - known_negative):
+            risk_notes.append(
+                {
+                    "insight_id": insight_id,
+                    "status": "negative_constraint",
+                    "reason": "at least 3 paired exposures with losses > wins",
+                    "paired_association": aggregate[insight_id],
+                }
+            )
+        confidence["insight_paired_association"] = cumulative_records
+        bank.skills[skill_id] = skill.model_copy(
+            update={
+                "design_insights": design_insights,
+                "risk_notes": risk_notes[-12:],
+                "confidence": confidence,
+            },
+            deep=True,
+        )
+
+
 def _incumbent_skill(topology: str, *, objective_name: str) -> SkillCard:
     """A deliberately-advertised incumbent skill the planner can select.
 
@@ -2948,6 +4042,7 @@ def _collect_rows(
     workers: int = 1,
     progress: bool = False,
     phase: str = "",
+    failure_records: list[FailureRecord] | None = None,
 ) -> list[dict[str, Any]]:
     """Collect real planner-run rows across objective variants.
 
@@ -2961,9 +4056,10 @@ def _collect_rows(
     each), so with ``workers > 1`` they fan out across a thread pool -- turning
     the otherwise-serial evolution pre-phase (hundreds of runs) from hours into
     minutes. Results preserve submission order so the aggregate is byte-identical
-    to the serial path. A single run that fails (e.g. a hard ``LLMTimeoutError``
-    from a wedged provider call) is dropped with a logged warning rather than
-    aborting the whole evolution.
+    to the serial path. Under the compatibility ``legacy_drop`` policy an
+    exception is logged and dropped. ``honest_v2`` instead keeps typed algorithm
+    failures as V=0 evidence, drops only infrastructure failures, and re-raises
+    harness/unknown errors.
     """
     tasks = [
         (inst, objective, seed)
@@ -2976,6 +4072,7 @@ def _collect_rows(
         return []
     results: list[dict[str, Any] | None] = [None] * total
     prog = _EvolveProgress(phase, total) if progress else None
+    failure_lock = threading.Lock()
 
     cache = open_cache()
 
@@ -3009,13 +4106,23 @@ def _collect_rows(
             if cache is not None and cache_key is not None:
                 cache.put(cache_key, row)
             return index, row
-        except Exception as exc:  # noqa: BLE001 - one bad run must not abort evolution
+        except Exception as exc:  # noqa: BLE001 - centrally classified below
             print(
                 f"  [evolve {phase}] run {index + 1}/{total} FAILED:"
                 f" {type(exc).__name__}: {exc}",
                 flush=True,
             )
-            return index, None
+            row = _handle_evolution_exception(
+                exc,
+                instance=inst,
+                cfg=cfg,
+                seed=seed,
+                llm_client=llm_client,
+                branch=phase or "evidence",
+                failure_records=failure_records,
+                failure_lock=failure_lock,
+            )
+            return index, row
 
     if workers and workers > 1 and total > 1:
         with ThreadPoolExecutor(max_workers=min(workers, total)) as executor:
@@ -3039,6 +4146,7 @@ def run_evolution(
     adapter: SiloBenchAdapter,
     *,
     cases: list[str] | None,
+    validation_cases: list[str] | None = None,
     agent_counts: list[int] | None,
     train_seeds: list[int],
     val_seeds: list[int],
@@ -3060,6 +4168,7 @@ def run_evolution(
     pre/post held-out success rates. See the module docstring for the offline
     honesty caveat about ``held_out_rows``.
     """
+    _validate_v2_config(cfg)
     objective = evolution_objective_spec(cfg)
     client = llm_client or _build_llm_client(cfg)
 
@@ -3073,11 +4182,23 @@ def run_evolution(
         for name in variant_names
     ]
 
+    requested_cases = cases
+    if validation_cases is not None:
+        if cases is None:
+            raise ValueError("validation_cases requires explicit training cases")
+        overlap = set(cases) & set(validation_cases)
+        if overlap:
+            raise ValueError(
+                "training and validation cases must be disjoint; "
+                f"overlap={sorted(overlap)}"
+            )
+        requested_cases = list(dict.fromkeys([*cases, *validation_cases]))
+
     instances = list(
         adapter.iter_instances(
             levels=levels,
             agent_counts=agent_counts,
-            cases=cases,
+            cases=requested_cases,
         )
     )
     if not instances:
@@ -3097,14 +4218,30 @@ def run_evolution(
         )
         return str(classification_bucket(classification))
 
-    train_instances, val_instances = _split_train_val(
-        instances, bucket_of=_carve_bucket
-    )
+    if validation_cases is None:
+        train_instances, val_instances = _split_train_val(
+            instances, bucket_of=_carve_bucket
+        )
+    else:
+        train_ids = set(cases or [])
+        val_ids = set(validation_cases)
+        train_instances = [inst for inst in instances if inst.case_id in train_ids]
+        val_instances = [inst for inst in instances if inst.case_id in val_ids]
+        found_train = {inst.case_id for inst in train_instances}
+        found_val = {inst.case_id for inst in val_instances}
+        missing_train = sorted(train_ids - found_train)
+        missing_val = sorted(val_ids - found_val)
+        if missing_train or missing_val:
+            raise ValueError(
+                "explicit evolution split contains unavailable cases: "
+                f"missing_train={missing_train}, missing_val={missing_val}"
+            )
     train_instances, curriculum = _curriculum_train_instances(
         train_instances,
         cfg,
     )
     hot_start_settings = _resolve_hot_start_settings(cfg, instances)
+    failure_records: list[FailureRecord] = []
 
     # The evolving (held-out) bank is the one the gate mutates. Optionally seed an
     # incumbent so the gate has a concrete starting selection to improve on.
@@ -3148,6 +4285,7 @@ def run_evolution(
             workers=workers,
             progress=progress,
             batch_id=batch_id,
+            failure_records=failure_records,
         )
 
     train_rows = _collect_rows(
@@ -3159,6 +4297,7 @@ def run_evolution(
         workers=workers,
         progress=progress,
         phase=f"n={cfg.n_agents} train",
+        failure_records=failure_records,
     )
     if hot_start_rows:
         train_rows = [*hot_start_rows, *train_rows]
@@ -3181,6 +4320,7 @@ def run_evolution(
             llm_client=client,
             workers=workers,
             progress=progress,
+            failure_records=failure_records,
         )
         train_rows = [*train_rows, *hot_start_dual_rows]
     # M3 portfolio: explicitly-named topologies the objective-variant detour
@@ -3206,6 +4346,7 @@ def run_evolution(
             workers=workers,
             progress=progress,
             phase=f"n={cfg.n_agents} portfolio",
+            failure_records=failure_records,
         )
         n_portfolio_rows = len(portfolio_rows)
         train_rows = [*train_rows, *portfolio_rows]
@@ -3267,6 +4408,7 @@ def run_evolution(
             for inst in train_instances
             for seed in (train_seeds or [0])[:explore_n]
         ]
+        explore_failure_lock = threading.Lock()
 
         def _explore(task: tuple[BenchmarkInstance, int]) -> dict[str, Any] | None:
             inst, seed = task
@@ -3275,13 +4417,22 @@ def run_evolution(
                     inst, explore_cfg, objective=objective, skill_bank=explore_bank,
                     seed=seed, llm_client=client, diag_phase="explore",
                 )
-            except Exception as exc:  # noqa: BLE001 - one bad explore run is dropped
+            except Exception as exc:  # noqa: BLE001 - centrally classified below
                 print(
                     f"  [evolve explore] {inst.case_id} seed={seed} FAILED:"
                     f" {type(exc).__name__}: {exc}",
                     flush=True,
                 )
-                return None
+                return _handle_evolution_exception(
+                    exc,
+                    instance=inst,
+                    cfg=explore_cfg,
+                    seed=seed,
+                    llm_client=client,
+                    branch="explore",
+                    failure_records=failure_records,
+                    failure_lock=explore_failure_lock,
+                )
 
         if workers and workers > 1 and len(explore_tasks) > 1:
             with ThreadPoolExecutor(max_workers=min(workers, len(explore_tasks))) as ex:
@@ -3310,6 +4461,7 @@ def run_evolution(
             workers=workers,
             progress=progress,
             phase=f"n={cfg.n_agents} val",
+            failure_records=failure_records,
         )
         if needs_val_rows
         else []
@@ -3329,12 +4481,24 @@ def run_evolution(
                 workers=workers,
                 progress=progress,
                 phase=f"n={cfg.n_agents} val portfolio",
+                failure_records=failure_records,
             ),
         ]
 
     # Held-out validation rows the gate scores against: real Silo VAL rows plus
     # any caller-supplied synthetic multi-topology rows (see module docstring).
     val_rows = [*val_rows_real, *(held_out_rows or [])]
+
+    # Generated failures caught inside _run_one arrive as zero-scored rows;
+    # exceptions handled by the collectors arrive through failure_records.
+    failure_records.extend(_failure_records_from_rows([*train_rows, *val_rows_real]))
+    unique_failure_records = {
+        record.record_id: record for record in failure_records
+    }
+    failure_records = [
+        unique_failure_records[key] for key in sorted(unique_failure_records)
+    ]
+    failure_clusters = cluster_failure_records(failure_records)
 
     # The minister stamps every emitted skill (card, trigger, and namespaced id)
     # with the run's family natively, so retrieval, the held-out gate, and the
@@ -3348,6 +4512,7 @@ def run_evolution(
     patches = ResultAnalystMinister().analyze(
         train_rows, task_family=_row_family
     )
+    patches = _merge_failure_clusters_into_patches(patches, failure_clusters)
     # Round-1 root cause: the engine's ratio dominance rule misfires on binary
     # per-case rows (best=0 -> everything "dominated") and advertises avoid
     # skills for EVERY topology. Require a real mean-loss gap instead.
@@ -3372,13 +4537,20 @@ def run_evolution(
     # INHERITED from the previous round (initial_skills) -- not the synthetic
     # seeded incumbent, which exists only for selection-gate measurement.
     pre_transfer_ledgers = snapshot_transfer_evidence(skill_bank)
-    incumbent_bank = (
-        SkillBank(skills=[SkillCard.model_validate(s) for s in pre_skills])
-        if hot_start_settings["enabled"]
-        else SkillBank(skills=[SkillCard.model_validate(s) for s in initial_skills])
-        if initial_skills
-        else None
+    strict_gate_active = (
+        getattr(cfg, "evolution_gate_policy", "legacy_non_regression")
+        == "strict_dense_v2"
     )
+    if strict_gate_active or hot_start_settings["enabled"]:
+        incumbent_bank = SkillBank(
+            skills=[SkillCard.model_validate(s) for s in pre_skills]
+        )
+    elif initial_skills:
+        incumbent_bank = SkillBank(
+            skills=[SkillCard.model_validate(s) for s in initial_skills]
+        )
+    else:
+        incumbent_bank = None
 
     # ONE gate per deployed objective: modes that GENERATE at eval are vetted by
     # the held-out GENERATION gate below; gating their patch application on
@@ -3392,7 +4564,9 @@ def run_evolution(
         in {"graph_generate", "program_generate", "python_generate"}
         or cfg.evolved_mode == "select_then_refine"
     )
-    selection_gate_active = gate_mode != "off" and not deploys_generation
+    selection_gate_active = (
+        gate_mode != "off" and not deploys_generation and not strict_gate_active
+    )
     size_before = len(skill_bank)
     _bank, result = consolidate_skill_updates(
         bank=skill_bank,
@@ -3409,6 +4583,14 @@ def run_evolution(
         n_insight_patches = _llm_insight_patches(
             train_rows, val_rows, skill_bank, cfg, client, batch_id
         )
+    # A failure can belong to an inherited/reused parent even when the minister
+    # emits no patch for it. Attach the same bounded clusters to the candidate
+    # bank so the next round's architect receives the negative context.
+    for skill_id, skill in list(skill_bank.skills.items()):
+        skill_bank.skills[skill_id] = _merge_failure_clusters_into_skill(
+            skill,
+            failure_clusters,
+        )
     # M1: per-(skill, feature-bucket) success ledger -- combines this round's
     # measured rows with the inherited ledger so deployment trust accumulates
     # across rounds instead of resetting.
@@ -3418,6 +4600,8 @@ def run_evolution(
     n_merged_duplicates = merge_structural_duplicates(skill_bank)
     # M13: explicit Preserve/Modify/Avoid design-rule action on every card.
     stamp_rule_actions(skill_bank)
+    insight_associations = _paired_insight_associations(hot_start_dual_rows)
+    _apply_insight_associations(skill_bank, insight_associations)
     # M10: for train cases whose bucket#slot has NO trusted skill, search a
     # verified recipe (structure + per-step instructions) against the train
     # signal; verified recipes enter the bank trusted (their ledger rows are
@@ -3482,6 +4666,32 @@ def run_evolution(
             if deploys_generation
             else {**selection_gate, "accepted": True, "mode": "off"}
         )
+    elif strict_gate_active:
+        gate_planner_mode = (
+            next(
+                (
+                    mode
+                    for mode in (cfg.evolved_mode, cfg.planner_mode)
+                    if mode
+                    in {"graph_generate", "program_generate", "python_generate"}
+                ),
+                "graph_generate",
+            )
+            if deploys_generation
+            else cfg.planner_mode
+        )
+        gate_info = _generation_gate(
+            val_instances,
+            replace(cfg, planner_mode=gate_planner_mode),
+            val_seeds=val_seeds,
+            llm_client=client,
+            evolved_bank=skill_bank,
+            motif_stats=motif_stats if deploys_generation else None,
+            epsilon=epsilon,
+            objective=objective,
+            incumbent_bank=incumbent_bank,
+            workers=workers,
+        )
     elif deploys_generation:
         gate_planner_mode = next(
             (
@@ -3500,6 +4710,29 @@ def run_evolution(
         )
     else:
         gate_info = selection_gate
+
+    for payload in gate_info.get("failure_records", []) or []:
+        if isinstance(payload, dict):
+            safe_payload = {
+                key: value for key, value in payload.items() if key != "record_id"
+            }
+            failure_records.append(FailureRecord.model_validate(safe_payload))
+    unique_failure_records = {
+        record.record_id: record for record in failure_records
+    }
+    failure_records = [
+        unique_failure_records[key] for key in sorted(unique_failure_records)
+    ]
+    failure_clusters = cluster_failure_records(failure_records)
+
+    # Gate-time failures occur after the minister pass. Preserve them in the
+    # candidate snapshot as well; on rejection ``exported_skills`` still comes
+    # from the untouched before snapshot below.
+    for skill_id, skill in list(skill_bank.skills.items()):
+        skill_bank.skills[skill_id] = _merge_failure_clusters_into_skill(
+            skill,
+            failure_clusters,
+        )
 
     # Every consumer of the summary (the frozen verify_evolve.py, curve, bench)
     # rebuilds its eval bank from ``evolved_skills`` unconditionally, so a
@@ -3546,11 +4779,35 @@ def run_evolution(
             f"run_evolution collected rows for goals {sorted(_mixed)} while "
             f"running goal {_run_goal!r}; sink/all_agents evidence must not mix"
         )
+    failure_counts = {
+        failure_class.value: sum(
+            1
+            for record in failure_records
+            if record.failure_class == failure_class
+        )
+        for failure_class in FailureClass
+    }
+    failure_summary = {
+        "policy": getattr(cfg, "failure_policy", "legacy_drop"),
+        "counts": failure_counts,
+        "records": [
+            {
+                "record_id": record.record_id,
+                **record.model_dump(mode="json"),
+            }
+            for record in failure_records
+        ],
+        "clusters": [
+            cluster.model_dump(mode="json") for cluster in failure_clusters
+        ],
+    }
     summary = {
         "benchmark": cfg.benchmark,
         "objective": cfg.objective,
         "information_goal": _run_goal,
         "clean_run": not bool(hot_start_settings["enabled"]),
+        "clean_pythongen": bool(getattr(cfg, "clean_pythongen", True))
+        and not bool(hot_start_dual.get("python_context_exposed", False)),
         "config": asdict(cfg),
         "objective_knobs": {
             "uncertainty_weight": objective.uncertainty_weight,
@@ -3569,6 +4826,8 @@ def run_evolution(
         "train_success_rate": _success_rate(train_rows),
         "val_success_rate": _success_rate(val_rows_real),
         "training_signal": _training_signal_summary(train_rows),
+        "failure_summary": failure_summary,
+        "insight_paired_association": insight_associations,
         "n_patches": len(patches),
         "skill_ablation": skill_ablation,
         "n_insight_patches": n_insight_patches,
@@ -3597,6 +4856,9 @@ def run_evolution(
         "exemplar_traces": exemplar_traces,
         "gate": gate_info,
         "gate_mode": gate_mode,
+        "evolution_gate_policy": getattr(
+            cfg, "evolution_gate_policy", "legacy_non_regression"
+        ),
         "selection_gate": selection_gate,
         "skill_bank_size_before": size_before,
         "skill_bank_size_after": size_after,

@@ -745,6 +745,7 @@ def build_free_graph_prompt(
     num_candidates: int,
     task_brief: str | None = None,
     information_goal: InformationGoal = "sink",
+    include_failure_feedback: bool = False,
 ) -> str:
     """Dispatch to the sink / all_agents architect prompt builder."""
     builder = (
@@ -759,6 +760,7 @@ def build_free_graph_prompt(
         options=options,
         num_candidates=num_candidates,
         task_brief=task_brief,
+        include_failure_feedback=include_failure_feedback,
     )
 
 
@@ -770,8 +772,21 @@ def _base_prompt_payload(
     avoid_skills: list[SkillCard] | None,
     options: GraphValidationOptions,
     num_candidates: int,
+    include_failure_feedback: bool = False,
 ) -> dict[str, object]:
-    return {
+    negative_skills: list[SkillCard] = []
+    seen_negative: set[str] = set()
+    negative_sources = [*(avoid_skills or [])]
+    if include_failure_feedback:
+        negative_sources = [*skills, *negative_sources]
+    for skill in negative_sources:
+        if not (skill.failure_modes or skill.counterexamples or skill.risk_notes):
+            continue
+        if skill.skill_id in seen_negative:
+            continue
+        negative_skills.append(skill)
+        seen_negative.add(skill.skill_id)
+    payload: dict[str, object] = {
         "request": request.model_dump(mode="json"),
         "graph_constraints": options.model_dump(mode="json"),
         "num_candidates": num_candidates,
@@ -781,7 +796,11 @@ def _base_prompt_payload(
             "Vary the aggregation-point choice, fan-in pattern, or audit/repair edge placement when it helps the objective.",
             "Each candidate must independently satisfy graph_constraints after program expansion.",
         ],
-        "skill_evidence": [_skill_context(skill) for skill in skills[:6]],
+        "skill_evidence": [
+            _skill_context(skill, include_risks=not include_failure_feedback)
+            for skill in skills[:6]
+        ],
+        # Keep the legacy key and contents when v2 feedback is disabled.
         "avoid_or_counterexample_skills": [
             _skill_context(skill) for skill in (avoid_skills or [])[:6]
         ],
@@ -795,6 +814,18 @@ def _base_prompt_payload(
         ],
         "required_json_shape": _required_json_shape(request.n_agents),
     }
+    if include_failure_feedback:
+        payload["negative_failure_context"] = _bounded_context_items(
+            [_failure_skill_context(skill) for skill in negative_skills[:6]],
+            max_chars=4_000,
+        )
+        rules = payload["skill_usage_rules"]
+        assert isinstance(rules, list)
+        rules.append(
+            "Treat negative_failure_context as answer-free failure constraints; "
+            "do not reproduce those structural failure patterns."
+        )
+    return payload
 
 
 # 中文：两套提示词共享的输出格式规则（语法性）；完成条件与自检规则各自独立。
@@ -825,6 +856,7 @@ def build_sink_graph_prompt(
     options: GraphValidationOptions,
     num_candidates: int,
     task_brief: str | None = None,
+    include_failure_feedback: bool = False,
 ) -> str:
     """Architect prompt for SINK-goal topologies (single aggregation point)."""
     last_agent_id = request.n_agents - 1
@@ -848,6 +880,7 @@ def build_sink_graph_prompt(
         avoid_skills=avoid_skills,
         options=options,
         num_candidates=num_candidates,
+        include_failure_feedback=include_failure_feedback,
     )
     payload.update(
         {
@@ -952,6 +985,7 @@ def build_all_agents_graph_prompt(
     options: GraphValidationOptions,
     num_candidates: int,
     task_brief: str | None = None,
+    include_failure_feedback: bool = False,
 ) -> str:
     """Architect prompt for ALL-AGENTS-goal topologies (full dissemination)."""
     last_agent_id = request.n_agents - 1
@@ -962,6 +996,7 @@ def build_all_agents_graph_prompt(
         avoid_skills=avoid_skills,
         options=options,
         num_candidates=num_candidates,
+        include_failure_feedback=include_failure_feedback,
     )
     payload.update(
         {
@@ -1102,6 +1137,7 @@ def _generate_graph_candidates(
         num_candidates=remaining_count,
         task_brief=task_brief,
         information_goal=options.information_goal,
+        include_failure_feedback=runtime.failure_feedback_enabled,
     )
     if runtime.leakage_audit:
         assert_prompt_clean(
@@ -2393,8 +2429,12 @@ def _add_reachability_warnings(graph: GeneratedGraphPlan, warnings: list[str]) -
 
 
 # 【职责】把技能卡压缩为提示词用的证据字典(策略/权衡/洞察/风险/兜底)。
-def _skill_context(skill: SkillCard) -> dict[str, object]:
-    return {
+def _skill_context(
+    skill: SkillCard,
+    *,
+    include_risks: bool = True,
+) -> dict[str, object]:
+    context: dict[str, object] = {
         "skill_id": skill.skill_id,
         "version": skill.version,
         "objective": skill.objective,
@@ -2403,9 +2443,79 @@ def _skill_context(skill: SkillCard) -> dict[str, object]:
         "expected_tradeoff": skill.expected_tradeoff,
         "expected_dynamics": skill.expected_dynamics,
         "design_insights": skill.design_insights[-6:],
-        "risk_notes": skill.risk_notes[-4:],
         "fallback": skill.fallback,
     }
+    if include_risks:
+        context["risk_notes"] = skill.risk_notes[-4:]
+    return context
+
+
+def _failure_skill_context(skill: SkillCard) -> dict[str, object]:
+    """Bounded negative evidence with no executable payload or answers."""
+    return _scrub_failure_context({
+        "skill_id": skill.skill_id,
+        "failure_modes": skill.failure_modes[-5:],
+        "counterexamples": skill.counterexamples[-5:],
+        "risk_notes": skill.risk_notes[-3:],
+    })
+
+
+_FAILURE_CONTEXT_FORBIDDEN_KEYS = {
+    "answer",
+    "final_answer",
+    "ground_truth",
+    "expected_output",
+    "expected_outputs",
+    "expected_answer",
+    "expected_answers",
+    "prompt",
+    "task_prompt",
+    "agent_prompt",
+    "local_prompt",
+    "private_prompt",
+    "private_data",
+    "source_code",
+    "python_source",
+    "protocol_spec",
+    "phase_program",
+    "topology_program",
+    "structure_code",
+    "code",
+    "steps",
+    "edges",
+    "mode_payload",
+    "shard",
+    "shards",
+}
+
+
+def _scrub_failure_context(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _scrub_failure_context(item)
+            for key, item in value.items()
+            if str(key).lower() not in _FAILURE_CONTEXT_FORBIDDEN_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub_failure_context(item) for item in value]
+    return value
+
+
+def _bounded_context_items(
+    items: list[dict[str, object]],
+    *,
+    max_chars: int,
+) -> list[dict[str, object]]:
+    """Bound JSON context deterministically without truncating structures."""
+    output: list[dict[str, object]] = []
+    used = 2
+    for item in items:
+        encoded = json.dumps(item, ensure_ascii=True, sort_keys=True)
+        if used + len(encoded) > max_chars:
+            break
+        output.append(item)
+        used += len(encoded) + 1
+    return output
 
 
 # 【职责】宽松解析 JSON 对象：整体解析失败时用正则截取首个 {...} 再试。

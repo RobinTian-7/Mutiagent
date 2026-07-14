@@ -56,7 +56,7 @@ def test_non_transient_error_propagates_immediately():
     assert inner.calls == 1
 
 
-def test_wallclock_timeout_gets_exactly_one_bounded_retry():
+def test_wallclock_timeout_defaults_to_exactly_one_bounded_retry():
     """Phase-3 dev-4: one sporadic 120s call crashed a whole judge run (the
     frozen eval pool has no isolation). One fresh attempt is bounded by the
     same wall-clock guard; a persistent timeout still fails after 2 calls."""
@@ -70,6 +70,18 @@ def test_wallclock_timeout_gets_exactly_one_bounded_retry():
     client2 = RetryLLMClient(recovered, attempts=3, sleep=lambda s: None)
     assert client2.complete("p") is not None
     assert recovered.calls == 2
+
+
+def test_wallclock_timeout_attempts_can_be_raised_for_long_runs():
+    recovered = _Flaky(3, LLMTimeoutError("several slow calls"))
+    client = RetryLLMClient(
+        recovered,
+        attempts=5,
+        timeout_attempts=5,
+        sleep=lambda s: None,
+    )
+    assert client.complete("p") == "ok after 4"
+    assert recovered.calls == 4
 
 
 def test_exhausted_attempts_raise_last_error():

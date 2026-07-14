@@ -10,6 +10,7 @@ from exp_graph.mas.schemas import (
     NamedTopologySkillPayload,
     ObjectiveSpec,
     PaperTransportSkillPayload,
+    PythonSkillPayload,
     PlannerRequest,
     SkillCard,
 )
@@ -17,7 +18,12 @@ from exp_graph.mas.skill_bank import SkillBank
 
 from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.core.config import RunConfig
-from masbench.evolve import _resolve_hot_start_settings, run_evolution
+from masbench.evolve import (
+    _apply_insight_associations,
+    _paired_insight_associations,
+    _resolve_hot_start_settings,
+    run_evolution,
+)
 
 DATA = Path(__file__).parent / "data"
 
@@ -173,6 +179,114 @@ def test_hot_start_pretraining_is_not_repaid_on_next_round() -> None:
     assert second["hot_start"]["dual_branch"]["cost"]["runs"] == 2
 
 
+def test_python_mutate_and_fresh_skips_then_uses_learned_parent() -> None:
+    cfg = _cfg(
+        planner_mode="python_generate",
+        evolved_mode="python_generate",
+        hot_start_innovation_mode="python_generate",
+        python_innovation_strategy="mutate_and_fresh",
+        max_rounds=2,
+    )
+    first = _run(cfg)
+    first_dual = first["hot_start"]["dual_branch"]
+    assert first["clean_pythongen"] is False
+    assert first_dual["python_context_exposed"] is True
+    assert first_dual["branches"]["reuse"]["n_rows"] == 1
+    assert first_dual["branches"]["mutate"]["n_rows"] == 0
+    assert first_dual["branches"]["innovation"]["n_rows"] == 1
+    assert first_dual["branches"]["innovation"]["outputs"][0][
+        "context_exposed"
+    ] is True
+    assert first_dual["mutation_skips"][0]["status"] == "skipped_with_reason"
+    assert first_dual["cost"]["runs"] == 2
+
+    second = _run(cfg, initial_skills=first["evolved_skills"])
+    second_dual = second["hot_start"]["dual_branch"]
+    assert second_dual["branches"]["mutate"]["n_rows"] == 1
+    assert second_dual["branches"]["innovation"]["n_rows"] == 1
+    assert second_dual["cost"]["runs"] == 3
+    mutation = second_dual["branches"]["mutate"]["outputs"][0]
+    assert mutation["parent_skill_id"]
+    assert mutation["context_exposed"] is True
+
+    python_cards = [
+        SkillCard.model_validate(raw)
+        for raw in second["skill_bank_snapshots"]["candidate"]
+        if isinstance(SkillCard.model_validate(raw).mode_payload, PythonSkillPayload)
+    ]
+    assert python_cards
+    assert any(
+        card.mode_payload.innovation_strategy in {"fresh", "mutate"}
+        for card in python_cards
+    )
+
+
+def test_insight_association_is_paired_and_negative_evidence_accumulates() -> None:
+    rows = [
+        {
+            "hot_start_pair_id": "case|n=2|seed=1",
+            "hot_start_branch": "reuse",
+            "hot_start_associated_insight_ids": ["insight_1"],
+            "evolution_stage_score": 0.6,
+        },
+        {
+            "hot_start_pair_id": "case|n=2|seed=1",
+            "hot_start_branch": "mutate",
+            "hot_start_used_insight_ids": ["insight_1"],
+            "evolution_stage_score": 0.8,
+        },
+        {
+            "hot_start_pair_id": "case|n=2|seed=1",
+            "hot_start_branch": "innovation",
+            "hot_start_exposed_insight_ids": ["insight_1"],
+            "evolution_stage_score": 0.4,
+        },
+    ]
+    associations = _paired_insight_associations(rows)
+    by_branch = {item["branch"]: item for item in associations}
+    assert by_branch["reuse"]["ties"] == 1
+    assert by_branch["mutate"]["wins"] == 1
+    assert by_branch["fresh"]["losses"] == 1
+    assert all(
+        item["interpretation"] == "paired_association_not_causal"
+        for item in associations
+    )
+
+    skill = SkillCard(
+        skill_id="parent",
+        task_family="silo",
+        design_insights=[{"insight_id": "insight_1", "summary": "try it"}],
+    )
+    bank = SkillBank(skills=[skill])
+    loss = [
+        {
+            "branch": "fresh",
+            "insight_id": "insight_1",
+            "exposures": 1,
+            "wins": 0,
+            "losses": 1,
+            "ties": 0,
+            "mean_delta_stage_score": -0.2,
+            "interpretation": "paired_association_not_causal",
+        }
+    ]
+    _apply_insight_associations(bank, loss)
+    _apply_insight_associations(bank, loss)
+    assert bank.get("parent").design_insights
+    _apply_insight_associations(bank, loss)
+
+    updated = bank.get("parent")
+    assert updated is not None
+    assert updated.design_insights == []
+    negative = next(
+        note for note in updated.risk_notes if note.get("insight_id") == "insight_1"
+    )
+    assert negative["status"] == "negative_constraint"
+    cumulative = updated.confidence["insight_paired_association"][0]
+    assert cumulative["exposures"] == 3
+    assert cumulative["losses"] == 3
+
+
 def test_paper_protocol_pretraining_creates_context_only_skill() -> None:
     summary = _run(
         _cfg(
@@ -246,6 +360,18 @@ def test_cli_parses_hot_start_controls() -> None:
             "2",
             "--hot-start-innovation-mode",
             "program_generate",
+            "--python-innovation-strategy",
+            "mutate",
+            "--failure-policy",
+            "honest_v2",
+            "--evolution-gate-policy",
+            "strict_dense_v2",
+            "--strict-gate-min-dense-delta",
+            "0.02",
+            "--strict-gate-bootstrap-samples",
+            "100",
+            "--strict-gate-bootstrap-seed",
+            "17",
             "--out",
             "unused",
         ]
@@ -257,3 +383,9 @@ def test_cli_parses_hot_start_controls() -> None:
     )
     assert args.hot_start_seed_count == 2
     assert args.hot_start_innovation_mode == "program_generate"
+    assert args.python_innovation_strategy == "mutate"
+    assert args.failure_policy == "honest_v2"
+    assert args.evolution_gate_policy == "strict_dense_v2"
+    assert args.strict_gate_min_dense_delta == pytest.approx(0.02)
+    assert args.strict_gate_bootstrap_samples == 100
+    assert args.strict_gate_bootstrap_seed == 17

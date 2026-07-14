@@ -24,7 +24,7 @@ from exp_graph.mas.python_code import (
 
 
 class PythonExecutionLimits(BaseModel):
-    timeout_seconds: float = Field(default=20.0, gt=0)
+    timeout_seconds: float = Field(default=300.0, gt=0)
     cpu_seconds: int = Field(default=10, ge=1)
     memory_mb: int = Field(default=512, ge=64)
     max_output_bytes: int = Field(default=1_000_000, ge=1024)
@@ -105,6 +105,7 @@ class CodeProcessRunner:
                 "information_goal": payload["information_goal"],
                 "selected_primary": payload["selected_primary"],
                 "max_rounds": payload["max_rounds"],
+                "max_parallel_agents": payload["max_parallel_agents"],
             }
             if worker_contract == "message_only_v2":
                 auth["agent_communication_prompts"] = {
@@ -148,6 +149,24 @@ class CodeProcessRunner:
                         check=False,
                     )
             except subprocess.TimeoutExpired:
+                ledger = self._read_ledger(ledger_path)
+                try:
+                    usage = PythonUsage.model_validate(
+                        ledger.get(
+                            "usage",
+                            {
+                                "model_calls": 0,
+                                "prompt_tokens": 0,
+                                "completion_tokens": 0,
+                            },
+                        )
+                    )
+                except Exception:
+                    usage = PythonUsage(
+                        model_calls=0,
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                    )
                 return self._failure(
                     PythonCodeError(
                         "BudgetError",
@@ -157,6 +176,8 @@ class CodeProcessRunner:
                         stdout_path, self.limits.max_output_bytes
                     ),
                     stderr=_read_limited_text(stderr_path, 20_000),
+                    ledger=ledger,
+                    usage=usage,
                 )
             stdout = _read_limited_text(
                 stdout_path,

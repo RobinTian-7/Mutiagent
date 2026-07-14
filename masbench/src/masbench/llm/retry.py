@@ -8,10 +8,10 @@ pipeline client absorbs transient failures instead.
 Scope is deliberately narrow:
 * Connection-class errors are retried (matched by exception-type NAME
   anywhere in the MRO, so no hard dependency on openai/httpx imports).
-* The wall-clock guard's ``LLMTimeoutError`` gets exactly ONE bounded retry
-  (phase-3 dev-4: a single sporadic 120s call crashed a whole judge run via
-  the frozen eval pool's lack of isolation). One fresh attempt is bounded by
-  the same guard; unbounded piling on a wedged endpoint stays forbidden.
+* The wall-clock guard's ``LLMTimeoutError`` gets a separately bounded number
+  of attempts (two by default for compatibility). Long science runs may raise
+  that ceiling explicitly; every fresh attempt remains protected by the same
+  per-request wall-clock guard.
 * Real API errors (auth, bad request, rate-limit-with-retry-after handled by
   the SDK) propagate immediately.
 """
@@ -20,8 +20,8 @@ Scope is deliberately narrow:
 # 一次网络抖动曾在 32/72 处终止 round-3C 的配对 eval（冻结的评测池无每次运行隔离，
 # 故由流水线客户端吸收瞬时故障）。范围刻意收窄：
 # - 连接类错误重试（按异常类型名在 MRO 中匹配，不硬依赖 openai/httpx）。
-# - 挂钟守卫的 LLMTimeoutError 只给恰好一次有界重试；新尝试仍受同一守卫约束，禁止
-#   对卡死端点无限堆叠。
+# - 挂钟守卫的 LLMTimeoutError 默认只给一次有界重试；长实验可显式提高次数，每次
+#   新尝试仍受同一挂钟守卫约束。
 # - 真实 API 错误（鉴权、错误请求、带 retry-after 的限流由 SDK 处理）立即上抛。
 # ============================================================
 from __future__ import annotations
@@ -54,11 +54,13 @@ class RetryLLMClient:
         inner: Any,
         *,
         attempts: int = 3,
+        timeout_attempts: int = 2,
         base_delay: float = 2.0,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._inner = inner
         self._attempts = max(1, int(attempts))
+        self._timeout_attempts = max(1, int(timeout_attempts))
         self._base_delay = float(base_delay)
         self._sleep = sleep
 
@@ -74,7 +76,7 @@ class RetryLLMClient:
     # 【职责】按异常类型决定最大尝试次数：timeout 最多 2 次，瞬时类 attempts 次，其余 1 次。
     def _attempts_for(self, exc: BaseException) -> int:
         if self._is_timeout(exc):
-            return min(2, self._attempts)
+            return min(self._timeout_attempts, self._attempts)
         if self._is_transient(exc):
             return self._attempts
         return 1

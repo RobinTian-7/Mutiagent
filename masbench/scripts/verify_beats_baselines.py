@@ -38,6 +38,7 @@ from typing import Any
 
 from exp_graph.mas.schemas import SkillCard
 from exp_graph.mas.skill_bank import SkillBank
+from exp_graph.runner.protocol import ProtocolActionError
 
 from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.adapters.silo_paper_protocols import (
@@ -56,9 +57,81 @@ from masbench.curve import (
 )
 from masbench.engine import _build_llm_client, run_fixed_protocol
 from masbench.evolve import _run_one, evolution_objective_spec, run_evolution
+from masbench.failures import (
+    FailureClass,
+    classify_exception,
+    make_failure_record,
+    zero_scored_metrics,
+)
 
 BASELINES = ("select", "graphgen", "fixed")
 AVAILABLE_BASELINES = (*BASELINES, "programgen", "pycodegen", *PAPER_PROTOCOL_ARMS)
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    """Persist checkpoint metadata without exposing a partially written file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _checkpoint_config(args: argparse.Namespace) -> dict[str, Any]:
+    """Canonical verifier arguments that must match when resuming."""
+
+    payload = dict(vars(args))
+    payload.pop("resume", None)
+    return payload
+
+
+def _load_deployed_round(
+    skill_banks_root: Path,
+    completed_rounds: int,
+) -> tuple[SkillBank, dict[str, Any], list[dict[str, Any]]]:
+    """Load the exact bank, motif, and logs after a completed round."""
+
+    if completed_rounds <= 0:
+        return SkillBank(), {}, []
+    round_logs: list[dict[str, Any]] = []
+    for round_number in range(1, completed_rounds + 1):
+        round_dir = skill_banks_root / f"round_{round_number:02d}"
+        summary_path = round_dir / "evolution_summary.json"
+        bank_path = round_dir / "deployed" / "bank.json"
+        motif_path = round_dir / "deployed_motif_stats.json"
+        for required in (summary_path, bank_path, motif_path):
+            if not required.is_file():
+                raise RuntimeError(
+                    f"resume checkpoint is incomplete; missing {required}"
+                )
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        round_logs.append(
+            {
+                "round": round_number,
+                "n_skills": int(summary.get("skill_bank_size_after", 0)),
+                "gate": summary.get("gate"),
+                "skill_ids": summary.get("skill_ids_after"),
+                "rejected_skill_ids": summary.get("rejected_skill_ids"),
+                "hot_start": summary.get("hot_start"),
+            }
+        )
+    last_dir = skill_banks_root / f"round_{completed_rounds:02d}"
+    bank_payload = json.loads(
+        (last_dir / "deployed" / "bank.json").read_text(encoding="utf-8")
+    )
+    bank = SkillBank(
+        skills=[
+            SkillCard.model_validate(item)
+            for item in bank_payload.get("skills", [])
+        ]
+    )
+    motif = json.loads(
+        (last_dir / "deployed_motif_stats.json").read_text(encoding="utf-8")
+    )
+    return bank, motif, round_logs
 
 
 def _resolve_case_split(
@@ -215,11 +288,15 @@ def _stable_rounds(curves: dict[str, Any], k: int = 3) -> bool:
     return all(float(r["score"]) > bar for r in rounds[-k:])
 
 
-def _metrics_from_score(score: Any) -> dict[str, Any]:
+def _metrics_from_score(
+    score: Any,
+    *,
+    honest_failures: bool = False,
+) -> dict[str, Any]:
     """Paper metrics plus every submitted answer from a ScoreResult."""
     extra = score.extra or {}
     exact = 1.0 if score.success else 0.0
-    return {
+    result = {
         "success": exact,
         "S": float(extra.get("paper_S", exact) or 0.0),
         "P": float(extra.get("paper_P", score.partial or 0.0) or 0.0),
@@ -230,12 +307,34 @@ def _metrics_from_score(score: Any) -> dict[str, Any]:
         "tokens": int(score.tokens),
         "per_agent_submissions": extra.get("per_agent_submissions", []),
     }
+    result["failure_class"] = str(
+        extra.get("failure_class", FailureClass.SUCCESS.value)
+    )
+    if extra.get("failure_record"):
+        result["failure_record"] = extra["failure_record"]
+    if honest_failures and result["failure_class"] == FailureClass.SUCCESS.value:
+        coverage = extra.get(
+            "min_information_coverage",
+            extra.get("sink_information_coverage", 1.0),
+        )
+        submissions = list(extra.get("per_agent_submissions", []) or [])
+        missing_submission = any(
+            isinstance(item, dict)
+            and item.get("answer") in (None, "", "null", "unknown")
+            for item in submissions
+        )
+        if float(coverage or 0.0) < 1.0 or missing_submission:
+            result["failure_class"] = FailureClass.ALGORITHM.value
+            result["failure_stage"] = (
+                "coverage" if float(coverage or 0.0) < 1.0 else "submission"
+            )
+    return result
 
 
 def _metrics_from_evolution_row(row: dict[str, Any]) -> dict[str, Any]:
     """Paper metrics carried by the unified scorer into an evolution row."""
     exact = float(row.get("ExactMatchRate", 0.0))
-    return {
+    result = {
         "success": exact,
         "S": float(row.get("paper_S", exact) or 0.0),
         "P": float(
@@ -248,6 +347,40 @@ def _metrics_from_evolution_row(row: dict[str, Any]) -> dict[str, Any]:
         "tokens": int(row.get("MeanTokenCost", 0) or 0),
         "per_agent_submissions": row.get("per_agent_submissions", []),
     }
+    result["failure_class"] = str(
+        row.get("failure_class", FailureClass.SUCCESS.value)
+    )
+    if row.get("failure_record"):
+        result["failure_record"] = row["failure_record"]
+    return result
+
+
+def _require_complete_submissions(
+    metrics: dict[str, Any], *, n_agents: int, arm: str
+) -> dict[str, Any]:
+    """Reject a supposedly completed all-agent arm with null answer slots."""
+
+    submissions = list(metrics.get("per_agent_submissions") or [])
+    by_agent = {
+        int(item["agent_id"]): item
+        for item in submissions
+        if isinstance(item, dict) and "agent_id" in item
+    }
+    missing = []
+    for agent_id in range(n_agents):
+        item = by_agent.get(agent_id)
+        answer = item.get("answer") if item is not None else None
+        if answer is None or (
+            isinstance(answer, str)
+            and answer.strip().lower() in {"", "null", "none", "unknown"}
+        ):
+            missing.append(agent_id)
+    if missing:
+        raise ProtocolActionError(
+            f"{arm} did not produce required final answers for agents {missing}"
+        )
+    metrics["all_submitted"] = True
+    return metrics
 
 
 def _paper_metric_means(
@@ -325,6 +458,25 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "graph_generate", "program_generate", "python_generate"],
         default="auto",
     )
+    p.add_argument(
+        "--python-innovation-strategy",
+        choices=["fresh", "mutate", "mutate_and_fresh"],
+        default="mutate_and_fresh",
+    )
+    p.add_argument(
+        "--failure-policy",
+        choices=["legacy_drop", "honest_v2"],
+        default="legacy_drop",
+    )
+    p.add_argument(
+        "--evolution-gate-policy",
+        choices=["legacy_non_regression", "strict_dense_v2"],
+        default="legacy_non_regression",
+    )
+    p.add_argument("--strict-gate-min-dense-delta", type=float, default=0.01)
+    p.add_argument("--strict-gate-partial-tolerance", type=float, default=0.0)
+    p.add_argument("--strict-gate-bootstrap-samples", type=int, default=2000)
+    p.add_argument("--strict-gate-bootstrap-seed", type=int, default=20260713)
     p.add_argument("--n-agents", type=int, default=5)
     p.add_argument("--levels", nargs="+", default=["II", "III"])
     p.add_argument(
@@ -338,6 +490,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--test-cases", nargs="+", default=None,
         help="explicit held-out TEST cases; requires --train-cases",
+    )
+    p.add_argument(
+        "--val-cases", nargs="+", default=None,
+        help=(
+            "explicit validation cases kept disjoint from TRAIN and TEST; "
+            "when omitted, run_evolution retains its legacy internal split"
+        ),
     )
     p.add_argument("--holdout-frac", type=float, default=0.3)
     p.add_argument("--train-seeds", nargs="+", type=int, default=[1, 2])
@@ -362,13 +521,50 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--graphgen-candidates", type=int, default=3)
     p.add_argument("--python-repair-attempts", type=int, default=3)
-    p.add_argument("--python-execution-timeout", type=float, default=30.0)
+    p.add_argument(
+        "--python-execution-timeout",
+        type=float,
+        default=None,
+        help=(
+            "whole Python program timeout; default derives it from request "
+            "timeout, rounds, n_agents, and intra-task parallelism"
+        ),
+    )
     p.add_argument("--python-cpu-seconds", type=int, default=10)
     p.add_argument("--python-memory-mb", type=int, default=512)
     p.add_argument("--python-max-output-bytes", type=int, default=1_000_000)
     p.add_argument("--python-max-model-calls", type=int, default=20)
     p.add_argument("--python-max-completion-tokens", type=int, default=4000)
     p.add_argument("--python-max-messages", type=int, default=30)
+    p.add_argument(
+        "--require-all-submissions",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "require one non-empty answer from every Agent in every retained "
+            "all_agents arm; fixed/paper runs use an audited completion barrier"
+        ),
+    )
+    p.add_argument(
+        "--final-submission-retries",
+        type=int,
+        default=2,
+        help="format-only retries per Agent in the strict final-answer barrier",
+    )
+    p.add_argument(
+        "--max-parallel-agents",
+        type=int,
+        default=5,
+        help="parallel Agent calls within one logical round",
+    )
+    p.add_argument(
+        "--python-worker-contract",
+        choices=["action_json_v1", "message_only_v1", "message_only_v2"],
+        default="action_json_v1",
+        help="PythonGen worker output contract for every python_generate arm "
+             "(evolved, hot-start, pycodegen baseline); action_json_v1 keeps "
+             "the legacy default behaviour",
+    )
     p.add_argument(
         "--silo-eval-mode", dest="silo_eval_mode",
         choices=["sink", "all_agents"], default="sink",
@@ -379,9 +575,30 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--graph-validation-seeds", type=int, default=0)
     p.add_argument("--use-llm-insights", action="store_true")
     p.add_argument("--request-timeout", type=float, default=120.0)
+    p.add_argument(
+        "--llm-timeout-attempts",
+        type=int,
+        default=2,
+        help="bounded attempts for one request that hits the wall-clock timeout",
+    )
+    p.add_argument(
+        "--require-complete-runs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="abort at the last checkpoint instead of dropping infrastructure failures",
+    )
     p.add_argument("--max-rounds", type=int, default=4,
                    help="maximum rounds for each paper P2P/Broadcast/SFS run")
-    p.add_argument("--workers", type=int, default=8)
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help=(
+            "parallel run units; PythonGenerate can additionally issue up to "
+            "--max-parallel-agents calls per unit, so size their product to the "
+            "provider limit"
+        ),
+    )
     p.add_argument("--delta-min", type=float, default=0.05)
     p.add_argument("--win-margin", type=int, default=2)
     p.add_argument("--max-runs", type=int, default=600,
@@ -389,6 +606,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--curves-json", default=None,
                    help="optional masbench-curve JSON for the rounds-stability verdict")
     p.add_argument("--out", default="runs/verify_beats_baselines")
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume evolution from the last completed round checkpoint in --out",
+    )
     return p.parse_args()
 
 
@@ -425,6 +647,21 @@ def main() -> int:
         )
     if (args.train_cases is None) != (args.test_cases is None):
         raise SystemExit("--train-cases and --test-cases must be provided together")
+    if args.val_cases is not None and not explicit_split:
+        raise SystemExit("--val-cases requires --train-cases and --test-cases")
+    if args.val_cases is not None:
+        named_splits = {
+            "TRAIN": set(args.train_cases),
+            "VAL": set(args.val_cases),
+            "TEST": set(args.test_cases),
+        }
+        for left, right in (("TRAIN", "VAL"), ("TRAIN", "TEST"), ("VAL", "TEST")):
+            case_overlap = named_splits[left] & named_splits[right]
+            if case_overlap:
+                raise SystemExit(
+                    f"{left}/{right} cases must be disjoint; "
+                    f"overlap={sorted(case_overlap)}"
+                )
     overlap = set(args.eval_seeds) & (set(args.train_seeds) | set(args.val_seeds))
     if overlap:
         raise SystemExit(f"eval seeds must be disjoint from train/val seeds; overlap={sorted(overlap)}")
@@ -434,10 +671,13 @@ def main() -> int:
         merge_mode=args.merge_mode, init_mode=args.init_mode,
         llm_provider=args.llm, model_name=args.model_name,
         request_timeout=args.request_timeout, evolved_mode=args.evolved_mode,
+        llm_timeout_attempts=args.llm_timeout_attempts,
+        require_complete_runs=args.require_complete_runs,
         num_graph_candidates=args.graphgen_candidates,
         graph_validation_seeds=args.graph_validation_seeds,
         use_llm_insights=args.use_llm_insights, n_agents=args.n_agents,
         max_rounds=args.max_rounds,
+        max_parallel_agents=args.max_parallel_agents,
         silo_eval_mode=args.silo_eval_mode,
         curriculum_enabled=args.curriculum,
         curriculum_total_rounds=args.rounds,
@@ -450,6 +690,11 @@ def main() -> int:
         python_max_model_calls=args.python_max_model_calls,
         python_max_completion_tokens=args.python_max_completion_tokens,
         python_max_messages=args.python_max_messages,
+        require_all_submissions=args.require_all_submissions,
+        final_submission_retries=args.final_submission_retries,
+        python_worker_contract=args.python_worker_contract,
+        graph_artifacts_dir=str(Path(args.out) / "graphgen_artifacts"),
+        program_artifacts_dir=str(Path(args.out) / "programgen_artifacts"),
         python_artifacts_dir=str(Path(args.out) / "pycodegen_artifacts"),
         hot_start_enabled=args.hot_start_enabled,
         hot_start_protocols=args.hot_start_protocols,
@@ -457,11 +702,22 @@ def main() -> int:
         hot_start_seed_count=args.hot_start_seed_count,
         hot_start_dual_branch=args.hot_start_dual_branch,
         hot_start_innovation_mode=args.hot_start_innovation_mode,
+        python_innovation_strategy=args.python_innovation_strategy,
+        failure_policy=args.failure_policy,
+        evolution_gate_policy=args.evolution_gate_policy,
+        strict_gate_min_dense_delta=args.strict_gate_min_dense_delta,
+        strict_gate_partial_tolerance=args.strict_gate_partial_tolerance,
+        strict_gate_bootstrap_samples=args.strict_gate_bootstrap_samples,
+        strict_gate_bootstrap_seed=args.strict_gate_bootstrap_seed,
     )
     adapter = SiloBenchAdapter(args.benchmarks_dir)
     requested_cases = args.cases
     if explicit_split:
-        requested_cases = list(dict.fromkeys([*args.train_cases, *args.test_cases]))
+        requested_cases = list(
+            dict.fromkeys(
+                [*args.train_cases, *(args.val_cases or []), *args.test_cases]
+            )
+        )
     instances = list(adapter.iter_instances(
         levels=args.levels, agent_counts=[args.n_agents], cases=requested_cases))
     all_cases = sorted({i.case_id for i in instances})
@@ -476,14 +732,34 @@ def main() -> int:
         raise SystemExit(str(exc)) from exc
     test_instances = [i for i in instances if i.case_id in set(test_cases)]
     train_instances = [i for i in instances if i.case_id in set(train_cases)]
+    validation_cases = list(args.val_cases or []) or None
+    if validation_cases is not None:
+        found_validation = {
+            i.case_id for i in instances if i.case_id in set(validation_cases)
+        }
+        missing_validation = sorted(set(validation_cases) - found_validation)
+        if missing_validation:
+            raise SystemExit(
+                f"validation cases unavailable for n={args.n_agents}: "
+                f"{missing_validation}"
+            )
 
     # ---- budget guard (before any spend) ----
     n_pairs = len(test_instances) * len(args.eval_seeds)
-    half = max(1, len(train_cases) // 2)
+    train_evolution_count = (
+        len(train_cases)
+        if validation_cases is not None
+        else max(1, len(train_cases) // 2)
+    )
+    validation_evolution_count = (
+        len(validation_cases)
+        if validation_cases is not None
+        else max(1, len(train_cases) // 2)
+    )
     evo_per_round = (
-        half * 3 * len(args.train_seeds)
-        + half * 3 * len(args.val_seeds)
-        + 2 * half * len(args.val_seeds)  # generation gate, both arms
+        train_evolution_count * 3 * len(args.train_seeds)
+        + validation_evolution_count * 3 * len(args.val_seeds)
+        + 2 * validation_evolution_count * len(args.val_seeds)
     )
     hot_pretrain_runs = 0
     if args.hot_start_enabled:
@@ -498,12 +774,31 @@ def main() -> int:
             else len([x for x in args.hot_start_protocols.split(",") if x.strip()])
         )
         hot_pretrain_runs = (
-            half
+            train_evolution_count
             * max(1, args.hot_start_seed_count)
             * (topology_count + protocol_count)
         )
         if args.hot_start_dual_branch:
-            evo_per_round += 2 * half * len(args.train_seeds)
+            resolved_innovation = args.hot_start_innovation_mode
+            if resolved_innovation == "auto":
+                resolved_innovation = (
+                    args.evolved_mode
+                    if args.evolved_mode in {
+                        "graph_generate",
+                        "program_generate",
+                        "python_generate",
+                    }
+                    else "graph_generate"
+                )
+            branch_count = (
+                3
+                if resolved_innovation == "python_generate"
+                and args.python_innovation_strategy == "mutate_and_fresh"
+                else 2
+            )
+            evo_per_round += (
+                branch_count * train_evolution_count * len(args.train_seeds)
+            )
     fixed_sel_runs = (
         len(args.fixed_topologies) * len(train_instances) * len(args.train_seeds)
         if "fixed" in eval_baselines
@@ -535,43 +830,96 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     skill_banks_root = out / "skill_banks"
     manifest_path = skill_banks_root / "manifest.json"
-    skill_bank_manifest: dict[str, Any] = {
-        "schema_version": "skill_bank_audit_v2",
-        "silo_eval_mode": args.silo_eval_mode,
-        "clean_run": not args.hot_start_enabled,
-        "hot_start_enabled": args.hot_start_enabled,
-        "clean_pythongen": bool(cfg.clean_pythongen),
-        "description": (
-            "Every distinct bank used by this verifier. Evolution rounds retain "
-            "before, candidate, and gate-approved deployed snapshots."
-        ),
-        "fixed_uses_skill_bank": False,
-        "snapshots": [],
-        "rounds": [],
-    }
+    checkpoint_path = out / "run_checkpoint.json"
+    checkpoint_config_path = out / "checkpoint_config.json"
+    requested_checkpoint_config = _checkpoint_config(args)
+    completed_rounds = 0
+    if args.resume:
+        if not checkpoint_path.is_file() or not checkpoint_config_path.is_file():
+            raise SystemExit(
+                "--resume requires run_checkpoint.json and checkpoint_config.json "
+                "inside --out"
+            )
+        stored_config = json.loads(
+            checkpoint_config_path.read_text(encoding="utf-8")
+        )
+        if stored_config != requested_checkpoint_config:
+            raise SystemExit(
+                "resume configuration differs from checkpoint_config.json"
+            )
+        checkpoint_state = json.loads(
+            checkpoint_path.read_text(encoding="utf-8")
+        )
+        completed_rounds = int(checkpoint_state.get("completed_rounds", 0))
+        if not 0 <= completed_rounds <= args.rounds:
+            raise SystemExit(
+                f"invalid completed_rounds={completed_rounds} in checkpoint"
+            )
+        if not manifest_path.is_file():
+            raise SystemExit("resume checkpoint is missing skill_banks/manifest.json")
+        skill_bank_manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8")
+        )
+        clean_pythongen = bool(
+            skill_bank_manifest.get("clean_pythongen", cfg.clean_pythongen)
+        )
+        print(
+            f"resume: loading completed evolution rounds 1..{completed_rounds}",
+            flush=True,
+        )
+    else:
+        clean_pythongen = bool(cfg.clean_pythongen)
+        skill_bank_manifest: dict[str, Any] = {
+            "schema_version": "skill_bank_audit_v2",
+            "silo_eval_mode": args.silo_eval_mode,
+            "clean_run": not args.hot_start_enabled,
+            "hot_start_enabled": args.hot_start_enabled,
+            "python_innovation_strategy": args.python_innovation_strategy,
+            "python_worker_contract": args.python_worker_contract,
+            "failure_policy": args.failure_policy,
+            "evolution_gate_policy": args.evolution_gate_policy,
+            "require_all_submissions": args.require_all_submissions,
+            "require_complete_runs": args.require_complete_runs,
+            "llm_timeout_attempts": args.llm_timeout_attempts,
+            "clean_pythongen": clean_pythongen,
+            "description": (
+                "Every distinct bank used by this verifier. Evolution rounds "
+                "retain before, candidate, and gate-approved deployed snapshots."
+            ),
+            "fixed_uses_skill_bank": False,
+            "snapshots": [],
+            "rounds": [],
+        }
 
-    # Cold controls always use an empty bank. Save each semantic role once
-    # rather than writing the same empty payload for every paired run.
-    for arm in (
-        name
-        for name in baselines
-        if name in {"graphgen", "programgen", "pycodegen", "select"}
-    ):
-        entry = _save_skill_bank_snapshot(
-            skill_banks_root,
-            relative_name=f"controls/{arm}_empty",
-            skills=[],
-            metadata={
-                "arm": arm,
-                "scope": "shared empty control bank",
-                "used_for_every_control_run": True,
+        # Cold controls always use an empty bank. Save each semantic role once
+        # rather than writing the same empty payload for every paired run.
+        for arm in (
+            name
+            for name in baselines
+            if name in {"graphgen", "programgen", "pycodegen", "select"}
+        ):
+            entry = _save_skill_bank_snapshot(
+                skill_banks_root,
+                relative_name=f"controls/{arm}_empty",
+                skills=[],
+                metadata={
+                    "arm": arm,
+                    "scope": "shared empty control bank",
+                    "used_for_every_control_run": True,
+                },
+            )
+            skill_bank_manifest["snapshots"].append(entry)
+        _write_json_atomic(manifest_path, skill_bank_manifest)
+        _write_json_atomic(checkpoint_config_path, requested_checkpoint_config)
+        _write_json_atomic(
+            checkpoint_path,
+            {
+                "schema_version": "verify_checkpoint_v1",
+                "status": "initialized",
+                "completed_rounds": 0,
+                "requested_rounds": args.rounds,
             },
         )
-        skill_bank_manifest["snapshots"].append(entry)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(
-        json.dumps(skill_bank_manifest, indent=2, sort_keys=True)
-    )
 
     client = _bounded(_build_llm_client(cfg), args.workers)
     objective = evolution_objective_spec(cfg)
@@ -594,17 +942,23 @@ def main() -> int:
 
     # ---- 1. R rounds of evolution on TRAIN only (accumulating) ----
     t0 = time.monotonic()
-    bank, motif = SkillBank(), {}
-    rounds_log: list[dict[str, Any]] = []
-    for r in range(1, args.rounds + 1):
+    bank, motif, rounds_log = _load_deployed_round(
+        skill_banks_root, completed_rounds
+    )
+    for r in range(completed_rounds + 1, args.rounds + 1):
         round_cfg = replace(evo_cfg, curriculum_round=r)
         summ = run_evolution(
-            adapter, cases=train_cases, agent_counts=[args.n_agents],
+            adapter, cases=train_cases, validation_cases=validation_cases,
+            agent_counts=[args.n_agents],
             train_seeds=args.train_seeds, val_seeds=args.val_seeds,
             cfg=round_cfg, levels=args.levels, llm_client=client,
             workers=args.workers, progress=True,
             initial_skills=[s.model_dump(mode="json") for s in bank] or None,
         )
+        clean_pythongen = clean_pythongen and bool(
+            summ.get("clean_pythongen", True)
+        )
+        skill_bank_manifest["clean_pythongen"] = clean_pythongen
         bank, new_motif = _bank_and_motif(summ)
         motif = _merge_motif(motif, new_motif)
         round_dir = skill_banks_root / f"round_{r:02d}"
@@ -651,8 +1005,9 @@ def main() -> int:
                 ),
             }
         )
-        manifest_path.write_text(
-            json.dumps(skill_bank_manifest, indent=2, sort_keys=True, default=str)
+        _write_json_atomic(
+            manifest_path,
+            skill_bank_manifest,
         )
         rounds_log.append({
             "round": r, "n_skills": len(bank), "gate": summ.get("gate"),
@@ -660,8 +1015,27 @@ def main() -> int:
             "rejected_skill_ids": summ.get("rejected_skill_ids"),
             "hot_start": summ.get("hot_start"),
         })
+        _write_json_atomic(
+            checkpoint_path,
+            {
+                "schema_version": "verify_checkpoint_v1",
+                "status": "evolution",
+                "completed_rounds": r,
+                "requested_rounds": args.rounds,
+                "last_deployed_bank": f"skill_banks/round_{r:02d}/deployed/bank.json",
+                "last_motif_stats": (
+                    f"skill_banks/round_{r:02d}/deployed_motif_stats.json"
+                ),
+            },
+        )
         print(f"round {r}/{args.rounds}: skills={len(bank)} gate={summ.get('gate')}")
 
+    skill_bank_manifest["snapshots"] = [
+        entry
+        for entry in skill_bank_manifest.get("snapshots", [])
+        if entry.get("name") != "final/deployed"
+    ]
+    skill_bank_manifest.pop("final", None)
     final_entry = _save_skill_bank_snapshot(
         skill_banks_root,
         relative_name="final/deployed",
@@ -680,8 +1054,20 @@ def main() -> int:
         **final_entry,
         "motif_stats": "final/motif_stats.json",
     }
-    manifest_path.write_text(
-        json.dumps(skill_bank_manifest, indent=2, sort_keys=True, default=str)
+    _write_json_atomic(
+        manifest_path,
+        skill_bank_manifest,
+    )
+    _write_json_atomic(
+        checkpoint_path,
+        {
+            "schema_version": "verify_checkpoint_v1",
+            "status": "training_complete",
+            "completed_rounds": args.rounds,
+            "requested_rounds": args.rounds,
+            "final_bank": "skill_banks/final/deployed/bank.json",
+            "final_motif_stats": "skill_banks/final/motif_stats.json",
+        },
     )
 
     # ---- 2. fixed_best_on_train (train data only) ----
@@ -696,14 +1082,22 @@ def main() -> int:
         else []
     )
 
-    def _fixed_train(task) -> dict[str, Any]:
+    def _fixed_train(task) -> dict[str, Any] | None:
         inst, topo, seed = task
         try:
             score = run_fixed_protocol(
                 inst, replace(cfg, seed=seed), topology=topo, llm_client=client)
             exact = 1.0 if score.success else 0.0
-        except Exception as exc:  # noqa: BLE001 - a failed selection run scores 0
+        except Exception as exc:  # noqa: BLE001 - centrally classified below
             print(f"  [fixed-select] {topo} {inst.case_id} seed={seed} FAILED: {exc}", flush=True)
+            if args.failure_policy == "honest_v2":
+                failure_class = classify_exception(exc)
+                if failure_class == FailureClass.INFRASTRUCTURE:
+                    if args.require_complete_runs:
+                        raise
+                    return None
+                if failure_class == FailureClass.HARNESS:
+                    raise
             exact = 0.0
         return {"topology": topo, "exact": exact}
 
@@ -712,7 +1106,9 @@ def main() -> int:
     fixed_train_means: dict[str, float] = {}
     if fixed_tasks:
         with ThreadPoolExecutor(max_workers=min(args.workers, len(fixed_tasks))) as ex:
-            fixed_rows = list(ex.map(_fixed_train, fixed_tasks))
+            fixed_rows = [row for row in ex.map(_fixed_train, fixed_tasks) if row is not None]
+        if not fixed_rows:
+            raise RuntimeError("fixed baseline selection has no non-infrastructure rows")
         fixed_best = _pick_fixed_best(fixed_rows)
         fixed_train_means = {
             t: sum(r["exact"] for r in fixed_rows if r["topology"] == t)
@@ -721,6 +1117,18 @@ def main() -> int:
         }
         print(f"fixed_best_on_train: {fixed_best} (train means: {fixed_train_means}) "
               f"({time.monotonic() - t0:.0f}s)")
+    _write_json_atomic(
+        checkpoint_path,
+        {
+            "schema_version": "verify_checkpoint_v1",
+            "status": "fixed_selection_complete",
+            "completed_rounds": args.rounds,
+            "requested_rounds": args.rounds,
+            "final_bank": "skill_banks/final/deployed/bank.json",
+            "fixed_best_topology": fixed_best,
+            "fixed_train_means": fixed_train_means,
+        },
+    )
 
     # ---- 3. paired 4-arm eval on TEST ----
     pair_keys = [(inst, seed) for inst in test_instances for seed in args.eval_seeds]
@@ -735,17 +1143,47 @@ def main() -> int:
                     protocol=arm,
                     llm_client=client,
                 )
-                return _metrics_from_score(score)
+                metrics = _metrics_from_score(
+                    score,
+                    honest_failures=args.failure_policy == "honest_v2",
+                )
+                return (
+                    _require_complete_submissions(
+                        metrics, n_agents=args.n_agents, arm=arm
+                    )
+                    if args.require_all_submissions
+                    else metrics
+                )
             if arm.startswith(FIXED_ARM_PREFIX):
                 topology = arm[len(FIXED_ARM_PREFIX):]
                 score = run_fixed_protocol(
                     inst, replace(cfg, seed=seed), topology=topology, llm_client=client)
-                return _metrics_from_score(score)
+                metrics = _metrics_from_score(
+                    score,
+                    honest_failures=args.failure_policy == "honest_v2",
+                )
+                return (
+                    _require_complete_submissions(
+                        metrics, n_agents=args.n_agents, arm=arm
+                    )
+                    if args.require_all_submissions
+                    else metrics
+                )
             if arm == "fixed":
                 assert fixed_best is not None
                 score = run_fixed_protocol(
                     inst, replace(cfg, seed=seed), topology=fixed_best, llm_client=client)
-                return _metrics_from_score(score)
+                metrics = _metrics_from_score(
+                    score,
+                    honest_failures=args.failure_policy == "honest_v2",
+                )
+                return (
+                    _require_complete_submissions(
+                        metrics, n_agents=args.n_agents, arm=arm
+                    )
+                    if args.require_all_submissions
+                    else metrics
+                )
             if arm == "evolved":
                 row = _run_one(
                     inst, eval_cfg, objective=objective, skill_bank=bank, seed=seed,
@@ -770,10 +1208,58 @@ def main() -> int:
                     inst, replace(cfg, planner_mode="python_generate"),
                     objective=objective, skill_bank=SkillBank(), seed=seed,
                     llm_client=client, diag_phase="")
-            return _metrics_from_evolution_row(row)
-        except Exception as exc:  # noqa: BLE001 - drop the whole pair, symmetric
+            metrics = _metrics_from_evolution_row(row)
+            return (
+                _require_complete_submissions(
+                    metrics, n_agents=args.n_agents, arm=arm
+                )
+                if args.require_all_submissions
+                else metrics
+            )
+        except Exception as exc:  # noqa: BLE001 - centrally classified below
             print(f"  [eval] {arm} {inst.case_id} seed={seed} FAILED: {exc}", flush=True)
-            return None
+            if args.failure_policy == "legacy_drop":
+                return None
+            failure_class = classify_exception(exc)
+            planner_mode = {
+                "evolved": eval_cfg.planner_mode,
+                "select": "topology_select",
+                "graphgen": "graph_generate",
+                "programgen": "program_generate",
+                "pycodegen": "python_generate",
+            }.get(arm, "paper_protocol" if arm in PAPER_PROTOCOL_ARMS else "fixed_named")
+            record = make_failure_record(
+                exc=exc,
+                planner_mode=planner_mode,
+                information_goal=args.silo_eval_mode,
+                worker_contract=(
+                    cfg.python_worker_contract
+                    if planner_mode == "python_generate"
+                    else "n/a"
+                ),
+                case_id=inst.case_id,
+                seed=seed,
+                n_agents=args.n_agents,
+                branch=f"eval:{arm}",
+                artifact_reference=getattr(exc, "artifacts_dir", None),
+                structural_signature=str(
+                    getattr(exc, "structural_signature", arm)
+                ),
+            )
+            if failure_class == FailureClass.ALGORITHM:
+                return {
+                    **zero_scored_metrics(exc),
+                    "failure_class": failure_class.value,
+                    "failure_record": record.model_dump(mode="json"),
+                }
+            if failure_class == FailureClass.INFRASTRUCTURE:
+                if args.require_complete_runs:
+                    raise
+                return {
+                    "failure_class": failure_class.value,
+                    "failure_record": record.model_dump(mode="json"),
+                }
+            raise
 
     arms = ("evolved", *eval_baselines)
     tasks = [(inst, seed, arm) for (inst, seed) in pair_keys for arm in arms]
@@ -782,6 +1268,11 @@ def main() -> int:
     pairs: list[dict[str, Any]] = []
     pair_details: list[dict[str, Any]] = []
     dropped = 0
+    algorithm_failures_by_arm = {arm: 0 for arm in arms}
+    infrastructure_failures_by_arm = {arm: 0 for arm in arms}
+    harness_errors: list[dict[str, Any]] = []
+    dropped_infrastructure_pairs = 0
+    zero_scored_algorithm_runs = 0
     for k, (inst, seed) in enumerate(pair_keys):
         start = len(arms) * k
         vals = flat[start:start + len(arms)]
@@ -793,6 +1284,21 @@ def main() -> int:
             arm: vals[i]
             for i, arm in enumerate(arms)
         }
+        infrastructure_arms = [
+            arm
+            for arm, metrics in metrics_by_arm.items()
+            if metrics.get("failure_class") == FailureClass.INFRASTRUCTURE.value
+        ]
+        for arm in infrastructure_arms:
+            infrastructure_failures_by_arm[arm] += 1
+        if infrastructure_arms:
+            dropped += 1
+            dropped_infrastructure_pairs += 1
+            continue
+        for arm, metrics in metrics_by_arm.items():
+            if metrics.get("failure_class") == FailureClass.ALGORITHM.value:
+                algorithm_failures_by_arm[arm] += 1
+                zero_scored_algorithm_runs += 1
         pairs.append({
             "case_id": inst.case_id, "seed": seed,
             **{arm: float(metrics_by_arm[arm]["success"]) for arm in arms},
@@ -888,9 +1394,36 @@ def main() -> int:
         "hot_start_seed_count": args.hot_start_seed_count,
         "hot_start_dual_branch": args.hot_start_dual_branch,
         "hot_start_innovation_mode": args.hot_start_innovation_mode,
-        "clean_pythongen": bool(cfg.clean_pythongen),
+        "python_innovation_strategy": args.python_innovation_strategy,
+        "python_worker_contract": args.python_worker_contract,
+        "require_all_submissions": args.require_all_submissions,
+        "final_submission_retries": args.final_submission_retries,
+        "require_complete_runs": args.require_complete_runs,
+        "request_timeout": args.request_timeout,
+        "llm_timeout_attempts": args.llm_timeout_attempts,
+        "checkpoint": {
+            "enabled": True,
+            "resume_requested": bool(args.resume),
+            "state_path": str(checkpoint_path),
+            "config_path": str(checkpoint_config_path),
+            "completed_rounds": args.rounds,
+        },
+        "evolution_gate_policy": args.evolution_gate_policy,
+        "strict_gate": {
+            "min_dense_delta": args.strict_gate_min_dense_delta,
+            "partial_tolerance": args.strict_gate_partial_tolerance,
+            "bootstrap_samples": args.strict_gate_bootstrap_samples,
+            "bootstrap_seed": args.strict_gate_bootstrap_seed,
+        },
+        "artifact_roots": {
+            "graph_generate": cfg.graph_artifacts_dir,
+            "program_generate": cfg.program_artifacts_dir,
+            "python_generate": cfg.python_artifacts_dir,
+        },
+        "clean_pythongen": clean_pythongen,
         "mode": cfg.evolved_mode, "n_agents": args.n_agents, "rounds": args.rounds,
-        "train_cases": train_cases, "test_cases": test_cases,
+        "train_cases": train_cases, "val_cases": validation_cases,
+        "test_cases": test_cases,
         "split_mode": split_mode,
         "train_seeds": args.train_seeds, "val_seeds": args.val_seeds,
         "eval_seeds": args.eval_seeds,
@@ -902,6 +1435,12 @@ def main() -> int:
         "supplementary_baselines": sorted(supplementary_baselines),
         "fixed_best_topology": fixed_best, "fixed_train_means": fixed_train_means,
         "n_pairs": len(pairs), "dropped_pairs": dropped,
+        "failure_policy": args.failure_policy,
+        "algorithm_failures_by_arm": algorithm_failures_by_arm,
+        "infrastructure_failures_by_arm": infrastructure_failures_by_arm,
+        "harness_errors": harness_errors,
+        "dropped_infrastructure_pairs": dropped_infrastructure_pairs,
+        "zero_scored_algorithm_runs": zero_scored_algorithm_runs,
         "arm_means": verdict["arm_means"], "per_baseline": verdict["per_baseline"],
         "paper_metric_means": paper_metric_means,
         "capability_diagnostic": capability_diagnostic,
@@ -917,6 +1456,19 @@ def main() -> int:
     }
     path = out / f"verify_beats_baselines_n{args.n_agents}.json"
     path.write_text(json.dumps(report, indent=2))
+    _write_json_atomic(
+        checkpoint_path,
+        {
+            "schema_version": "verify_checkpoint_v1",
+            "status": "complete",
+            "completed_rounds": args.rounds,
+            "requested_rounds": args.rounds,
+            "final_bank": "skill_banks/final/deployed/bank.json",
+            "report": path.name,
+            "n_pairs": len(pairs),
+            "dropped_pairs": dropped,
+        },
+    )
 
     means = verdict["arm_means"]
     print(f"\n=== SILO EVAL MODE: {args.silo_eval_mode} ===")

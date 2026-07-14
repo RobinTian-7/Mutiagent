@@ -49,16 +49,19 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
         merge_mode=getattr(args, "merge_mode", "deterministic"),
         init_mode=getattr(args, "init_mode", "deterministic"),
         max_rounds=args.max_rounds,
+        max_parallel_agents=getattr(args, "max_parallel_agents", 5),
         llm_provider=args.llm,
         model_name=args.model_name,
         base_url=getattr(args, "base_url", None),
         api_key_env=getattr(args, "api_key_env", None),
         seed=args.seed,
         request_timeout=getattr(args, "request_timeout", 90.0),
+        llm_timeout_attempts=getattr(args, "llm_timeout_attempts", 2),
+        require_complete_runs=getattr(args, "require_complete_runs", False),
         silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
         python_repair_attempts=getattr(args, "python_repair_attempts", 3),
         python_gen_temperature=getattr(args, "python_gen_temperature", None),
-        python_execution_timeout=getattr(args, "python_execution_timeout", 30.0),
+        python_execution_timeout=getattr(args, "python_execution_timeout", None),
         python_cpu_seconds=getattr(args, "python_cpu_seconds", 10),
         python_memory_mb=getattr(args, "python_memory_mb", 512),
         python_max_output_bytes=getattr(args, "python_max_output_bytes", 1_000_000),
@@ -79,6 +82,25 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
         hot_start_dual_branch=getattr(args, "hot_start_dual_branch", True),
         hot_start_innovation_mode=getattr(
             args, "hot_start_innovation_mode", "auto"
+        ),
+        python_innovation_strategy=getattr(
+            args, "python_innovation_strategy", "mutate_and_fresh"
+        ),
+        failure_policy=getattr(args, "failure_policy", "legacy_drop"),
+        evolution_gate_policy=getattr(
+            args, "evolution_gate_policy", "legacy_non_regression"
+        ),
+        strict_gate_min_dense_delta=getattr(
+            args, "strict_gate_min_dense_delta", 0.01
+        ),
+        strict_gate_partial_tolerance=getattr(
+            args, "strict_gate_partial_tolerance", 0.0
+        ),
+        strict_gate_bootstrap_samples=getattr(
+            args, "strict_gate_bootstrap_samples", 2000
+        ),
+        strict_gate_bootstrap_seed=getattr(
+            args, "strict_gate_bootstrap_seed", 20260713
         ),
     )
 
@@ -175,6 +197,7 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
         request_timeout=getattr(args, "request_timeout", 90.0),
         silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
         max_rounds=args.max_rounds,
+        max_parallel_agents=args.max_parallel_agents,
         python_repair_attempts=args.python_repair_attempts,
         python_gen_temperature=args.python_gen_temperature,
         python_execution_timeout=args.python_execution_timeout,
@@ -266,6 +289,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         use_llm_insights=getattr(args, "use_llm_insights", False),
         evolved_test_seeds=getattr(args, "evolved_test_seeds", 1),
         max_rounds=args.max_rounds,
+        max_parallel_agents=args.max_parallel_agents,
         silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
         python_repair_attempts=args.python_repair_attempts,
         python_gen_temperature=args.python_gen_temperature,
@@ -330,6 +354,7 @@ def _cmd_curve(args: argparse.Namespace) -> int:
         num_graph_candidates=args.graphgen_candidates,
         graph_validation_seeds=getattr(args, "graph_validation_seeds", 0),
         use_llm_insights=getattr(args, "use_llm_insights", False),
+        max_parallel_agents=args.max_parallel_agents,
         silo_eval_mode=getattr(args, "silo_eval_mode", "sink"),
         python_repair_attempts=args.python_repair_attempts,
         python_gen_temperature=args.python_gen_temperature,
@@ -429,6 +454,18 @@ def build_parser() -> argparse.ArgumentParser:
                        default=90.0,
                        help="per-request hard wall-clock timeout (s) for non-fake "
                             "LLM calls; a hung request fails fast (<=0 disables)")
+        p.add_argument(
+            "--llm-timeout-attempts",
+            type=int,
+            default=2,
+            help="bounded attempts for a request that hits the wall-clock timeout",
+        )
+        p.add_argument(
+            "--require-complete-runs",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help="abort instead of dropping an infrastructure-failed train/eval run",
+        )
         p.add_argument("--seed", type=int, default=0)
         p.add_argument("--planner", action="store_true",
                        help="enable the QueenBee planner + generalized ProtocolRunner")
@@ -449,7 +486,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help="maximum bounded replace-code repairs for python_generate")
         p.add_argument("--python-gen-temperature", type=float, default=None,
                        help="architect temperature for python_generate (default: worker temperature)")
-        p.add_argument("--python-execution-timeout", type=float, default=30.0)
+        p.add_argument(
+            "--python-execution-timeout",
+            type=float,
+            default=None,
+            help=(
+                "whole generated-program wall-clock timeout in seconds; default "
+                "derives a safe budget from per-request timeout, rounds, agent "
+                "count, and --max-parallel-agents"
+            ),
+        )
         p.add_argument("--python-cpu-seconds", type=int, default=10)
         p.add_argument("--python-memory-mb", type=int, default=512)
         p.add_argument("--python-max-output-bytes", type=int, default=1_000_000)
@@ -461,6 +507,15 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--python-max-model-calls", type=int, default=20)
         p.add_argument("--python-max-completion-tokens", type=int, default=4000)
         p.add_argument("--python-max-messages", type=int, default=30)
+        p.add_argument(
+            "--max-parallel-agents",
+            type=int,
+            default=5,
+            help=(
+                "maximum Agent LLM calls that may overlap inside one logical "
+                "round; rounds themselves remain synchronized"
+            ),
+        )
         p.add_argument("--python-worker-contract", dest="python_worker_contract",
                        choices=["action_json_v1", "message_only_v1",
                                 "message_only_v2"],
@@ -516,6 +571,28 @@ def build_parser() -> argparse.ArgumentParser:
             help="planner used by the fresh branch (auto follows the evolved "
                  "generator, or graph_generate for topology_select)",
         )
+        p.add_argument(
+            "--python-innovation-strategy",
+            choices=["fresh", "mutate", "mutate_and_fresh"],
+            default="mutate_and_fresh",
+            help="Python hot-start branch policy; only active when Python "
+                 "innovation is enabled",
+        )
+        p.add_argument(
+            "--failure-policy",
+            choices=["legacy_drop", "honest_v2"],
+            default="legacy_drop",
+            help="legacy exception dropping or typed honest failure semantics",
+        )
+        p.add_argument(
+            "--evolution-gate-policy",
+            choices=["legacy_non_regression", "strict_dense_v2"],
+            default="legacy_non_regression",
+        )
+        p.add_argument("--strict-gate-min-dense-delta", type=float, default=0.01)
+        p.add_argument("--strict-gate-partial-tolerance", type=float, default=0.0)
+        p.add_argument("--strict-gate-bootstrap-samples", type=int, default=2000)
+        p.add_argument("--strict-gate-bootstrap-seed", type=int, default=20260713)
 
     p_run = sub.add_parser("run", help="run a single instance")
     add_common(p_run)

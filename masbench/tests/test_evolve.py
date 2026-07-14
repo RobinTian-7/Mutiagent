@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from masbench import evolve
 from masbench.adapters.silo_bench import SiloBenchAdapter
 from masbench.core.config import RunConfig
 from masbench.evolve import (
@@ -97,6 +98,36 @@ def test_evolution_loop_runs_offline() -> None:
     assert "loss_lcb" in probe["score_breakdown"]
 
 
+def test_evolution_respects_explicit_disjoint_validation_cases() -> None:
+    summary = run_evolution(
+        _adapter(),
+        cases=["I-01"],
+        validation_cases=["III-21"],
+        agent_counts=[2],
+        train_seeds=[0],
+        val_seeds=[1],
+        cfg=_cfg(),
+    )
+
+    assert summary["train_cases"] == ["I-01"]
+    assert summary["val_cases"] == ["III-21"]
+    assert summary["n_train_rows"] > 0
+    assert summary["n_val_rows_real"] > 0
+
+
+def test_evolution_rejects_overlapping_explicit_validation_cases() -> None:
+    with pytest.raises(ValueError, match="must be disjoint"):
+        run_evolution(
+            _adapter(),
+            cases=["I-01"],
+            validation_cases=["I-01"],
+            agent_counts=[2],
+            train_seeds=[0],
+            val_seeds=[1],
+            cfg=_cfg(),
+        )
+
+
 def test_evolution_gate_accepts_improving_update() -> None:
     """A held-out set where the incumbent is suboptimal yields a real ACCEPT."""
     summary = run_evolution(
@@ -136,6 +167,49 @@ def test_evolution_gate_rejects_regressing_update() -> None:
     snapshots = summary["skill_bank_snapshots"]
     assert snapshots["deployed"] == snapshots["before"]
     assert snapshots["deployed"] == summary["evolved_skills"]
+
+
+def test_strict_gate_rejection_deploys_exact_before_snapshot(monkeypatch) -> None:
+    def reject(*args, **kwargs):
+        del args, kwargs
+        return {
+            "accepted": False,
+            "accepted_no_change": False,
+            "reason": "quality_regression",
+            "policy": "strict_dense_v2",
+            "n_samples": 1,
+            "paired_samples": [],
+            "failure_records": [],
+        }
+
+    monkeypatch.setattr(evolve, "_generation_gate", reject)
+    cfg = RunConfig(
+        use_planner=True,
+        use_skill_evolution=True,
+        planner_mode="graph_generate",
+        evolved_mode="graph_generate",
+        llm_provider="fake",
+        model_name="fake",
+        merge_mode="deterministic",
+        init_mode="deterministic",
+        objective="accuracy_first",
+        evidence_portfolio="",
+        evolution_gate_policy="strict_dense_v2",
+    )
+    summary = run_evolution(
+        _adapter(),
+        cases=["I-01"],
+        agent_counts=[2],
+        train_seeds=[1],
+        val_seeds=[2],
+        cfg=cfg,
+    )
+
+    snapshots = summary["skill_bank_snapshots"]
+    assert summary["gate"]["accepted"] is False
+    assert snapshots["deployed"] == snapshots["before"]
+    assert summary["evolved_skills"] == snapshots["before"]
+    assert snapshots["candidate"] != snapshots["deployed"]
 
 
 def test_evolution_loop_is_deterministic_offline() -> None:

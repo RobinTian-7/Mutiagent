@@ -23,6 +23,14 @@ def test_explicit_staged_loss_and_failure_fields_survive_ingest() -> None:
                 "program_validity": 0.0,
                 "evolution_stage": "validity",
                 "program_generation_failed": "invalid phase",
+                "python_innovation_strategy": "mutate",
+                "python_parent_skill_id": "python_parent",
+                "python_exposed_insight_ids": ["i1", "i2"],
+                "python_used_insight_ids": ["i2"],
+                "python_mutation_provenance": {
+                    "parent_program_sha256": "abc",
+                    "patches": [{"diff_sha256": "def"}],
+                },
             }
         ]
     )[0]
@@ -32,6 +40,13 @@ def test_explicit_staged_loss_and_failure_fields_survive_ingest() -> None:
     assert evidence["program_validity"] == 0.0
     assert evidence["evolution_stage"] == "validity"
     assert evidence["program_generation_failed"] == "invalid phase"
+    assert evidence["python_innovation_strategy"] == "mutate"
+    assert evidence["python_parent_skill_id"] == "python_parent"
+    assert evidence["python_exposed_insight_ids"] == ["i1", "i2"]
+    assert evidence["python_used_insight_ids"] == ["i2"]
+    assert evidence["python_mutation_provenance"]["patches"][0][
+        "diff_sha256"
+    ] == "def"
 
 
 def test_ingest_experiment_evidence_builds_append_only_records(tmp_path):

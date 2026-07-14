@@ -187,6 +187,13 @@ class RunConfig:
     # settable per-run via the MASBENCH_GATE_MODE env var so frozen drivers like
     # scripts/verify_evolve.py can run the ablation without growing flags).
     gate_mode: str = "auto"
+    # Compatibility default preserves the historical scalar non-regression
+    # gate. strict_dense_v2 compares paired V/K/U/P/S/stage/cost samples.
+    evolution_gate_policy: str = "legacy_non_regression"
+    strict_gate_min_dense_delta: float = 0.01
+    strict_gate_partial_tolerance: float = 0.0
+    strict_gate_bootstrap_samples: int = 2000
+    strict_gate_bootstrap_seed: int = 20260713
     # Annotate every proposed skill with same-(case, seed) marginal evidence.
     # Strict mode drops a skill whose paired losses exceed its wins before the
     # whole-bank held-out gate. False preserves historical admission behavior.
@@ -212,6 +219,18 @@ class RunConfig:
     # auto = keep the configured generated planner, or graph_generate when the
     # main evolution planner is topology_select/select_then_refine.
     hot_start_innovation_mode: str = "auto"
+    # Python hot-start innovation can generate a fresh program, locally mutate
+    # a Python parent skill, or evaluate both. It is inert outside the opt-in
+    # hot-start dual-branch path.
+    python_innovation_strategy: str = "mutate_and_fresh"
+    # Internal per-run branch controls populated by the evolution harness.
+    python_innovation_branch: str | None = None
+    python_parent_skill_id: str | None = None
+    python_exposed_insight_ids: tuple[str, ...] = ()
+    # Historical runners dropped every exception. honest_v2 zero-scores typed
+    # algorithm failures, drops only infrastructure failures, and re-raises
+    # harness/unknown errors.
+    failure_policy: str = "legacy_drop"
     # 中文：evolved 臂留出多少个末尾种子用于 eval（同时作为门的验证集）：train = seeds[:-K]，
     #   test = seeds[-K:]。默认 1（当前行为）；K>1 让 evolved 在更多留出种子上评估 -> 每个
     #   条件的方差大幅降低（不再是单次二元结果）。
@@ -237,7 +256,10 @@ class RunConfig:
     # GraphGen or phase-program repair/artifact controls.
     python_repair_attempts: int = 3
     python_gen_temperature: float | None = None
-    python_execution_timeout: float = 20.0
+    # None derives a whole-program wall-clock budget from request_timeout,
+    # max_rounds, n_agents, and max_parallel_agents. A fixed value remains
+    # available for preregistered experiments that need an explicit cap.
+    python_execution_timeout: float | None = None
     python_cpu_seconds: int = 10
     python_memory_mb: int = 512
     python_max_output_bytes: int = 1_000_000
@@ -257,6 +279,16 @@ class RunConfig:
     python_max_model_calls: int = 32
     python_max_completion_tokens: int = 20_000
     python_max_messages: int = 64
+    # Optional strict science-run barrier. Python message_only_v2 already owns
+    # its synchronized barrier; this flag gives fixed and paper transports an
+    # audited completion pass instead of silently retaining null submissions.
+    require_all_submissions: bool = False
+    final_submission_retries: int = 2
+    # Science-run reliability controls. Defaults preserve historical behavior:
+    # two attempts for a wall-clock timeout, and infrastructure failures may be
+    # recorded/dropped by honest_v2. Strict runs can raise both explicitly.
+    llm_timeout_attempts: int = 2
+    require_complete_runs: bool = False
     # 中文：仅规划器路径：士兵（soldier）在 ProtocolRunner 里如何初始化/合并信念状态
     #   （init_mode/merge_mode，即初始化/合并模式）。
     # Planner-path only: how soldiers initialize/merge beliefs in ProtocolRunner.
@@ -264,6 +296,9 @@ class RunConfig:
     init_mode: str = "deterministic"
     n_agents: int | None = None
     max_rounds: int = 4
+    # Intra-task concurrency. Calls from agents in the same logical round may
+    # overlap; the next round still waits for the complete round snapshot.
+    max_parallel_agents: int = 5
     llm_provider: str = "fake"
     model_name: str = "fake"
     base_url: str | None = None

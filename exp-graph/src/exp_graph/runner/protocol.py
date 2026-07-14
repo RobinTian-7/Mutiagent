@@ -45,6 +45,12 @@ from exp_graph.tasks.protocol_adapter import ProtocolTaskAdapter
 from exp_graph.tracing import AgentStepTrace, append_traces_jsonl, reset_trace_jsonl
 
 
+# A worker-produced belief that still violates the action/state contract after
+# bounded retries is an algorithm failure, not a host configuration error.
+class ProtocolActionError(ValueError):
+    """LLM action/belief output remained invalid after bounded repair."""
+
+
 # 【职责】一次合并/初始化调用的内部结果载体（确定性与 LLM 两条路径共用）。
 @dataclass
 class _MergeOutcome:
@@ -776,7 +782,7 @@ class ProtocolRunner:
                             f"last_error={exc}"
                         ),
                     )
-                    raise ValueError(
+                    raise ProtocolActionError(
                         "LLM failed to return a valid CF local init belief_state "
                         f"after {attempt_idx + 1} call(s). Last error: {exc}"
                     ) from exc
@@ -814,7 +820,7 @@ class ProtocolRunner:
                 parse_error=str(last_error) if last_error else None,
                 fallback_applied=True,
             )
-        raise ValueError(f"LLM local init failed: {last_error}")
+        raise ProtocolActionError(f"LLM local init failed: {last_error}")
 
     # 【职责】确定性合并：委托适配器把收件箱并入旧信念（也是 LLM 模式的校验基准与兜底）。
     def _merge_receiver_belief(self, state: AgentState) -> BeliefState:
@@ -1006,7 +1012,7 @@ class ProtocolRunner:
                             f"last_error={exc}"
                         ),
                     )
-                    raise ValueError(
+                    raise ProtocolActionError(
                         "LLM failed to return a valid CF protocol belief_state "
                         f"after {attempt_idx + 1} call(s). Last error: {exc}"
                     ) from exc
@@ -1047,7 +1053,7 @@ class ProtocolRunner:
                 parse_error=str(last_error) if last_error else None,
                 fallback_applied=True,
             )
-        raise ValueError(f"LLM protocol merge failed: {last_error}")
+        raise ProtocolActionError(f"LLM protocol merge failed: {last_error}")
 
     def _log_event(self, event_type: str, message: str) -> None:
         if self.config.verbose_events:

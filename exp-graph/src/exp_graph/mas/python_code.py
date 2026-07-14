@@ -3,7 +3,9 @@
 The Python planner is intentionally independent from both free GraphGen and the
 restricted phase DSL.  It accepts real Python, but only a small statically
 auditable subset whose sole external effect is calling the existing
-``LLMClient.complete`` API and writing one JSON object to stdout.
+``LLMClient.complete``/``complete_batch`` API and writing one JSON object to
+stdout. Batch calls are host-metered and may overlap only within one logical
+round.
 """
 
 from __future__ import annotations
@@ -164,6 +166,7 @@ class PythonWorkerConfig(BaseModel):
     base_url: str | None = None
     api_key_env: str | None = None
     temperature: float = 0.0
+    request_timeout: float | None = Field(default=None, gt=0)
 
 
 class PythonAgentInput(BaseModel):
@@ -190,6 +193,9 @@ class PythonExecutionPayload(BaseModel):
     selected_primary: int = Field(ge=0)
     n_agents: int = Field(ge=1)
     max_rounds: int = Field(ge=1)
+    # Host-authorized width for calls made from the same logical round. It is
+    # not a topology choice and never permits one round to observe another.
+    max_parallel_agents: int = Field(default=1, ge=1)
     budgets: PythonExecutionBudgets
     worker_llm: PythonWorkerConfig
     agents: list[PythonAgentInput]
@@ -364,7 +370,7 @@ def validate_python_source(
         return report
     report.policy_valid = True
 
-    api_errors = _APIValidator().validate(tree)
+    api_errors = _APIValidator(worker_contract=worker_contract).validate(tree)
     if api_errors:
         report.errors.extend(error.as_dict() for error in api_errors)
         return report
@@ -545,8 +551,11 @@ class _PolicyValidator(_ValidationVisitor):
         ):
             self.fail(node, f"attribute {node.attr!r} is forbidden")
         root = _attribute_name(node).split(".", 1)[0]
-        if root == "client" and node.attr != "complete":
-            self.fail(node, "the authorized client exposes only complete")
+        if root == "client" and node.attr not in {"complete", "complete_batch"}:
+            self.fail(
+                node,
+                "the authorized client exposes only complete and complete_batch",
+            )
         if root == "sys" and node.attr not in {"stdin", "stdout", "write"}:
             self.fail(node, f"sys attribute {node.attr!r} is outside the whitelist")
         self.generic_visit(node)
@@ -567,10 +576,13 @@ class _PolicyValidator(_ValidationVisitor):
 class _APIValidator(_ValidationVisitor):
     error_type: PythonErrorType = "APIError"
 
-    def __init__(self) -> None:
+    def __init__(self, *, worker_contract: str) -> None:
         super().__init__()
+        self.worker_contract = worker_contract
         self.factory_calls = 0
         self.complete_calls = 0
+        self.scalar_complete_calls = 0
+        self.batch_complete_calls = 0
         self.stdin_reads = 0
         self.stdout_writes = 0
         self.payload_assignments = 0
@@ -589,8 +601,20 @@ class _APIValidator(_ValidationVisitor):
             )
         if self.complete_calls < 1:
             self.errors.append(
-                PythonCodeError("APIError", "program must call LLMClient.complete")
+                PythonCodeError(
+                    "APIError",
+                    "program must call LLMClient.complete or complete_batch",
+                )
             )
+        if self.worker_contract == "message_only_v2":
+            if self.batch_complete_calls < 1 or self.scalar_complete_calls:
+                self.errors.append(
+                    PythonCodeError(
+                        "APIError",
+                        "message_only_v2 requires complete_batch for every "
+                        "Worker call site",
+                    )
+                )
         if self.stdin_reads != 1:
             self.errors.append(
                 PythonCodeError("APIError", "program must read stdin exactly once")
@@ -655,12 +679,22 @@ class _APIValidator(_ValidationVisitor):
                     kw.value, "worker_cfg", kw.arg
                 ):
                     self.fail(node, f"{kw.arg} must come unchanged from payload")
-        elif name.endswith(".complete"):
+        elif name.endswith((".complete", ".complete_batch")):
             self.complete_calls += 1
-            if name != "client.complete":
-                self.fail(node, "complete must be called on the authorized client")
+            if name == "client.complete":
+                self.scalar_complete_calls += 1
+            elif name == "client.complete_batch":
+                self.batch_complete_calls += 1
+            if name not in {"client.complete", "client.complete_batch"}:
+                self.fail(
+                    node,
+                    "Worker completion must be called on the authorized client",
+                )
             if len(node.args) != 1:
-                self.fail(node, "complete must receive exactly one prompt argument")
+                self.fail(
+                    node,
+                    "complete/complete_batch must receive exactly one prompt argument",
+                )
             keywords = {kw.arg: kw.value for kw in node.keywords}
             for required in ("model_name", "temperature"):
                 if required not in keywords or not _is_named_lookup(
@@ -843,7 +877,9 @@ class _DataFlowValidator(_ValidationVisitor):
             self.fail(node, "the agents container may not be aliased")
         declassified_worker_output = (
             isinstance(node.value, ast.Call)
-            and _call_name(node.value).endswith(".complete")
+            and _call_name(node.value).endswith(
+                (".complete", ".complete_batch")
+            )
         )
         tainted = not declassified_worker_output and (
             _contains_private_prompt(node.value)
@@ -890,11 +926,15 @@ class _DataFlowValidator(_ValidationVisitor):
             _contains_private_prompt(arg) or _contains_name(arg, self.tainted_names)
             for arg in node.args
         )
-        if tainted and not name.endswith(".complete"):
+        is_worker_call = name in {"client.complete", "client.complete_batch"}
+        is_prompt_batch_append = name == "worker_prompts.append"
+        if is_prompt_batch_append and tainted:
+            self.tainted_names.add("worker_prompts")
+        if tainted and not is_worker_call and not is_prompt_batch_append:
             # Prompt text crosses only the authorized Worker-call boundary;
             # parsing or transforming it inside generated code is rejected.
             self.fail(node, f"tainted private prompt flows through call {name!r}")
-        if name.endswith(".complete") and not tainted:
+        if is_worker_call and not tainted:
             self.fail(node, "every worker call must consume an authorized prompt")
         if isinstance(node.func, ast.Attribute) and node.func.attr in _TAINT_TRANSFORMS:
             if _contains_private_prompt(node.func.value) or _contains_name(
@@ -1706,6 +1746,8 @@ def main():
 
         next_states = [dict(state_item) for state_item in snapshot_states]
         next_pending = []
+        worker_prompts = []
+        batch_agent_ids = []
         for agent_id in range(n_agents):
             action = actions[agent_id]
             if action["mode"] == "idle":
@@ -1728,12 +1770,18 @@ def main():
             worker_prompt = (
                 control_header + communication_prompt + "\\n" + MESSAGE_INSTRUCTION
             )
-            response = client.complete(
-                worker_prompt,
-                model_name=worker_cfg["model_name"],
-                temperature=worker_cfg["temperature"],
-                json_mode=False,
-            )
+            worker_prompts.append(worker_prompt)
+            batch_agent_ids.append(agent_id)
+        worker_responses = client.complete_batch(
+            worker_prompts,
+            model_name=worker_cfg["model_name"],
+            temperature=worker_cfg["temperature"],
+            json_mode=False,
+        )
+        for response_idx in range(len(worker_responses)):
+            agent_id = batch_agent_ids[response_idx]
+            action = actions[agent_id]
+            response = worker_responses[response_idx]
             usage["model_calls"] += int(response.usage.model_calls)
             usage["prompt_tokens"] += int(response.usage.prompt_tokens)
             usage["completion_tokens"] += int(response.usage.completion_tokens)
@@ -1784,6 +1832,8 @@ def main():
     ):
         raise ValueError("BudgetError: synchronized submit token budget exhausted")
 
+    worker_prompts = []
+    batch_agent_ids = []
     for agent_id in range(n_agents):
         if information_goal == "sink" and agent_id != selected_primary:
             continue
@@ -1804,12 +1854,17 @@ def main():
             + "SUBMIT_PROMPT:\\n"
         )
         worker_prompt = control_header + submit_prompt + "\\n" + SUBMIT_INSTRUCTION
-        response = client.complete(
-            worker_prompt,
-            model_name=worker_cfg["model_name"],
-            temperature=worker_cfg["temperature"],
-            json_mode=False,
-        )
+        worker_prompts.append(worker_prompt)
+        batch_agent_ids.append(agent_id)
+    worker_responses = client.complete_batch(
+        worker_prompts,
+        model_name=worker_cfg["model_name"],
+        temperature=worker_cfg["temperature"],
+        json_mode=False,
+    )
+    for response_idx in range(len(worker_responses)):
+        agent_id = batch_agent_ids[response_idx]
+        response = worker_responses[response_idx]
         usage["model_calls"] += int(response.usage.model_calls)
         usage["prompt_tokens"] += int(response.usage.prompt_tokens)
         usage["completion_tokens"] += int(response.usage.completion_tokens)

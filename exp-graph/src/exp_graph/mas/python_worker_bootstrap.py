@@ -9,10 +9,12 @@ accounting authoritative to the host.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import runpy
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +102,74 @@ class _PythonSmokeClient:
         )
 
 
+class _BatchPreflightClient:
+    """Return contract-valid placeholders while the wrapper validates a batch."""
+
+    def __init__(self, worker_contract: str) -> None:
+        self.worker_contract = worker_contract
+
+    def complete(
+        self,
+        prompt: str,
+        model_name: str,
+        temperature: float | None = None,
+        json_mode: bool | None = None,
+    ) -> LLMResponse:
+        del model_name, temperature, json_mode
+        if self.worker_contract == "action_json_v1":
+            text = "{}"
+        elif (
+            self.worker_contract == "message_only_v2"
+            and _prompt_json_line(prompt, "PYTHON_CONTROL_JSON").get("mode")
+            == "submit"
+        ):
+            text = "null"
+        else:
+            text = "parallel batch preflight"
+        return LLMResponse(
+            text=text,
+            usage=LLMUsage(model_calls=1, prompt_tokens=0, completion_tokens=1),
+        )
+
+
+class _BatchReplayClient:
+    """Replay already-completed provider responses through authoritative commits."""
+
+    def __init__(self, responses: list[LLMResponse]) -> None:
+        self.responses = list(responses)
+        self.index = 0
+
+    def complete(
+        self,
+        prompt: str,
+        model_name: str,
+        temperature: float | None = None,
+        json_mode: bool | None = None,
+    ) -> LLMResponse:
+        del prompt, model_name, temperature, json_mode
+        if self.index >= len(self.responses):
+            raise RuntimeError("APIError: parallel response replay underflow")
+        response = self.responses[self.index]
+        self.index += 1
+        return response
+
+
 class _MeteredClient:
+    _BATCH_STATE_FIELDS = (
+        "expected_states",
+        "previous_outputs",
+        "known_sources",
+        "pending_envelopes",
+        "submitted_rounds",
+        "pending_barrier_submissions",
+        "declared_submit_round",
+        "frozen_barrier_states",
+        "frozen_barrier_inboxes",
+        "called_pairs",
+        "max_round_seen",
+        "total_messages",
+    )
+
     def __init__(self, inner: Any, auth: dict[str, Any], ledger: dict[str, Any], path: Path):
         self.inner = inner
         self.auth = auth
@@ -135,6 +204,140 @@ class _MeteredClient:
         self.called_pairs: set[tuple[int, int]] = set()
         self.max_round_seen = -1
         self.total_messages = 0
+
+    def _snapshot_batch_state(self) -> dict[str, Any]:
+        return {
+            "ledger": copy.deepcopy(self.ledger),
+            "state": {
+                name: copy.deepcopy(getattr(self, name))
+                for name in self._BATCH_STATE_FIELDS
+            },
+        }
+
+    def _restore_batch_state(self, snapshot: dict[str, Any]) -> None:
+        self.ledger.clear()
+        self.ledger.update(copy.deepcopy(snapshot["ledger"]))
+        for name, value in snapshot["state"].items():
+            setattr(self, name, copy.deepcopy(value))
+        _write_ledger(self.path, self.ledger)
+
+    def complete_batch(
+        self,
+        prompts: list[str],
+        model_name: str,
+        temperature: float | None = None,
+        json_mode: bool | None = None,
+    ) -> list[LLMResponse]:
+        """Execute one logical round's independent Worker calls concurrently.
+
+        The generated program may choose the communication topology, but the
+        trusted wrapper owns concurrency. It first runs the existing fail-closed
+        validation and budget logic against placeholders, restores the state,
+        performs only the provider calls in parallel, then commits responses in
+        deterministic input order through the exact same authoritative path.
+        """
+        if not isinstance(prompts, list) or any(
+            not isinstance(prompt, str) for prompt in prompts
+        ):
+            raise RuntimeError("APIError: complete_batch requires a list of prompts")
+        if not prompts:
+            return []
+        n_agents = int(self.auth["n_agents"])
+        if len(prompts) > n_agents:
+            raise RuntimeError(
+                "BudgetError: a parallel batch cannot exceed the agent count"
+            )
+        rounds = {_prompt_header_int(prompt, "PYTHON_ROUND") for prompt in prompts}
+        if len(rounds) != 1:
+            raise RuntimeError(
+                "DataFlowError: complete_batch may contain only one logical round"
+            )
+
+        snapshot = self._snapshot_batch_state()
+        real_inner = self.inner
+        try:
+            self.inner = _BatchPreflightClient(self.worker_contract)
+            for prompt in prompts:
+                self.complete(
+                    prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                    json_mode=json_mode,
+                )
+        finally:
+            self.inner = real_inner
+            self._restore_batch_state(snapshot)
+
+        max_workers = min(
+            len(prompts),
+            max(1, int(self.auth.get("max_parallel_agents", 1))),
+        )
+        parallelism = self.ledger.setdefault(
+            "parallelism",
+            {
+                "max_parallel_agents": int(
+                    self.auth.get("max_parallel_agents", 1)
+                ),
+                "batch_calls": 0,
+                "max_batch_size": 0,
+                "max_workers_used": 0,
+            },
+        )
+        parallelism["inflight"] = {
+            "round": next(iter(rounds)),
+            "batch_size": len(prompts),
+            "workers": max_workers,
+        }
+        _write_ledger(self.path, self.ledger)
+
+        def invoke(prompt: str) -> LLMResponse:
+            if json_mode is None:
+                return real_inner.complete(
+                    prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                )
+            return real_inner.complete(
+                prompt,
+                model_name=model_name,
+                temperature=temperature,
+                json_mode=json_mode,
+            )
+
+        if max_workers == 1:
+            responses = [invoke(prompt) for prompt in prompts]
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                responses = list(executor.map(invoke, prompts))
+
+        replay = _BatchReplayClient(responses)
+        try:
+            self.inner = replay
+            committed = [
+                self.complete(
+                    prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                    json_mode=json_mode,
+                )
+                for prompt in prompts
+            ]
+        finally:
+            self.inner = real_inner
+        if replay.index != len(responses):
+            raise RuntimeError("APIError: parallel response replay overflow")
+        parallelism.pop("inflight", None)
+        parallelism["batch_calls"] = int(parallelism.get("batch_calls", 0)) + 1
+        parallelism["max_batch_size"] = max(
+            int(parallelism.get("max_batch_size", 0)),
+            len(prompts),
+        )
+        parallelism["max_workers_used"] = max(
+            int(parallelism.get("max_workers_used", 0)),
+            max_workers,
+        )
+        _write_ledger(self.path, self.ledger)
+        return committed
 
     def complete(
         self,
@@ -1013,6 +1216,12 @@ def main() -> int:
         "worker_contract": str(auth.get("worker_contract") or "action_json_v1"),
         "calls": [],
         "usage": {"model_calls": 0, "prompt_tokens": 0, "completion_tokens": 0},
+        "parallelism": {
+            "max_parallel_agents": int(auth.get("max_parallel_agents", 1)),
+            "batch_calls": 0,
+            "max_batch_size": 0,
+            "max_workers_used": 0,
+        },
         "errors": [],
     }
     _write_ledger(ledger_path, ledger)
@@ -1043,6 +1252,7 @@ def main() -> int:
                 provider,
                 base_url=base_url,
                 api_key_env=api_key_env,
+                timeout_s=expected.get("request_timeout"),
             )
         )
         _write_ledger(ledger_path, ledger)

@@ -156,11 +156,11 @@ pretraining stage and a paired improve/expand stage:
    transports. Fixed cards retain an executable `protocol_spec`; dynamic cards
    are tagged `reference-only`, so they can inform generation but can never be
    selected as a static topology.
-2. Every `(case, seed)` then runs two paid branches. `reuse` pins one parent
-   Skill and dispatches through that Skill's own planner mode. `innovation`
-   retains the parent's lessons/reasoning but removes `protocol_spec` or Python
-   source, forcing a fresh candidate. Generic `evolve_explore` is skipped while
-   this paired branch is active, avoiding a duplicate novelty run.
+2. Every `(case, seed)` runs a pinned `reuse` branch plus an `innovation`
+   branch. Python innovation can additionally run a local `mutate` branch, so
+   `mutate_and_fresh` has at most three paid runs: reuse, mutate, and fresh
+   innovation. Generic `evolve_explore` is skipped while this paired branch is
+   active, avoiding a duplicate novelty run.
 3. Pretraining is paid once. Later rounds detect persisted `hot-start` tags and
    reuse the seed bank, while still rerunning both per-task branches. A gate
    rejection rolls back to the warm bank, not to an empty bank.
@@ -243,6 +243,90 @@ tokens/messages, innovation candidate ids, and deployed innovation ids. The same
 flags are available in `scripts/verify_beats_baselines.py`; its budget guard
 includes the extra runs and its snapshots preserve the warm seed.
 
+## Self-evolution v2 policies
+
+The v2 behavior is opt-in. Historical commands retain `legacy_drop` and
+`legacy_non_regression`, so existing preregistered results are not reinterpreted.
+
+### Honest failure policy
+
+`--failure-policy honest_v2` uses one typed classification in train, explore,
+hot-start, gate, and the frozen baseline verifier:
+
+- `algorithm_failure`: invalid generation/parse/action, coverage, budget, or
+  submit-contract failure. The run remains in evidence with V/S/P zero and
+  already incurred C/D/call/token cost.
+- `infrastructure_failure`: provider timeout, connection timeout, or explicit
+  transient network exception. Only this class may symmetrically drop a whole
+  paired validation/evaluation unit.
+- `harness_error`: assertion, configuration, schema/plumbing, or unknown
+  exception. It aborts immediately rather than becoming experimental data.
+
+Persisted `FailureRecord` objects contain run identity, mode/goal/worker
+contract, parent/program identity, stage/type, missing Agent/source ids,
+per-Agent partial values, structural signature, and artifact reference. They
+forbid extra fields, so answers, ground truth, and expected outputs cannot be
+stored. Stable clusters are scoped by mode + goal + worker contract + stage +
+type + structural signature, deduplicated, written to the round summary, and
+merged into matching Skill failure/counterexample fields. Under `honest_v2`,
+GraphGen and PhaseProgram receive a bounded, answer-free
+`negative_failure_context` separated from positive Skill evidence; Python hot
+innovation receives the same separation through its sanitized parent context.
+
+The frozen verifier report separately records
+`algorithm_failures_by_arm`, `infrastructure_failures_by_arm`,
+`harness_errors`, `dropped_infrastructure_pairs`, and
+`zero_scored_algorithm_runs`.
+
+### Strict dense ratchet
+
+`--evolution-gate-policy strict_dense_v2` evaluates incumbent and candidate on
+the exact same validation `(case, seed)` keys and persists each paired
+V/K/U/P/S/stage-score/C/D sample. A candidate is accepted only when algorithm
+failure rate, mean V, minimum K, mean U, and tolerated P do not regress; S or
+mean dense stage score improves; and the paired stage-score bootstrap interval
+does not show regression. Equal quality can pass only when at least one of C/D
+falls and neither rises. Equal quality/equal cost reports
+`accepted=false`, `accepted_no_change=false`, `reason=no_change`.
+
+Infrastructure pairs are dropped symmetrically. Harness errors abort. A
+rejected round exports the byte-equivalent `before` bank while retaining the
+full `candidate` snapshot and failure audit. The strict controls are
+`--strict-gate-min-dense-delta`, `--strict-gate-partial-tolerance`,
+`--strict-gate-bootstrap-samples`, and `--strict-gate-bootstrap-seed`.
+
+### Conservative insight association
+
+Reuse, mutate, and fresh rows from the same pair update
+`exposures/wins/losses/ties/mean_delta_stage_score` for the insight ids actually
+associated with that branch. Fresh records exposure only; mutation records use
+only ids explicitly returned by the accepted patch. These are labelled
+`paired_association_not_causal`. Counts accumulate across rounds. After at
+least three exposures, an insight with more losses than wins leaves positive
+`design_insights` and becomes a `negative_constraint` risk note.
+
+```bash
+uv run python scripts/verify_beats_baselines.py \
+  --benchmarks-dir third_party/acl26-silo-bench/benchmarks \
+  --levels II III --n-agents 5 --rounds 5 \
+  --train-seeds 1 2 --val-seeds 3 --eval-seeds 11 12 \
+  --silo-eval-mode all_agents --evolved-mode python_generate \
+  --hot-start --hot-start-protocols auto --hot-start-topologies auto \
+  --hot-start-innovation-mode python_generate \
+  --python-innovation-strategy mutate_and_fresh \
+  --failure-policy honest_v2 --evolution-gate-policy strict_dense_v2 \
+  --llm fake --model-name fake --out runs/v2_offline_smoke
+```
+
+This command is a wiring check only. A scientific comparison requires a real
+model, disjoint II/III train/validation/test cases and seeds, and a preregistered
+budget. The repository test/smoke path never calls a paid LLM.
+
+For an explicit three-way scientific split, pass `--train-cases`, `--val-cases`,
+and `--test-cases`. The verifier forwards the validation set separately so
+`run_evolution` does not carve cases out of TRAIN internally. Omitting
+`--val-cases` preserves the legacy automatic train/validation split.
+
 **Contamination boundary:** hot start deliberately supplies fixed/paper
 structural knowledge, so it is not clean GraphGen. The verifier writes
 `clean_run=false`; generated records write `clean_graphgen=false` (or
@@ -305,8 +389,13 @@ froze a run for 90 min on one stalled socket):
 | flag | default | what it does |
 | --- | --- | --- |
 | `--workers N` | `1` | Run independent grid units `(arm, case, n, seed[, topology])` concurrently via a `ThreadPoolExecutor`. LLM calls are I/O-bound (they release the GIL), so wall-clock drops ~linearly. `N=1` is the unchanged sequential path. |
+| `--max-parallel-agents N` | `5` | Run independent Agent calls from the same logical round concurrently. Every round still reads one frozen prior-round snapshot and waits for the entire batch before advancing. ProtocolRunner, all three SILO paper transports, and Python `message_only_v2` preserve deterministic Agent-order commits and record the actual batch width. |
 | `--request-timeout S` | `90.0` | Hard per-request wall-clock guard (`masbench.llm.timeout.TimeoutLLMClient`, a daemon-thread `join(timeout)` that abandons a hung call). A stalled call raises `LLMTimeoutError`, recorded as a failed run, and the grid continues. Also applies to `run`/`run-suite`/`evolve`. |
-| `--resume` | off | `bench` appends every finished run to `runs/<out>/runs.jsonl` immediately. Re-running the SAME command with `--resume` loads that log, skips completed run-keys, and finishes the rest — so a crash/Ctrl-C loses nothing. |
+| `--llm-timeout-attempts N` | `2` | Bounded attempts for a request that reaches the wall-clock timeout. Each attempt has its own `--request-timeout`; raise this only for a deliberately patient science run. |
+| `--require-complete-runs` | off | Abort at the last completed verifier checkpoint instead of dropping an infrastructure-failed TRAIN/gate/TEST unit. This prevents a reduced sample from being presented as the requested experiment. |
+| `--python-execution-timeout S` | auto | Whole-child guard for PythonGenerate. Auto derives a budget from rounds, Agent waves, and `--request-timeout`; it is no longer the invalid 30-second fixed default. |
+| `--resume` | off | `bench` appends every finished run to `runs/<out>/runs.jsonl` immediately. The paired verifier atomically writes `run_checkpoint.json` after every fully deployed evolution round and reloads the last deployed SkillBank/motif state. Re-running the SAME command with `--resume` skips completed training rounds; its frozen selection and TEST stages are deliberately recomputed. |
+| `--require-all-submissions` | off | In `all_agents` verifier runs, require one non-null answer from every Agent. Python `message_only_v2` uses its synchronized runtime barrier; paper protocols recover only missing submitters after their normal rounds; fixed topologies explicitly query every Agent. `--final-submission-retries` permits format-only retries and never invents an answer. |
 
 Semantics under concurrency (correctness preserved):
 - **Per-run isolation:** every unit is wrapped; any exception (incl. a timeout)
@@ -322,9 +411,23 @@ Semantics under concurrency (correctness preserved):
   (never two evolutions at once).
 - **Determinism:** aggregates are order-independent, so `--workers 1` and
   `--workers 8` produce identical per-condition/overall means.
+- **Provider concurrency:** the approximate upper bound is `workers *
+  max_parallel_agents`. Keep that product within the provider's rate-limit and
+  connection budget; for n=5, `--workers 2 --max-parallel-agents 5` is a safer
+  starting point than launching forty simultaneous requests.
 
-Recommended real-LLM invocation: add `--workers 8 --request-timeout 90` to the
-paper command; if it dies, re-run the identical command with `--resume`.
+Recommended real-LLM invocation: start with `--workers 2
+--max-parallel-agents 5 --request-timeout 120`; increase outer workers only
+after observing provider headroom. If it dies, re-run the identical command
+with `--resume`.
+
+For a long paired verifier run, keep the `--out` directory and every scientific
+argument unchanged when resuming. `checkpoint_config.json` is the immutable
+argument fingerprint, `run_checkpoint.json` names the last complete deployed
+round, and `skill_banks/round_NN/{before,candidate,deployed}` preserves each
+decision. A mismatched resume fails before any paid call. The checkpoint is not
+permission to accept partial Agent output: with `--require-all-submissions`, a
+missing or null answer is an explicit failed run.
 
 ## What is wired vs. activation-pending
 

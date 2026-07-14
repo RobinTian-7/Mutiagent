@@ -108,3 +108,69 @@ arithmetic (which topology the planner selects before vs. after the batch, and
 whether `J_val` improves) is computed by the real gate. With a real LLM the
 held-out Silo runs differ by topology, so `--no-synthetic-held-out` scores the gate
 purely on real evidence.
+
+## Self-evolution v2 additions
+
+The original Plan-3 path above remains the compatibility default. The following
+mechanisms are activated only by their v2 switches.
+
+### Seed and artifact identity
+
+`evolve._run_one` binds its explicit seed into an immutable per-run config before
+generation, execution, cache-key construction, and audit output. GraphGen,
+PhaseProgram, and PythonGen artifact leaves all include case, Agent count, seed,
+information goal, PID, and a nanosecond timestamp. The frozen verifier roots all
+three artifact families under its `--out` directory.
+
+### Typed failure feedback
+
+`--failure-policy honest_v2` distinguishes algorithm, infrastructure, and
+harness failures. Algorithm failures remain as zero-scored dense evidence with
+incurred cost; infrastructure failures alone permit symmetric pair removal;
+harness/unknown errors abort. Strict answer-free Pydantic records are clustered
+by mode/goal/worker/stage/type/structure and merged only into compatible Skills.
+The next architect sees a bounded negative section separate from positive
+evidence. `legacy_drop` remains the default.
+
+### Python parent innovation
+
+`--python-innovation-strategy fresh|mutate|mutate_and_fresh` controls the
+hot-start Python branches. Local mutation uses `python_mutation_patch_v1` and can
+replace exactly one pre-existing `EVOLVE-BLOCK`; parent hash, marker whitelist,
+non-selected blocks, exposed insight ids, AST policy, dry run, sandbox, real
+execution, stdout, and usage are all host-verified. Complete resulting source
+and mutation provenance remain in the independent `python_skill_v1` payload.
+
+### Dense ratchet and insight association
+
+`--evolution-gate-policy strict_dense_v2` stores paired validation samples and
+requires non-regression in algorithm failure rate, V, K, U, tolerated P, and
+the paired stage-score interval. S or dense stage score must improve; only an
+equal-quality C/D reduction can otherwise pass. Rejection deploys the exact
+before snapshot while retaining the candidate audit. Paired branch/insight
+statistics are explicitly association, not causal credit, accumulate over
+rounds, and move repeatedly losing insights into negative constraints after
+three exposures. `legacy_non_regression` remains the default.
+
+### Strict final submissions and resumable verifier
+
+The paired verifier has an opt-in `--require-all-submissions` contract for
+`all_agents` experiments. Python `message_only_v2` retains its synchronized
+runtime barrier. Paper transports keep their native communication semantics and
+invoke a bounded barrier only for missing submitters; fixed topology arms query
+all Agents explicitly from their final beliefs. Whole-response JSON parsing is
+strict, null/empty answers fail, retries correct format only, and the host never
+uses expected output to repair or synthesize an answer.
+
+Long verifier runs atomically persist `run_checkpoint.json` after each deployed
+evolution round, alongside the complete before/candidate/deployed SkillBank
+snapshots. `--resume` requires an exact configuration match and reloads the last
+deployed bank plus motif state. It skips only completed training rounds; frozen
+selection and TEST evaluation rerun so a partial final table is never presented
+as a complete experiment.
+
+For patient real-provider runs, `--llm-timeout-attempts` raises the bounded retry
+count while every attempt remains protected by `--request-timeout`.
+`--require-complete-runs` converts any exhausted infrastructure failure into an
+abort at the last complete checkpoint; it forbids the normal honest-v2 behavior
+of symmetrically dropping that sample.

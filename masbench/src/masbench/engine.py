@@ -8,8 +8,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +34,10 @@ from exp_graph.mas.python_code_generation import (
     PythonGenerationError,
     plan_and_execute_python,
 )
-from exp_graph.mas.python_code import python_source_sha256
+from exp_graph.mas.python_code import (
+    MESSAGE_ONLY_V2_SUBMIT_INSTRUCTION,
+    python_source_sha256,
+)
 from exp_graph.mas.schemas import (
     MASRuntimeConfig,
     ObjectiveSpec,
@@ -57,6 +62,10 @@ from masbench.adapters.silo_scoring import silo_partial_score
 from masbench.core.config import RunConfig
 from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
+from masbench.final_submissions import (
+    FinalSubmissionBatch,
+    run_final_submission_barrier,
+)
 from masbench.llm.retry import RetryLLMClient
 from masbench.core.task_bridge import (
     BenchmarkTaskAdapter,
@@ -123,6 +132,7 @@ def _build_llm_client(cfg: RunConfig) -> LLMClient:
     # eval runs on one APIConnectionError). attempts=5/base 5s linear backoff
     # rides out ~75s outages (phase-3 dev-5: a multi-blip burst beat the old
     # 3x2s budget and crashed the refine run through the frozen eval pool).
+    timeout_attempts = max(1, int(getattr(cfg, "llm_timeout_attempts", 2)))
     return RetryLLMClient(
         create_llm_client(
             cfg.llm_provider,
@@ -131,7 +141,8 @@ def _build_llm_client(cfg: RunConfig) -> LLMClient:
             thinking_enabled=cfg.thinking_enabled,
             timeout_s=cfg.request_timeout,
         ),
-        attempts=5,
+        attempts=max(5, timeout_attempts),
+        timeout_attempts=timeout_attempts,
         base_delay=5.0,
     )
 
@@ -333,6 +344,10 @@ def _score_all_agents_mode(
     task_adapter: Any,
     global_task: dict,
     extra: dict,
+    answer_overrides: list[Any] | None = None,
+    submitted_rounds: list[int | None] | None = None,
+    additional_completion_tokens: int = 0,
+    additional_rounds: int = 0,
 ) -> tuple[bool, float, dict]:
     n_agents = int(instance.n_agents)
     expected_outputs = private_expected_outputs(global_task) or (
@@ -340,14 +355,21 @@ def _score_all_agents_mode(
     )
     if len(expected_outputs) != n_agents:
         expected_outputs = [instance.ground_truth for _ in range(n_agents)]
-    answers = [
-        _agent_answer(result, task_adapter, agent_id)
-        for agent_id in range(n_agents)
-    ]
+    answers = (
+        list(answer_overrides)
+        if answer_overrides is not None
+        else [
+            _agent_answer(result, task_adapter, agent_id)
+            for agent_id in range(n_agents)
+        ]
+    )
+    if len(answers) != n_agents:
+        raise ValueError("all-agent answer overrides must match n_agents")
     paper = evaluate_paper_submissions(
         case_id=instance.case_id,
         answers=answers,
         expected_outputs=list(expected_outputs),
+        submitted_rounds=submitted_rounds,
     )
     per_agent_correct = list(paper["per_agent_correct"])
     agent_success_rate = float(paper["paper_S"])
@@ -363,8 +385,10 @@ def _score_all_agents_mode(
     rounds_executed = int(getattr(result, "total_steps", 0) or 0) + init_rounds
     if rounds_executed <= 0 and int(getattr(result, "total_model_calls", 0) or 0) > 0:
         rounds_executed = 1
+    rounds_executed += max(0, int(additional_rounds))
     paper_c = paper_token_consumption(
-        int(getattr(result, "total_completion_tokens", 0) or 0),
+        int(getattr(result, "total_completion_tokens", 0) or 0)
+        + max(0, int(additional_completion_tokens)),
         rounds_executed,
     )
     extra.update(
@@ -374,6 +398,7 @@ def _score_all_agents_mode(
             "per_agent_answers": paper["per_agent_answers"],
             "per_agent_partial": paper["per_agent_partial"],
             "per_agent_submissions": paper["per_agent_submissions"],
+            "all_submitted": all(answer is not None for answer in answers),
             "agent_success_rate": agent_success_rate,
             "all_agents_exact": bool(all_agents_exact),
             "paper_S": agent_success_rate,
@@ -409,6 +434,9 @@ def _score_protocol_result(
     *,
     extra: dict,
     information_goal: str = "sink",
+    answer_overrides: list[Any] | None = None,
+    submitted_rounds: list[int | None] | None = None,
+    final_submission_batch: FinalSubmissionBatch | None = None,
 ) -> ScoreResult:
     """Turn a ``ProtocolRunner`` result into a graded :class:`ScoreResult`.
 
@@ -421,8 +449,22 @@ def _score_protocol_result(
     final = result.final_result
     extra = {**extra, "aggregation_method": final.aggregation_method}
     if information_goal == "all_agents":
+        if final_submission_batch is not None:
+            extra["runtime_final_submission"] = final_submission_batch.audit_dict()
         success, partial, extra = _score_all_agents_mode(
-            result, instance, task_adapter, global_task, extra
+            result,
+            instance,
+            task_adapter,
+            global_task,
+            extra,
+            answer_overrides=answer_overrides,
+            submitted_rounds=submitted_rounds,
+            additional_completion_tokens=(
+                final_submission_batch.completion_tokens
+                if final_submission_batch is not None
+                else 0
+            ),
+            additional_rounds=1 if final_submission_batch is not None else 0,
         )
     else:
         success, partial, extra = _score_sink_mode(
@@ -432,10 +474,60 @@ def _score_protocol_result(
         success=success,
         partial=partial,
         n_messages=int(result.total_messages),
-        n_model_calls=int(result.total_model_calls),
-        tokens=int(result.total_prompt_tokens) + int(result.total_completion_tokens),
+        n_model_calls=int(result.total_model_calls)
+        + (
+            final_submission_batch.model_calls
+            if final_submission_batch is not None
+            else 0
+        ),
+        tokens=int(result.total_prompt_tokens)
+        + int(result.total_completion_tokens)
+        + (
+            final_submission_batch.prompt_tokens
+            + final_submission_batch.completion_tokens
+            if final_submission_batch is not None
+            else 0
+        ),
         final_answer=final.final_key,
         extra=extra,
+    )
+
+
+def _run_protocol_final_submission_barrier(
+    *,
+    result: Any,
+    task_adapter: SiloProtocolAdapter,
+    global_task: dict[str, Any],
+    cfg: RunConfig,
+    llm_client: LLMClient,
+) -> FinalSubmissionBatch:
+    """Turn every final protocol belief into an explicit, audited answer."""
+
+    prompts: dict[int, str] = {}
+    for agent_id, state in enumerate(result.final_agent_states):
+        submit_context = task_adapter.format_python_submit_prompt(
+            global_task=global_task,
+            local_observation=state.local_observation,
+        )
+        belief_json = json.dumps(
+            state.belief_state.model_dump(mode="json"),
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        prompts[agent_id] = (
+            submit_context
+            + "\n\nFINAL_PROTOCOL_BELIEF_JSON:\n"
+            + belief_json
+            + "\n\n"
+            + MESSAGE_ONLY_V2_SUBMIT_INSTRUCTION
+        )
+    return run_final_submission_barrier(
+        prompts=prompts,
+        llm_client=llm_client,
+        model_name=cfg.model_name,
+        temperature=cfg.temperature,
+        max_parallel_agents=cfg.max_parallel_agents,
+        retries=cfg.final_submission_retries,
     )
 
 
@@ -493,6 +585,7 @@ def run_fixed_protocol(
         llm_provider=cfg.llm_provider,
         model_name=cfg.model_name,
         temperature=cfg.temperature,
+        max_parallel_agents=max(1, int(cfg.max_parallel_agents)),
     )
     result = ProtocolRunner(
         config=config,
@@ -500,6 +593,25 @@ def run_fixed_protocol(
         global_task=global_task,
         llm_client=client,
     ).run()
+    final_submission_batch: FinalSubmissionBatch | None = None
+    answer_overrides: list[Any] | None = None
+    submitted_rounds: list[int | None] | None = None
+    if goal == "all_agents" and cfg.require_all_submissions:
+        final_submission_batch = _run_protocol_final_submission_barrier(
+            result=result,
+            task_adapter=task_adapter,
+            global_task=global_task,
+            cfg=cfg,
+            llm_client=client,
+        )
+        answer_overrides = [
+            final_submission_batch.answers[agent_id]
+            for agent_id in range(n_agents)
+        ]
+        final_round = int(result.total_steps) + (
+            1 if cfg.init_mode == "llm_local_solve" else 0
+        )
+        submitted_rounds = [final_round for _ in range(n_agents)]
     extra = {
         "case_id": instance.case_id,
         "planner": False,
@@ -515,7 +627,15 @@ def run_fixed_protocol(
         "silo_eval_mode": goal,
     }
     return _score_protocol_result(
-        result, instance, task_adapter, global_task, extra=extra, information_goal=goal
+        result,
+        instance,
+        task_adapter,
+        global_task,
+        extra=extra,
+        information_goal=goal,
+        answer_overrides=answer_overrides,
+        submitted_rounds=submitted_rounds,
+        final_submission_batch=final_submission_batch,
     )
 
 
@@ -653,6 +773,7 @@ def _run_planner(
         "llm_provider": cfg.llm_provider,
         "model_name": cfg.model_name,
         "temperature": cfg.temperature,
+        "max_parallel_agents": max(1, int(cfg.max_parallel_agents)),
     }
     config_kwargs.update(plan.config_overrides)
     config = ProtocolRunnerConfig(**config_kwargs)
@@ -744,7 +865,7 @@ def _graph_artifacts_dir(cfg: RunConfig, instance: BenchmarkInstance | None) -> 
     )
     case = instance.case_id if instance is not None else "unknown_case"
     goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
-    stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{os.getpid()}"
+    stamp = f"{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}_{time.time_ns()}"
     leaf = f"{case}_n{cfg.n_agents or (instance.n_agents if instance else 0)}_seed{cfg.seed}_{goal}_{stamp}"
     path = Path(base) / leaf
     path.mkdir(parents=True, exist_ok=True)
@@ -763,7 +884,7 @@ def _program_artifacts_dir(
     )
     case = instance.case_id if instance is not None else "unknown_case"
     goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
-    stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{os.getpid()}"
+    stamp = f"{time.strftime('%Y%m%d_%H%M%S')}_{os.getpid()}_{time.time_ns()}"
     leaf = (
         f"{case}_n{cfg.n_agents or (instance.n_agents if instance else 0)}_"
         f"seed{cfg.seed}_{goal}_{stamp}"
@@ -810,6 +931,7 @@ def _plan_graph_generate(
     runtime = MASRuntimeConfig(
         llm_provider=cfg.llm_provider,
         model_name=cfg.model_name,
+        max_parallel_agents=max(1, int(cfg.max_parallel_agents)),
         # 中文：仅生成阶段的温度覆盖：探索用高温提设计(跨轮多样性)，而协议执行仍用
         #   cfg.temperature；None 表示不拆分(部署路径)。
         # Generation-only temperature override: exploration proposes designs HOT
@@ -838,6 +960,9 @@ def _plan_graph_generate(
         # same-run generations; motif prior displaces the deterministic head
         # only with a real predicted-loss margin.
         replay_first=bool(getattr(cfg, "replay_first", False)),
+        failure_feedback_enabled=(
+            getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2"
+        ),
         motif_displacement_margin=float(getattr(cfg, "motif_displacement_margin", 0.0)),
         # 中文：D2——拒绝/修复那些汇点无法从所有 agent 到达的生成 DAG(正是让生成失手的
         #   有损归约失败模式)。
@@ -950,6 +1075,7 @@ def _plan_program_generate(
     runtime = MASRuntimeConfig(
         llm_provider=cfg.llm_provider,
         model_name=cfg.model_name,
+        max_parallel_agents=max(1, int(cfg.max_parallel_agents)),
         temperature=(
             cfg.graph_gen_temperature
             if getattr(cfg, "graph_gen_temperature", None) is not None
@@ -964,6 +1090,9 @@ def _plan_program_generate(
         motif_stats=motif_stats,
         motif_uncertainty_kappa=getattr(cfg, "motif_uncertainty_kappa", 0.0),
         replay_first=bool(getattr(cfg, "replay_first", False)),
+        failure_feedback_enabled=(
+            getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2"
+        ),
         role_llm_profiles=(
             RoleLLMProfiles(
                 emperor=RoleLLMConfig(
@@ -1086,6 +1215,7 @@ def _build_python_execution_payload(
         "selected_primary": 0,
         "n_agents": n_agents,
         "max_rounds": cfg.max_rounds,
+        "max_parallel_agents": max(1, int(cfg.max_parallel_agents)),
         "budgets": {
             "max_model_calls": cfg.python_max_model_calls,
             "max_completion_tokens": cfg.python_max_completion_tokens,
@@ -1097,9 +1227,44 @@ def _build_python_execution_payload(
             "base_url": cfg.base_url,
             "api_key_env": cfg.api_key_env,
             "temperature": cfg.temperature,
+            "request_timeout": (
+                float(cfg.request_timeout) if cfg.request_timeout > 0 else None
+            ),
         },
         "agents": agents,
     }
+
+
+def _resolved_python_execution_timeout(cfg: RunConfig, *, n_agents: int) -> float:
+    """Return a whole-program wall budget that cannot undercut normal LLM waves.
+
+    A generated program is synchronous between logical rounds, but Agent calls
+    inside one round may overlap. The automatic budget therefore counts the
+    maximum number of parallel waves per round and gives each wave one complete
+    per-request allowance plus a small process/setup margin.
+    """
+    configured = cfg.python_execution_timeout
+    if configured is not None:
+        if float(configured) <= 0:
+            raise ValueError("python_execution_timeout must be positive")
+        return float(configured)
+    # message_only_v2's immutable scaffold guarantees complete_batch. Older
+    # worker contracts still permit scalar complete calls, so their automatic
+    # timeout must conservatively budget a sequential Agent wave.
+    parallel_agents = 1
+    if getattr(cfg, "python_worker_contract", "action_json_v1") == "message_only_v2":
+        parallel_agents = min(
+            max(1, int(cfg.max_parallel_agents)),
+            max(1, int(n_agents)),
+        )
+    waves_per_round = ceil(max(1, int(n_agents)) / parallel_agents)
+    per_request = (
+        float(cfg.request_timeout) if float(cfg.request_timeout) > 0 else 120.0
+    )
+    return max(
+        120.0,
+        float(max(1, int(cfg.max_rounds)) * waves_per_round) * per_request + 30.0,
+    )
 
 
 def _plan_python_generate(
@@ -1113,6 +1278,10 @@ def _plan_python_generate(
     skill_bank: SkillBank | None = None,
 ) -> tuple[PythonCodePlanningResult, dict[str, Any]]:
     goal = getattr(cfg, "silo_eval_mode", "sink") or "sink"
+    innovation_branch = getattr(cfg, "python_innovation_branch", None)
+    parent_skill_id = getattr(cfg, "python_parent_skill_id", None)
+    context_exposed = bool(innovation_branch and parent_skill_id)
+    clean_pythongen = bool(getattr(cfg, "clean_pythongen", True)) and not context_exposed
     runtime = MASRuntimeConfig(
         llm_provider=cfg.llm_provider,
         model_name=cfg.model_name,
@@ -1122,8 +1291,12 @@ def _plan_python_generate(
             else cfg.temperature
         ),
         replay_first=bool(getattr(cfg, "replay_first", False)),
+        max_parallel_agents=max(1, int(cfg.max_parallel_agents)),
         python_repair_attempts=cfg.python_repair_attempts,
-        python_execution_timeout=cfg.python_execution_timeout,
+        python_execution_timeout=_resolved_python_execution_timeout(
+            cfg,
+            n_agents=n_agents,
+        ),
         python_cpu_seconds=cfg.python_cpu_seconds,
         python_memory_mb=cfg.python_memory_mb,
         python_max_output_bytes=cfg.python_max_output_bytes,
@@ -1137,6 +1310,15 @@ def _plan_python_generate(
         python_max_model_calls=cfg.python_max_model_calls,
         python_max_completion_tokens=cfg.python_max_completion_tokens,
         python_max_messages=cfg.python_max_messages,
+        python_innovation_branch=innovation_branch,
+        python_parent_skill_id=parent_skill_id,
+        python_architect_context_enabled=context_exposed,
+        python_exposed_insight_ids=list(
+            getattr(cfg, "python_exposed_insight_ids", ()) or ()
+        ),
+        failure_feedback_enabled=(
+            getattr(cfg, "failure_policy", "legacy_drop") == "honest_v2"
+        ),
         role_llm_profiles=(
             RoleLLMProfiles(
                 emperor=RoleLLMConfig(
@@ -1149,6 +1331,11 @@ def _plan_python_generate(
         ),
         information_goal=goal,
         leakage_audit=True,
+        leakage_allowed_tokens=(
+            ["one_peer", "distance-doubling", "pow2", "exponential"]
+            if context_exposed
+            else []
+        ),
     )
     request = PlannerRequest(
         task_family=("silo" if instance.benchmark == "silo_bench" else instance.benchmark),
@@ -1160,7 +1347,7 @@ def _plan_python_generate(
         information_goal=goal,
         provenance_allowlist=(
             list(CLEAN_PYTHON_PROVENANCE)
-            if bool(getattr(cfg, "clean_pythongen", True))
+            if clean_pythongen
             else None
         ),
         python_worker_contract=getattr(
@@ -1191,11 +1378,29 @@ def _plan_python_generate(
         "worker_contract": getattr(
             cfg, "python_worker_contract", "action_json_v1"
         ),
+        "max_parallel_agents": max(1, int(cfg.max_parallel_agents)),
+        "python_execution_timeout": _resolved_python_execution_timeout(
+            cfg,
+            n_agents=n_agents,
+        ),
         "provenance": result.provenance,
         "planner_model_calls": result.planner_model_calls,
         "repair_model_calls": result.repair_model_calls,
         "selected_skill_id": result.selected_skill_id,
-        "clean_pythongen": bool(getattr(cfg, "clean_pythongen", True)),
+        "clean_pythongen": clean_pythongen,
+        "python_innovation_strategy": (
+            result.innovation_metadata.get("strategy")
+        ),
+        "python_parent_skill_id": result.innovation_metadata.get(
+            "parent_skill_id"
+        ),
+        "python_exposed_insight_ids": result.innovation_metadata.get(
+            "exposed_insight_ids", []
+        ),
+        "python_used_insight_ids": result.innovation_metadata.get(
+            "used_insight_ids", []
+        ),
+        "python_mutation_provenance": result.innovation_metadata,
     }
 
 
@@ -1441,6 +1646,7 @@ def run_instance(
         temperature=cfg.temperature,
         consensus_threshold=cfg.consensus_threshold,
         final_accept_threshold=cfg.final_accept_threshold,
+        max_parallel_agents=max(1, int(cfg.max_parallel_agents)),
         trace_enabled=False,
     )
     client = llm_client or _build_llm_client(cfg)

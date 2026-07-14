@@ -934,6 +934,37 @@ def _build_mode_payload(
             runtime_trace_summary=(
                 dict(runtime_summary) if isinstance(runtime_summary, dict) else {}
             ),
+            innovation_strategy=(
+                str(python_policy["innovation_strategy"])
+                if python_policy.get("innovation_strategy")
+                else None
+            ),
+            parent_skill_id=(
+                str(python_policy["parent_skill_id"])
+                if python_policy.get("parent_skill_id")
+                else None
+            ),
+            exposed_insight_ids=list(
+                python_policy.get("exposed_insight_ids", []) or []
+            ),
+            used_insight_ids=list(
+                python_policy.get("used_insight_ids", []) or []
+            ),
+            parent_program_sha256=(
+                str(python_policy["parent_program_sha256"])
+                if python_policy.get("parent_program_sha256")
+                else None
+            ),
+            mutation_diff_sha256=(
+                str(python_policy["mutation_diff_sha256"])
+                if python_policy.get("mutation_diff_sha256")
+                else None
+            ),
+            mutation_provenance=(
+                dict(python_policy.get("mutation_provenance", {}))
+                if isinstance(python_policy.get("mutation_provenance"), dict)
+                else {}
+            ),
         )
     if not isinstance(protocol_spec, dict):
         return None
@@ -1017,7 +1048,7 @@ def _best_python_policy(
     evidence: list[dict[str, Any]],
 ) -> dict[str, object] | None:
     """Select the lowest-loss validated Python program and its audit contract."""
-    candidates: list[tuple[float, dict[str, object]]] = []
+    candidates: list[tuple[float, int, dict[str, object]]] = []
     for row in evidence:
         source = row.get("python_source")
         if source is None and isinstance(row.get("metrics"), dict):
@@ -1041,7 +1072,33 @@ def _best_python_policy(
             "observed_runtime_trace_summary": row.get("runtime_trace_summary")
             if isinstance(row.get("runtime_trace_summary"), dict)
             else {},
+            "innovation_strategy": row.get("python_innovation_strategy"),
+            "parent_skill_id": row.get("python_parent_skill_id"),
+            "exposed_insight_ids": list(
+                row.get("python_exposed_insight_ids", []) or []
+            ),
+            "used_insight_ids": list(
+                row.get("python_used_insight_ids", []) or []
+            ),
+            "mutation_provenance": (
+                dict(row.get("python_mutation_provenance", {}))
+                if isinstance(row.get("python_mutation_provenance"), dict)
+                else {}
+            ),
         }
+        mutation = policy["mutation_provenance"]
+        if isinstance(mutation, dict):
+            if mutation.get("parent_program_sha256"):
+                policy["parent_program_sha256"] = str(
+                    mutation["parent_program_sha256"]
+                )
+            patches = mutation.get("patches")
+            if isinstance(patches, list) and patches:
+                final_patch = patches[-1]
+                if isinstance(final_patch, dict) and final_patch.get("diff_sha256"):
+                    policy["mutation_diff_sha256"] = str(
+                        final_patch["diff_sha256"]
+                    )
         artifact = row.get("python_artifacts_dir")
         if artifact:
             policy["artifact_reference"] = str(artifact)
@@ -1051,11 +1108,21 @@ def _best_python_policy(
             "mean_rmse",
             "final_rmse",
         )
-        candidates.append((loss if loss is not None else float("inf"), policy))
+        strategy = str(policy.get("innovation_strategy") or "")
+        innovation_priority = (
+            0 if strategy == "mutate" else 1 if strategy == "fresh" else 2
+        )
+        candidates.append(
+            (
+                loss if loss is not None else float("inf"),
+                innovation_priority,
+                policy,
+            )
+        )
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2]
 
 
 def _python_reasoning_policy(

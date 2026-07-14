@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,7 @@ def _payload(
     max_model_calls: int = 20,
     max_completion_tokens: int = 4000,
     max_messages: int = 30,
+    max_parallel_agents: int = 1,
 ) -> dict:
     return {
         "execution_contract_version": "python_mas_v1",
@@ -55,6 +57,7 @@ def _payload(
         "selected_primary": 0,
         "n_agents": n_agents,
         "max_rounds": max_rounds,
+        "max_parallel_agents": max_parallel_agents,
         "budgets": {
             "max_model_calls": max_model_calls,
             "max_completion_tokens": max_completion_tokens,
@@ -131,6 +134,7 @@ def _auth(
     max_model_calls: int = 8,
     max_completion_tokens: int = 100,
     goal: str = "all_agents",
+    max_parallel_agents: int = 1,
 ) -> dict:
     return {
         "worker_llm": {
@@ -152,6 +156,7 @@ def _auth(
         "information_goal": goal,
         "selected_primary": 0,
         "max_rounds": max_rounds,
+        "max_parallel_agents": max_parallel_agents,
         "agent_communication_prompts": {
             str(agent_id): f"communication prompt {agent_id}"
             for agent_id in range(n_agents)
@@ -238,6 +243,18 @@ def test_v2_scaffold_is_separate_valid_and_has_two_editable_policies() -> None:
         assert scaffold.count(f"EVOLVE-BLOCK-START: {policy}") == 1
         assert scaffold.count(f"EVOLVE-BLOCK-END: {policy}") == 1
     assert "EVOLVE-BLOCK-START" not in scaffold.split("def main():", 1)[1]
+
+
+def test_v2_rejects_legacy_scalar_worker_calls() -> None:
+    scalar = DEFAULT_MESSAGE_ONLY_V2_PROGRAM.replace(
+        "client.complete_batch(",
+        "client.complete(",
+    )
+    report = validate_python_source(scalar, worker_contract="message_only_v2")
+    assert not report.valid
+    assert any(
+        "requires complete_batch" in error["message"] for error in report.errors
+    )
 
 
 def test_v2_payload_requires_split_prompts_and_rejects_legacy_local_prompt() -> None:
@@ -336,6 +353,70 @@ def test_two_agents_communicate_then_submit_together_from_final_delivery() -> No
         "worker_contract": "message_only_v2",
     }
     assert len(result.ledger["submit_barrier"]["final_snapshot_sha256"]) == 64
+
+
+class _BarrierWorker:
+    """Fail if two provider calls from one batch do not overlap."""
+
+    def __init__(self) -> None:
+        self.barrier = threading.Barrier(2)
+
+    def complete(self, prompt, model_name, temperature=None, json_mode=True):
+        del model_name, temperature
+        assert json_mode is False
+        agent_id = int(prompt.split("PYTHON_AGENT_ID:", 1)[1].splitlines()[0])
+        self.barrier.wait(timeout=2.0)
+        return LLMResponse(
+            text=json.dumps(f"answer-{agent_id}"),
+            usage=LLMUsage(prompt_tokens=2, completion_tokens=1),
+        )
+
+
+def test_complete_batch_overlaps_same_round_calls_and_commits_in_agent_order(
+    tmp_path: Path,
+) -> None:
+    client, ledger = _metered_client(
+        tmp_path,
+        _BarrierWorker(),  # type: ignore[arg-type]
+        _auth(n_agents=2, max_parallel_agents=2),
+    )
+
+    responses = client.complete_batch(
+        [_submit_prompt(agent_id=0), _submit_prompt(agent_id=1)],
+        model_name="fake",
+        temperature=0.0,
+        json_mode=False,
+    )
+
+    assert [json.loads(response.text) for response in responses] == [
+        "answer-0",
+        "answer-1",
+    ]
+    assert [call["agent_id"] for call in ledger["calls"]] == [0, 1]
+    assert ledger["submit_barrier"]["synchronized"] is True
+    assert ledger["parallelism"] == {
+        "max_parallel_agents": 2,
+        "batch_calls": 1,
+        "max_batch_size": 2,
+        "max_workers_used": 2,
+    }
+
+
+def test_default_v2_program_uses_host_bounded_parallel_batches() -> None:
+    result = CodeProcessRunner().run(
+        DEFAULT_MESSAGE_ONLY_V2_PROGRAM,
+        _payload(
+            n_agents=2,
+            max_rounds=2,
+            max_model_calls=4,
+            max_parallel_agents=2,
+        ),
+    )
+
+    assert result.runtime_success, result.failure
+    assert result.ledger["parallelism"]["batch_calls"] == 2
+    assert result.ledger["parallelism"]["max_batch_size"] == 2
+    assert result.ledger["parallelism"]["max_workers_used"] == 2
 
 
 def test_planner_may_choose_one_global_earlier_barrier() -> None:

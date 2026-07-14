@@ -112,6 +112,46 @@ def test_architect_prompt_exposes_stages_but_not_edge_programming() -> None:
     assert '"edges"' not in prompt
 
 
+def test_phase_prompt_can_receive_answer_free_positive_skill_failures() -> None:
+    skill = SkillCard(
+        skill_id="program_parent",
+        task_family="test",
+        trigger={"planner_mode": "program_generate"},
+        failure_modes=[
+            {
+                "cluster_id": "failure_cluster_1",
+                "error_type": "CoverageError",
+                "answer": "SECRET_ANSWER",
+                "phase_program": {"phases": ["SECRET_PROGRAM"]},
+            }
+        ],
+        counterexamples=[{"missing_submitters": [1]}],
+    )
+    payload = json.loads(
+        build_phase_program_prompt(
+            request=PlannerRequest(
+                task_family="test",
+                n_agents=2,
+                planner_mode="program_generate",
+            ),
+            skills=[skill],
+            avoid_skills=[],
+            max_steps=4,
+            max_messages=8,
+            max_receiver_fan_in=2,
+            num_candidates=1,
+            task_brief="Combine private inputs.",
+            include_failure_feedback=True,
+        )
+    )
+
+    assert payload["failure_evidence"][0]["skill_id"] == skill.skill_id
+    encoded = json.dumps(payload["failure_evidence"], sort_keys=True)
+    assert len(encoded) <= 4_000
+    assert "SECRET_ANSWER" not in encoded
+    assert "SECRET_PROGRAM" not in encoded
+
+
 def test_skill_replay_is_namespaced_from_free_graphgen() -> None:
     program = PhaseProgram.model_validate(
         {"phases": [{"kind": "gather", "hub": 0, "pattern": "tree"}]}

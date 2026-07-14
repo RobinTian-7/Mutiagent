@@ -20,11 +20,13 @@ from __future__ import annotations
 import copy
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal
 
 from exp_graph.llm.base import LLMClient
 from exp_graph.llm.parser import extract_json_object
 from exp_graph.mas.information_flow import coverage_by_agent
+from exp_graph.mas.python_code import MESSAGE_ONLY_V2_SUBMIT_INSTRUCTION
 from exp_graph.mas.leakage_audit import (
     FORBIDDEN_PROMPT_TOKENS,
     assert_prompt_clean,
@@ -41,6 +43,11 @@ from masbench.core.instance import BenchmarkInstance
 from masbench.core.scoring import ScoreResult
 from masbench.core.task_bridge import private_expected_outputs
 from masbench.core.task_view import public_task_view
+from masbench.final_submissions import (
+    FinalSubmissionBatch,
+    is_valid_submission_answer,
+    run_final_submission_barrier,
+)
 
 PaperProtocol = Literal["p2p", "broadcast", "sfs"]
 PAPER_PROTOCOL_ARMS: tuple[PaperProtocol, ...] = ("p2p", "broadcast", "sfs")
@@ -141,6 +148,14 @@ def build_paper_protocol_prompt(
         "final_round": round_idx >= max_rounds,
         "prior_tool_results": _redact_untrusted_text(history),
     }
+    final_directive = ""
+    if round_idx >= max_rounds:
+        final_directive = """
+FINAL ROUND REQUIREMENT:
+You MUST call submit_result with your best complete answer in this response.
+Do not wait and do not spend this final round on another transport action. If
+uncertain, submit the best answer supported by the information you received.
+""".strip()
     prompt = f"""You are agent {agent_id} in a SILO-BENCH multi-agent run.
 Analyze the task, use only your private shard and information returned by tools,
 coordinate economically, and make sure every agent can submit its own answer.
@@ -148,6 +163,8 @@ coordinate economically, and make sure every agent can submit its own answer.
 {_COMMON_RULES}
 
 {_TRANSPORT_DOCS[protocol]}
+
+{final_directive}
 
 TASK_FOR_AGENT:
 {adapter.format_task_prompt_context(global_task, local_observation)}
@@ -233,16 +250,24 @@ def run_silo_paper_protocol(
     total_completion_tokens = 0
     total_model_calls = 0
     rounds_executed = 0
+    parallel_batch_calls = 0
+    max_parallel_batch_size = 0
+    max_workers_used = 1
 
     for round_idx in range(1, max_rounds + 1):
         rounds_executed = round_idx
         visible_files = copy.deepcopy(files)
         pending_file_ops: list[tuple[str, str, Any, int, list[int]]] = []
 
-        for agent_id in range(n_agents):
-            if submitted[agent_id]:
-                continue
-            prompt = build_paper_protocol_prompt(
+        # Every prompt in a paper round is built from the same frozen transport
+        # state. Model calls can therefore run concurrently without making a
+        # same-round message, broadcast, or file visible early. Actions are
+        # still committed below in deterministic Agent order.
+        active_agent_ids = [
+            agent_id for agent_id in range(n_agents) if not submitted[agent_id]
+        ]
+        prompts = {
+            agent_id: build_paper_protocol_prompt(
                 protocol=selected,
                 adapter=adapter,
                 global_task=global_task,
@@ -251,11 +276,44 @@ def run_silo_paper_protocol(
                 max_rounds=max_rounds,
                 history=histories[agent_id],
             )
-            response = llm_client.complete(
-                prompt,
-                model_name=cfg.model_name,
-                temperature=cfg.temperature,
+            for agent_id in active_agent_ids
+        }
+        responses: dict[int, Any] = {}
+        workers = min(
+            max(1, int(cfg.max_parallel_agents)),
+            max(1, len(active_agent_ids)),
+        )
+        if active_agent_ids:
+            parallel_batch_calls += 1
+            max_parallel_batch_size = max(
+                max_parallel_batch_size, len(active_agent_ids)
             )
+            max_workers_used = max(max_workers_used, workers)
+        if workers <= 1 or len(active_agent_ids) <= 1:
+            responses = {
+                agent_id: llm_client.complete(
+                    prompts[agent_id],
+                    model_name=cfg.model_name,
+                    temperature=cfg.temperature,
+                )
+                for agent_id in active_agent_ids
+            }
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        llm_client.complete,
+                        prompts[agent_id],
+                        cfg.model_name,
+                        cfg.temperature,
+                    ): agent_id
+                    for agent_id in active_agent_ids
+                }
+                for future in as_completed(futures):
+                    responses[futures[future]] = future.result()
+
+        for agent_id in active_agent_ids:
+            response = responses[agent_id]
             total_prompt_tokens += int(response.usage.prompt_tokens)
             total_completion_tokens += int(response.usage.completion_tokens)
             total_model_calls += int(response.usage.model_calls)
@@ -453,6 +511,53 @@ def run_silo_paper_protocol(
         if all(submitted):
             break
 
+    forced_submission_batch: FinalSubmissionBatch | None = None
+    invalid_submission_ids = [
+        agent_id
+        for agent_id in range(n_agents)
+        if not submitted[agent_id]
+        or not is_valid_submission_answer(answers[agent_id])
+    ]
+    if cfg.require_all_submissions and invalid_submission_ids:
+        missing_ids = [
+            agent_id for agent_id in invalid_submission_ids
+        ]
+        prompts: dict[int, str] = {}
+        for agent_id in missing_ids:
+            submit_context = adapter.format_python_submit_prompt(
+                global_task=global_task,
+                local_observation=observations[agent_id],
+            )
+            history_json = json.dumps(
+                _redact_untrusted_text(histories[agent_id]),
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+            prompts[agent_id] = (
+                submit_context
+                + "\n\nFINAL_TRANSPORT_HISTORY_JSON:\n"
+                + history_json
+                + "\n\n"
+                + MESSAGE_ONLY_V2_SUBMIT_INSTRUCTION
+            )
+        forced_submission_batch = run_final_submission_barrier(
+            prompts=prompts,
+            llm_client=llm_client,
+            model_name=cfg.model_name,
+            temperature=cfg.temperature,
+            max_parallel_agents=cfg.max_parallel_agents,
+            retries=cfg.final_submission_retries,
+        )
+        recovery_round = max_rounds + 1
+        for agent_id, answer in forced_submission_batch.answers.items():
+            answers[agent_id] = answer
+            submitted[agent_id] = True
+            submitted_rounds[agent_id] = recovery_round
+        total_prompt_tokens += forced_submission_batch.prompt_tokens
+        total_completion_tokens += forced_submission_batch.completion_tokens
+        total_model_calls += forced_submission_batch.model_calls
+        rounds_executed += 1
+
     expected_outputs = private_expected_outputs(global_task)
     if len(expected_outputs) != n_agents:
         expected_outputs = [instance.ground_truth for _ in range(n_agents)]
@@ -500,10 +605,24 @@ def run_silo_paper_protocol(
             information_coverage and min(information_coverage) >= 1.0
         ),
         "rounds_executed": rounds_executed,
-        "all_submitted": all(submitted),
+        "all_submitted": all(
+            submitted[agent_id]
+            and is_valid_submission_answer(answers[agent_id])
+            for agent_id in range(n_agents)
+        ),
+        "runtime_final_submission": (
+            forced_submission_batch.audit_dict()
+            if forced_submission_batch is not None
+            else {"enabled": bool(cfg.require_all_submissions), "needed": False}
+        ),
         "outward_events_by_agent": outward_events,
         "sfs_write_events": write_events if selected == "sfs" else None,
         "parse_errors": parse_errors,
+        "parallelism": {
+            "batch_calls": parallel_batch_calls,
+            "max_batch_size": max_parallel_batch_size,
+            "max_workers_used": max_workers_used,
+        },
         "total_prompt_tokens": total_prompt_tokens,
         "total_completion_tokens": total_completion_tokens,
         "paper_metric_notes": {

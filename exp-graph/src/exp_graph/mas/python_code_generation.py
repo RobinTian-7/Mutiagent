@@ -29,6 +29,18 @@ from exp_graph.mas.python_code_runner import (
     PythonExecutionLimits,
     PythonExecutionResult,
 )
+from exp_graph.mas.python_mutation import (
+    PYTHON_MUTATION_PATCH_FORMAT,
+    PythonMutationPatch,
+    PythonMutationSkipped,
+    apply_python_mutation_patch,
+    build_python_mutation_prompt,
+    extract_evolve_blocks,
+    insight_ids_from_context,
+    parse_python_mutation_patch,
+    sanitize_python_skill_context,
+    split_python_skill_context,
+)
 from exp_graph.mas.role_llm import create_role_llm_client, resolve_role_llm_config
 from exp_graph.mas.schemas import MASRuntimeConfig, PlannerRequest, SkillCard
 from exp_graph.mas.skill_bank import SkillBank
@@ -46,7 +58,9 @@ _PYTHON_FENCE_RE = re.compile(
 )
 PYTHON_SCAFFOLD_VERSION = "python_mas_scaffold_v1"
 PYTHON_MESSAGE_ONLY_SCAFFOLD_VERSION = "python_mas_scaffold_message_only_v1"
-PYTHON_MESSAGE_ONLY_V2_SCAFFOLD_VERSION = "python_mas_scaffold_message_only_v2"
+PYTHON_MESSAGE_ONLY_V2_SCAFFOLD_VERSION = (
+    "python_mas_scaffold_message_only_v2_parallel_v1"
+)
 
 
 def python_scaffold_version(worker_contract: str) -> str:
@@ -67,11 +81,15 @@ class PythonGenerationError(RuntimeError):
         *,
         error_type: str | None = None,
         artifacts_dir: Path | None = None,
+        metrics: dict[str, Any] | None = None,
+        program_sha256: str | None = None,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.error_type = error_type
         self.artifacts_dir = artifacts_dir
+        self.metrics = dict(metrics or {})
+        self.program_sha256 = program_sha256
 
 
 class PythonCodePlanningResult:
@@ -89,6 +107,7 @@ class PythonCodePlanningResult:
         planner_model_calls: int,
         repair_model_calls: int,
         selected_skill_id: str | None = None,
+        innovation_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.source = source
         self.execution = execution
@@ -99,6 +118,7 @@ class PythonCodePlanningResult:
         self.planner_model_calls = planner_model_calls
         self.repair_model_calls = repair_model_calls
         self.selected_skill_id = selected_skill_id
+        self.innovation_metadata = dict(innovation_metadata or {})
 
 
 def build_python_architect_scaffold(
@@ -230,16 +250,22 @@ def build_python_architect_prompt(
         runtime, "python_worker_contract", "action_json_v1"
     )
     if worker_contract == "message_only_v1":
-        return _build_message_only_architect_prompt(
-            request=request,
-            task_brief=task_brief,
-            runtime=runtime,
+        return _append_python_architect_context(
+            _build_message_only_architect_prompt(
+                request=request,
+                task_brief=task_brief,
+                runtime=runtime,
+            ),
+            runtime,
         )
     if worker_contract == "message_only_v2":
-        return _build_message_only_v2_architect_prompt(
-            request=request,
-            task_brief=task_brief,
-            runtime=runtime,
+        return _append_python_architect_context(
+            _build_message_only_v2_architect_prompt(
+                request=request,
+                task_brief=task_brief,
+                runtime=runtime,
+            ),
+            runtime,
         )
     common = {
         "role": "Write one complete executable Python program for a multi-agent task.",
@@ -336,7 +362,7 @@ def build_python_architect_prompt(
         sort_keys=True,
     )
     scaffold = build_python_architect_scaffold()
-    return (
+    return _append_python_architect_context((
         "PYTHON SOURCE GENERATION CONTRACT\n"
         "Output one complete executable Python source file.\n"
         "Your first non-whitespace token must be a Python token such as import or from.\n"
@@ -355,6 +381,42 @@ def build_python_architect_prompt(
         "delivery loop, usage ledger, stdout field, and main() call. If no safe "
         "specialization is needed, return the scaffold unchanged.\n"
         "FINAL OUTPUT REMINDER: raw complete Python source only."
+    ), runtime)
+
+
+def _append_python_architect_context(
+    prompt: str,
+    runtime: MASRuntimeConfig,
+) -> str:
+    """Append bounded positive/negative sections only for opt-in innovation."""
+    if not getattr(runtime, "python_architect_context_enabled", False):
+        return prompt
+    context = {
+        "positive_skill_context": dict(runtime.python_positive_context),
+        "negative_failure_context": list(runtime.python_negative_context),
+        "exposed_insight_ids": list(runtime.python_exposed_insight_ids),
+    }
+    encoded = json.dumps(context, ensure_ascii=True, indent=2, sort_keys=True)
+    if len(encoded) > runtime.python_context_max_chars:
+        encoded = json.dumps(
+            {
+                "positive_skill_context": {
+                    "parent_skill_id": runtime.python_parent_skill_id,
+                    "truncated": True,
+                },
+                "negative_failure_context": [],
+                "exposed_insight_ids": list(runtime.python_exposed_insight_ids)[:8],
+            },
+            ensure_ascii=True,
+            indent=2,
+            sort_keys=True,
+        )
+    return (
+        prompt
+        + "\n\nBEGIN_SANITIZED_EVOLUTION_CONTEXT_JSON\n"
+        + encoded
+        + "\nEND_SANITIZED_EVOLUTION_CONTEXT_JSON\n"
+        + "Use this context only as design guidance. Do not copy it into stdout."
     )
 
 
@@ -561,6 +623,12 @@ def _build_message_only_v2_architect_prompt(
             "only in rounds 0 through max_rounds-2. Messages sent in round r are "
             "delivered in r+1, including messages delivered at the barrier."
         ),
+        "execution_parallelism": (
+            "The immutable scaffold batches independent Worker calls from one "
+            "logical round through client.complete_batch. The trusted runtime "
+            "caps concurrency at max_parallel_agents, commits results in Agent "
+            "order, and completes the whole batch before the next round."
+        ),
         "planner_owns": [
             "one global submit_round selected within the max_rounds budget",
             "communication mode send, reflect, or idle",
@@ -576,6 +644,7 @@ def _build_message_only_v2_architect_prompt(
             "a frozen final snapshot shared by every required submitter",
             "strict whole-response json.loads parsing",
             "budgets and the audit ledger",
+            "bounded same-round Worker-call parallelism",
         ],
         "worker_owns": [
             "plain-text communication message bodies",
@@ -642,8 +711,9 @@ def _build_message_only_v2_architect_prompt(
         "Copy the complete scaffold. You may edit only the schedule_policy and "
         "routing_policy EVOLVE-BLOCKs. Preserve the submit barrier, "
         "submitter selection, final frozen snapshots, strict JSON parser, canonical "
-        "Worker prompts, imports, I/O, budgets, ledger-compatible stdout fields, "
-        "and main() call exactly. If no specialization is needed, return the "
+        "Worker prompts, same-round complete_batch calls, imports, I/O, budgets, "
+        "ledger-compatible stdout fields, and main() call exactly. If no "
+        "specialization is needed, return the "
         "scaffold unchanged.\n"
         "FINAL OUTPUT REMINDER: raw complete Python source only."
     )
@@ -767,6 +837,97 @@ def _looks_like_python_source(value: str) -> bool:
     )
 
 
+def _eligible_python_parent_source(
+    skill: SkillCard | None,
+    runtime: MASRuntimeConfig,
+) -> str | None:
+    if skill is None or planner_mode_from_skill(skill) != "python_generate":
+        return None
+    payload = skill.mode_payload
+    execution_contract = (
+        payload.execution_contract_version
+        if getattr(payload, "format", None) == "python_skill_v1"
+        else skill.organization_policy.get("execution_contract_version")
+    )
+    ast_policy = (
+        payload.ast_policy_version
+        if getattr(payload, "format", None) == "python_skill_v1"
+        else skill.organization_policy.get("ast_policy_version")
+    )
+    if execution_contract != runtime.python_execution_contract_version:
+        return None
+    if ast_policy != runtime.python_ast_policy_version:
+        return None
+    if python_worker_contract_from_skill(skill) != runtime.python_worker_contract:
+        return None
+    source = python_source_from_skill(skill)
+    if not isinstance(source, str):
+        return None
+    if not validate_python_source(
+        source,
+        worker_contract=runtime.python_worker_contract,
+    ).valid:
+        return None
+    return source
+
+
+def _innovation_parent(
+    skill_bank: SkillBank,
+    runtime: MASRuntimeConfig,
+) -> SkillCard | None:
+    parent_id = getattr(runtime, "python_parent_skill_id", None)
+    return skill_bank.get(parent_id) if parent_id else None
+
+
+def _prepare_python_innovation_context(
+    runtime: MASRuntimeConfig,
+    parent: SkillCard | None,
+) -> MASRuntimeConfig:
+    if not runtime.python_architect_context_enabled or parent is None:
+        return runtime
+    sanitized = sanitize_python_skill_context(
+        parent,
+        max_chars=runtime.python_context_max_chars,
+    )
+    positive, negative = split_python_skill_context(sanitized)
+    exposed = list(runtime.python_exposed_insight_ids)
+    if not exposed:
+        exposed = insight_ids_from_context(sanitized)
+    return runtime.model_copy(
+        update={
+            "python_positive_context": positive,
+            "python_negative_context": negative,
+            "python_exposed_insight_ids": exposed,
+        }
+    )
+
+
+def _record_applied_mutation(
+    *,
+    output_dir: Path,
+    index: int,
+    patch: PythonMutationPatch,
+    applied: Any,
+) -> dict[str, Any]:
+    patch_path = output_dir / f"mutation_patch_{index:02d}.json"
+    diff_path = output_dir / f"mutation_diff_{index:02d}.patch"
+    patch_path.write_text(
+        json.dumps(patch.model_dump(mode="json"), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    diff_path.write_text(applied.diff, encoding="utf-8")
+    return {
+        "patch_index": index,
+        "patch_file": patch_path.name,
+        "diff_file": diff_path.name,
+        "block_id": applied.block_id,
+        "parent_program_sha256": applied.parent_program_sha256,
+        "mutated_program_sha256": applied.mutated_program_sha256,
+        "diff_sha256": applied.diff_sha256,
+        "used_insight_ids": list(applied.used_insight_ids),
+    }
+
+
 def plan_and_execute_python(
     *,
     request: PlannerRequest,
@@ -798,20 +959,123 @@ def plan_and_execute_python(
     describe = getattr(task_adapter, "describe_task", None)
     task_brief = describe() if callable(describe) else None
     emperor = resolve_role_llm_config(runtime, "emperor")
-    replay = _replay_source(skill_bank.retrieve(request), runtime)
+    innovation_branch = getattr(runtime, "python_innovation_branch", None)
+    parent_skill = _innovation_parent(skill_bank, runtime)
+    runtime = _prepare_python_innovation_context(runtime, parent_skill)
+    replay = (
+        None
+        if innovation_branch is not None
+        else _replay_source(skill_bank.retrieve(request), runtime)
+    )
     selected_skill_id = replay[0] if replay is not None else None
     architect_prompt: str | None = None
     planner_calls = 0
     repair_calls = 0
     response_trace: list[dict[str, Any]] = []
     provenance = "skill_replay" if replay is not None else "llm_generated_python"
+    innovation_metadata: dict[str, Any] = {
+        # Only the explicit hot-start branch is labelled ``fresh``/``mutate``.
+        # A normal cold generation is neither branch; calling it ``fresh``
+        # made evidence selection unable to distinguish the marked innovation
+        # scaffold from the historical unmarked default program.
+        "strategy": innovation_branch or ("reuse" if replay is not None else None),
+        "parent_skill_id": (
+            parent_skill.skill_id if parent_skill is not None else None
+        ),
+        "context_exposed": bool(
+            runtime.python_architect_context_enabled and parent_skill is not None
+        ),
+        "exposed_insight_ids": list(runtime.python_exposed_insight_ids),
+        "used_insight_ids": [],
+        "patches": [],
+    }
     client = llm_client
     if replay is not None:
         source = replay[1]
         source_format = "skill_replay"
+    elif innovation_branch == "mutate":
+        parent_source = _eligible_python_parent_source(parent_skill, runtime)
+        if parent_source is None or parent_skill is None:
+            raise PythonMutationSkipped(
+                "no same-contract validated Python parent source is available"
+            )
+        selected_skill_id = parent_skill.skill_id
+        positive = dict(runtime.python_positive_context)
+        negative = list(runtime.python_negative_context)
+        architect_prompt = build_python_mutation_prompt(
+            parent_source=parent_source,
+            parent_skill_id=parent_skill.skill_id,
+            positive_context=positive,
+            negative_context=negative,
+        )
+        if runtime.leakage_audit:
+            assert_prompt_clean(
+                architect_prompt,
+                context="python mutation prompt",
+                allowed_tokens=runtime.leakage_allowed_tokens,
+            )
+        if emperor.platform == "fake":
+            first = next(iter(extract_evolve_blocks(parent_source).values()))
+            patch = PythonMutationPatch(
+                parent_program_sha256=python_source_sha256(parent_source),
+                block_id=first.block_id,
+                replacement=first.content.rstrip("\n"),
+                used_insight_ids=[],
+            )
+        else:
+            client = client or create_role_llm_client(runtime, "emperor")
+            response = client.complete(
+                architect_prompt,
+                model_name=emperor.model_name,
+                temperature=emperor.temperature,
+                json_mode=True,
+            )
+            planner_calls += int(response.usage.model_calls)
+            _write_raw_model_response(
+                output_dir / "architect_response.raw.txt",
+                response.text,
+            )
+            patch = parse_python_mutation_patch(response.text)
+            response_trace.append(
+                {
+                    "role": "mutation_architect",
+                    "response_format": PYTHON_MUTATION_PATCH_FORMAT,
+                    "raw_response_sha256": hashlib.sha256(
+                        response.text.encode("utf-8")
+                    ).hexdigest(),
+                    "raw_response_chars": len(response.text),
+                }
+            )
+        applied = apply_python_mutation_patch(
+            parent_source,
+            patch,
+            allowed_insight_ids=runtime.python_exposed_insight_ids,
+        )
+        source = applied.source
+        source_format = PYTHON_MUTATION_PATCH_FORMAT
+        mutation_record = _record_applied_mutation(
+            output_dir=output_dir,
+            index=0,
+            patch=patch,
+            applied=applied,
+        )
+        innovation_metadata["patches"].append(mutation_record)
+        innovation_metadata["parent_program_sha256"] = python_source_sha256(
+            parent_source
+        )
+        innovation_metadata["mutated_program_sha256"] = python_source_sha256(source)
+        innovation_metadata["used_insight_ids"] = list(applied.used_insight_ids)
     elif emperor.platform == "fake":
-        source = default_python_program(worker_contract)
-        source_format = "fake_default"
+        source = (
+            build_python_architect_scaffold(worker_contract)
+            if innovation_branch == "fresh"
+            else default_python_program(worker_contract)
+        )
+        source_format = (
+            "fake_scaffold_innovation"
+            if innovation_branch == "fresh"
+            else "fake_default"
+        )
         provenance = "fake"
     else:
         architect_prompt = build_python_architect_prompt(
@@ -820,7 +1084,11 @@ def plan_and_execute_python(
             runtime=runtime,
         )
         if runtime.leakage_audit:
-            assert_prompt_clean(architect_prompt, context="python architect prompt")
+            assert_prompt_clean(
+                architect_prompt,
+                context="python architect prompt",
+                allowed_tokens=runtime.leakage_allowed_tokens,
+            )
         client = client or create_role_llm_client(runtime, "emperor")
         response = client.complete(
             architect_prompt,
@@ -922,6 +1190,7 @@ def plan_and_execute_python(
                         repair_calls=repair_calls,
                         failure_category=None,
                         failure_reason=None,
+                        innovation_metadata=innovation_metadata,
                     )
                     return PythonCodePlanningResult(
                         source=source,
@@ -933,6 +1202,7 @@ def plan_and_execute_python(
                         planner_model_calls=planner_calls,
                         repair_model_calls=repair_calls,
                         selected_skill_id=selected_skill_id,
+                        innovation_metadata=innovation_metadata,
                     )
                 failure = actual.failure or {
                     "error_type": "RuntimeError",
@@ -964,32 +1234,55 @@ def plan_and_execute_python(
                 repair_calls=repair_calls,
                 failure_category=failure_category,
                 failure_reason=reason,
+                innovation_metadata=innovation_metadata,
             )
             raise PythonGenerationError(
                 reason,
                 error_type=failure_category,
                 artifacts_dir=output_dir,
+                metrics=_failed_execution_metrics(
+                    final_execution,
+                    n_agents=request.n_agents,
+                ),
+                program_sha256=python_source_sha256(source),
             )
-        repair_prompt = build_python_repair_prompt(
-            source=source,
-            failure=failure or {},
-            attempt=attempt_idx + 1,
-            information_goal=request.information_goal,
-            worker_contract=worker_contract,
-        )
+        if innovation_branch == "mutate" and parent_skill is not None:
+            repair_prompt = build_python_mutation_prompt(
+                parent_source=source,
+                parent_skill_id=parent_skill.skill_id,
+                positive_context=dict(runtime.python_positive_context),
+                negative_context=list(runtime.python_negative_context),
+                failure=failure or {},
+            )
+            repair_action = "mutation_patch"
+            repair_json_mode = True
+        else:
+            repair_prompt = build_python_repair_prompt(
+                source=source,
+                failure=failure or {},
+                attempt=attempt_idx + 1,
+                information_goal=request.information_goal,
+                worker_contract=worker_contract,
+            )
+            repair_action = "replace_code"
+            repair_json_mode = False
         if runtime.leakage_audit:
-            assert_prompt_clean(repair_prompt, context="python repair prompt")
+            assert_prompt_clean(
+                repair_prompt,
+                context="python repair prompt",
+                allowed_tokens=runtime.leakage_allowed_tokens,
+            )
         response = client.complete(
             repair_prompt,
             model_name=emperor.model_name,
             temperature=emperor.temperature,
-            json_mode=False,
+            json_mode=repair_json_mode,
         )
         repair_calls += int(response.usage.model_calls)
         repair_trace.append(
             {
                 "attempt": attempt_idx + 1,
-                "action": "replace_code",
+                "action": repair_action,
                 "prompt_sha256": hashlib.sha256(
                     repair_prompt.encode("utf-8")
                 ).hexdigest(),
@@ -997,19 +1290,52 @@ def plan_and_execute_python(
             }
         )
         raw_response = response.text
-        source, source_format = extract_python_source(raw_response)
         _write_raw_model_response(
             output_dir / f"repair_response_{attempt_idx + 1:02d}.raw.txt",
             raw_response,
         )
-        response_trace.append(
-            _response_normalization_record(
-                role=f"repair_{attempt_idx + 1}",
-                response_format=source_format,
-                raw_response=raw_response,
-                source=source,
+        if innovation_branch == "mutate":
+            patch = parse_python_mutation_patch(raw_response)
+            applied = apply_python_mutation_patch(
+                source,
+                patch,
+                allowed_insight_ids=runtime.python_exposed_insight_ids,
             )
-        )
+            source = applied.source
+            source_format = PYTHON_MUTATION_PATCH_FORMAT
+            mutation_record = _record_applied_mutation(
+                output_dir=output_dir,
+                index=len(innovation_metadata["patches"]),
+                patch=patch,
+                applied=applied,
+            )
+            innovation_metadata["patches"].append(mutation_record)
+            used_ids = [
+                *innovation_metadata.get("used_insight_ids", []),
+                *applied.used_insight_ids,
+            ]
+            innovation_metadata["used_insight_ids"] = list(dict.fromkeys(used_ids))
+            innovation_metadata["mutated_program_sha256"] = python_source_sha256(source)
+            response_trace.append(
+                {
+                    "role": f"mutation_repair_{attempt_idx + 1}",
+                    "response_format": PYTHON_MUTATION_PATCH_FORMAT,
+                    "raw_response_sha256": hashlib.sha256(
+                        raw_response.encode("utf-8")
+                    ).hexdigest(),
+                    "raw_response_chars": len(raw_response),
+                }
+            )
+        else:
+            source, source_format = extract_python_source(raw_response)
+            response_trace.append(
+                _response_normalization_record(
+                    role=f"repair_{attempt_idx + 1}",
+                    response_format=source_format,
+                    raw_response=raw_response,
+                    source=source,
+                )
+            )
         repair_trace[-1]["response_format"] = source_format
         provenance = "llm_generated_python"
     raise AssertionError("unreachable python repair loop")
@@ -1133,6 +1459,27 @@ def _execution_summary(result: PythonExecutionResult) -> dict[str, Any]:
     }
 
 
+def _failed_execution_metrics(
+    result: PythonExecutionResult | None,
+    *,
+    n_agents: int,
+) -> dict[str, Any]:
+    if result is None:
+        return {}
+    usage = result.authoritative_usage
+    output = result.output
+    rounds = int(output.rounds_executed) if output is not None else 0
+    messages = len(output.messages) if output is not None else 0
+    denominator = n_agents * (n_agents - 1)
+    return {
+        "messages": messages,
+        "model_calls": int(usage.model_calls),
+        "tokens": int(usage.prompt_tokens + usage.completion_tokens),
+        "C": float(usage.completion_tokens) / max(1, rounds),
+        "D": float(messages) / denominator if denominator > 0 else 0.0,
+    }
+
+
 def _response_normalization_record(
     *,
     role: str,
@@ -1173,6 +1520,7 @@ def _write_python_artifacts(
     repair_calls: int,
     failure_category: str | None,
     failure_reason: str | None,
+    innovation_metadata: dict[str, Any] | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "architect_prompt.txt").write_text(
@@ -1203,6 +1551,10 @@ def _write_python_artifacts(
     )
     (output_dir / "response_normalization_trace.json").write_text(
         json.dumps(response_trace, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    (output_dir / "innovation_provenance.json").write_text(
+        json.dumps(innovation_metadata or {}, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     usage = (
@@ -1255,10 +1607,16 @@ def _write_python_artifacts(
         "worker_contract": str(
             getattr(runtime, "python_worker_contract", "action_json_v1")
         ),
+        "execution_timeout_seconds": float(runtime.python_execution_timeout),
+        "max_parallel_agents": int(runtime.max_parallel_agents),
+        "parallelism": (
+            execution.ledger.get("parallelism") if execution else None
+        ),
         "submit_barrier": (
             execution.ledger.get("submit_barrier") if execution else None
         ),
         "provenance": provenance,
+        "innovation": innovation_metadata or {},
         "failure_category": failure_category,
         "failure_reason": failure_reason,
         "created_at": datetime.now(UTC).replace(microsecond=0).isoformat(),

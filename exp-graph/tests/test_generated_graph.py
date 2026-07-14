@@ -216,6 +216,48 @@ def test_free_graph_prompt_includes_avoid_skills_as_constraints() -> None:
     assert "negative constraints" in prompt
 
 
+def test_honest_failure_feedback_is_separate_bounded_and_answer_free() -> None:
+    skill = SkillCard(
+        skill_id="cf_generated_parent",
+        objective="balanced",
+        organization_policy={
+            "topology_name": "generated:parent",
+            "protocol_spec": {"steps": [{"edges": [[0, 1]]}]},
+        },
+        failure_modes=[
+            {
+                "cluster_id": "failure_cluster_1",
+                "error_type": "CoverageError",
+                "answer": "SECRET_ANSWER",
+                "source_code": "SECRET_CODE",
+            }
+        ],
+        counterexamples=[{"missing_submitters": [1]}],
+        risk_notes=[{"summary": "agent 1 missed source 0"}],
+    )
+    prompt = build_free_graph_prompt(
+        request=PlannerRequest.from_names(
+            n_agents=2,
+            array_size=8,
+            planner_mode="graph_generate",
+        ),
+        skills=[skill],
+        avoid_skills=[],
+        options=GraphValidationOptions(n_agents=2),
+        num_candidates=1,
+        include_failure_feedback=True,
+    )
+    payload = json.loads(prompt)
+
+    assert payload["negative_failure_context"][0]["skill_id"] == skill.skill_id
+    assert "failure_modes" not in payload["skill_evidence"][0]
+    assert "risk_notes" not in payload["skill_evidence"][0]
+    negative = json.dumps(payload["negative_failure_context"], sort_keys=True)
+    assert len(negative) <= 4_000
+    assert "SECRET_ANSWER" not in negative
+    assert "SECRET_CODE" not in negative
+
+
 def test_free_graph_prompt_uses_structural_hints_not_named_templates() -> None:
     prompt = build_free_graph_prompt(
         request=PlannerRequest.from_names(

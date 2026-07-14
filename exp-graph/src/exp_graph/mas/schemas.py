@@ -52,6 +52,7 @@ PythonWorkerContract = Literal[
     "message_only_v1",
     "message_only_v2",
 ]
+PythonInnovationBranch = Literal["fresh", "mutate"]
 # 中文：候选/技能卡的结构来源。llm_generated=皇帝 LLM 新生成；skill_replay=重放技能卡里
 #   存的结构；fixed_named=具名固定拓扑；named_fallback=生成失败后的具名兜底；fake=离线假
 #   候选。clean GraphGen 只允许 llm_generated 与同模式验证过的 skill_replay 入库。
@@ -202,7 +203,7 @@ class MASRuntimeConfig(BaseModel):
     temperature: float = 0.0
     json_retry_attempts: int = 2
     allow_deterministic_repair: bool = True
-    max_parallel_agents: int = 1
+    max_parallel_agents: int = Field(default=1, ge=1)
     max_parallel_ministers: int = 1
     trace_enabled: bool = False
     retain_traces: bool = False
@@ -228,7 +229,7 @@ class MASRuntimeConfig(BaseModel):
     # PythonGen is a third, independent generated mode. These limits never
     # mutate GraphGen or phase-program settings.
     python_repair_attempts: int = 3
-    python_execution_timeout: float = 20.0
+    python_execution_timeout: float = Field(default=300.0, gt=0)
     python_cpu_seconds: int = 10
     python_memory_mb: int = 512
     python_max_output_bytes: int = 1_000_000
@@ -242,6 +243,19 @@ class MASRuntimeConfig(BaseModel):
     python_max_model_calls: int = 32
     python_max_completion_tokens: int = 20_000
     python_max_messages: int = 64
+    # Optional hot-start innovation context. Normal PythonGen leaves the branch
+    # unset and remains skill-context blind. The planner resolves the parent
+    # from the same-contract SkillBank and only exposes sanitized summaries.
+    python_innovation_branch: PythonInnovationBranch | None = None
+    python_parent_skill_id: str | None = None
+    python_architect_context_enabled: bool = False
+    python_context_max_chars: int = 6_000
+    python_exposed_insight_ids: list[str] = Field(default_factory=list)
+    python_positive_context: dict[str, object] = Field(default_factory=dict)
+    python_negative_context: list[dict[str, object]] = Field(default_factory=list)
+    # Failure-cluster feedback is opt-in.  masbench enables it for honest_v2;
+    # legacy runs retain their historical architect prompt byte shape.
+    failure_feedback_enabled: bool = False
     # 中文：D2(可选开启)：要求生成 DAG 的汇点在时间上可从全部 agent 到达。
     #   默认关闭 -> CF 逐字节一致；masbench(Silo)开启。
     # D2 (opt-in): require the generated DAG's sink to be temporally reachable
@@ -493,6 +507,13 @@ class PythonSkillPayload(BaseModel):
     repair_attempts: int = 0
     artifact_reference: str | None = None
     runtime_trace_summary: dict[str, object] = Field(default_factory=dict)
+    innovation_strategy: str | None = None
+    parent_skill_id: str | None = None
+    exposed_insight_ids: list[str] = Field(default_factory=list)
+    used_insight_ids: list[str] = Field(default_factory=list)
+    parent_program_sha256: str | None = None
+    mutation_diff_sha256: str | None = None
+    mutation_provenance: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_complete_source(self) -> "PythonSkillPayload":

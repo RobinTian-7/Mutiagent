@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 from pathlib import Path
 
 from exp_graph.mas.evolution import ResultAnalystMinister
+from exp_graph.mas.graph_generation import GraphGenerationError
 from exp_graph.mas.python_code import (
     DEFAULT_PYTHON_PROGRAM,
     PythonProgramOutput,
@@ -25,7 +28,12 @@ from masbench.bench import run_benchmark
 from masbench.cli import main
 from masbench.core.config import RunConfig
 from masbench.engine import (
+    _build_python_execution_payload,
+    _graph_artifacts_dir,
+    _program_artifacts_dir,
     _protocol_adapter,
+    _python_artifacts_dir,
+    _resolved_python_execution_timeout,
     _score_python_execution,
     run_instance,
 )
@@ -42,6 +50,85 @@ DATA = Path(__file__).parent / "data"
 
 def _instance():
     return next(SiloBenchAdapter(DATA).iter_instances(cases=["I-01"]))
+
+
+def test_run_one_binds_explicit_seed_to_generated_planner(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    seen: list[tuple[int, str]] = []
+
+    def fail_after_observing_cfg(cfg, *, instance, **kwargs):
+        del kwargs
+        seen.append((cfg.seed, instance.case_id))
+        raise GraphGenerationError("expected test failure")
+
+    monkeypatch.setattr(
+        "masbench.evolve._plan_graph_generate",
+        fail_after_observing_cfg,
+    )
+    cfg = RunConfig(
+        planner_mode="graph_generate",
+        llm_provider="fake",
+        model_name="fake",
+        n_agents=2,
+        seed=999,
+        graph_artifacts_dir=str(tmp_path),
+    )
+    instance = _instance()
+    objective = evolution_objective_spec(cfg)
+
+    rows = [
+        _run_one(
+            instance,
+            cfg,
+            objective=objective,
+            skill_bank=SkillBank(),
+            seed=seed,
+            llm_client=BenchmarkFakeLLMClient(),
+        )
+        for seed in (11, 12)
+    ]
+
+    assert seen == [(11, "I-01"), (12, "I-01")]
+    assert [row["seed"] for row in rows] == [11, 12]
+    assert cfg.seed == 999
+
+
+def test_generated_artifact_directories_are_seeded_and_concurrency_safe(
+    tmp_path: Path,
+) -> None:
+    instance = _instance()
+    cfg = RunConfig(
+        n_agents=2,
+        silo_eval_mode="all_agents",
+        graph_artifacts_dir=str(tmp_path / "graph"),
+        program_artifacts_dir=str(tmp_path / "program"),
+        python_artifacts_dir=str(tmp_path / "python"),
+    )
+    builders = (_graph_artifacts_dir, _program_artifacts_dir, _python_artifacts_dir)
+
+    def create(seed: int) -> list[Path]:
+        run_cfg = replace(cfg, seed=seed)
+        paths = [builder(run_cfg, instance) for builder in builders]
+        for path in paths:
+            (path / f"seed_{seed}.marker").write_text(str(seed), encoding="utf-8")
+        return paths
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(create, seed) for seed in (11, 12)]
+        paths_by_seed = {
+            seed: future.result()
+            for seed, future in zip((11, 12), futures, strict=True)
+        }
+
+    all_paths = [path for paths in paths_by_seed.values() for path in paths]
+    assert len(set(all_paths)) == 6
+    for seed, paths in paths_by_seed.items():
+        for path in paths:
+            assert f"I-01_n2_seed{seed}_all_agents_" in path.name
+            assert (path / f"seed_{seed}.marker").read_text(encoding="utf-8") == str(seed)
+            assert not (path / f"seed_{12 if seed == 11 else 11}.marker").exists()
 
 
 def test_python_generate_fake_engine_is_independent_and_auditable(
@@ -72,6 +159,51 @@ def test_python_generate_fake_engine_is_independent_and_auditable(
     assert (artifact_dir / "execution_report.json").exists()
     assert not (artifact_dir / "architect_call.json").exists()
     assert not (artifact_dir / "program_architect_call.json").exists()
+
+
+def test_python_timeout_auto_budget_accounts_for_round_waves() -> None:
+    cfg = RunConfig(
+        n_agents=5,
+        max_rounds=4,
+        request_timeout=120.0,
+        max_parallel_agents=5,
+        python_execution_timeout=None,
+        python_worker_contract="message_only_v2",
+    )
+    assert _resolved_python_execution_timeout(cfg, n_agents=5) == 510.0
+
+    slower = replace(cfg, max_parallel_agents=2)
+    assert _resolved_python_execution_timeout(slower, n_agents=5) == 1470.0
+
+    explicit = replace(cfg, python_execution_timeout=777.0)
+    assert _resolved_python_execution_timeout(explicit, n_agents=5) == 777.0
+
+    legacy_scalar = replace(cfg, python_worker_contract="action_json_v1")
+    assert _resolved_python_execution_timeout(legacy_scalar, n_agents=5) == 2430.0
+
+
+def test_python_payload_authorizes_intra_task_parallelism_and_request_timeout() -> None:
+    instance = _instance()
+    cfg = RunConfig(
+        n_agents=2,
+        max_rounds=3,
+        request_timeout=120.0,
+        max_parallel_agents=2,
+        python_worker_contract="message_only_v2",
+    )
+    adapter = _protocol_adapter(instance, information_goal="all_agents")
+    global_task = adapter.build_global_task()
+
+    payload = _build_python_execution_payload(
+        instance=instance,
+        cfg=cfg,
+        task_adapter=adapter,
+        global_task=global_task,
+        n_agents=2,
+    )
+
+    assert payload["max_parallel_agents"] == 2
+    assert payload["worker_llm"]["request_timeout"] == 120.0
 
 
 def test_all_agents_one_wrong_submission_fails_even_with_full_coverage(

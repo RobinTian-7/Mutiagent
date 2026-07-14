@@ -116,11 +116,20 @@ def _capture_plan_inputs(monkeypatch):
     captured = []
     orig = evolve._plan_graph_generate
 
-    def spy(cfg, *, n_agents, task_adapter, client, skill_bank=None, motif_stats=None):
-        captured.append((skill_bank, motif_stats))
+    def spy(
+        cfg,
+        *,
+        n_agents,
+        task_adapter,
+        client,
+        skill_bank=None,
+        motif_stats=None,
+        instance=None,
+    ):
+        captured.append((skill_bank, motif_stats, instance))
         return orig(
             cfg, n_agents=n_agents, task_adapter=task_adapter, client=client,
-            skill_bank=skill_bank, motif_stats=motif_stats,
+            skill_bank=skill_bank, motif_stats=motif_stats, instance=instance,
         )
 
     monkeypatch.setattr(evolve, "_plan_graph_generate", spy)
@@ -152,18 +161,20 @@ def test_deployment_abstains_on_uncovered_bucket(monkeypatch):
         llm_client=client, motif_stats=motif,
     )
     assert row["task_features_key"] == "os"
-    view_bank, view_motif = captured[-1]
+    view_bank, view_motif, planned_instance = captured[-1]
     assert len(view_bank) == 0, "no os-trusted skill -> exact cold inputs"
     assert view_motif is None
+    assert planned_instance is ord50
 
     row = evolve._run_one(
         i01, cfg, objective=objective, skill_bank=bank, seed=1,
         llm_client=client, motif_stats=motif,
     )
     assert row["task_features_key"] == "of"
-    view_bank, view_motif = captured[-1]
+    view_bank, view_motif, planned_instance = captured[-1]
     assert [s.skill_id for s in view_bank] == ["of_champion"]
     assert view_motif == {"fan_in:1": {"mean_loss": 0.0, "n": 4}}
+    assert planned_instance is i01
 
 
 def test_transfer_gate_env_kill_switch(monkeypatch):
@@ -179,8 +190,9 @@ def test_transfer_gate_env_kill_switch(monkeypatch):
         ord50, cfg, objective=evolution_objective_spec(cfg), skill_bank=bank,
         seed=1, llm_client=client, motif_stats=None,
     )
-    view_bank, _ = captured[-1]
+    view_bank, _, planned_instance = captured[-1]
     assert len(view_bank) == 1, "off mode must deploy the full bank (phase-2 behavior)"
+    assert planned_instance is ord50
 
 
 def test_ratchet_gate_rejects_round_worse_than_incumbent(monkeypatch):
