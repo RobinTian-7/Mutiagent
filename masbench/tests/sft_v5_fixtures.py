@@ -569,6 +569,36 @@ class V5Harness:
     def close(self) -> None:
         self.store.close()
 
+    def reopen(self):
+        """Simulate a process crash/restart: reopen and restore the head."""
+
+        from masbench.sft_pilot.components import PilotComponentCoordinator
+        from masbench.sft_pilot.scientific_runner import (
+            v5_factor_capabilities_factory,
+        )
+        from masbench.sft_pilot.store import SingleWriterPilotStore
+
+        self.store.close()
+        self.store = SingleWriterPilotStore.open(
+            self.experiment.state_dir,
+            protocol=self.experiment.protocol,
+            hmac_key=self.experiment.component_keys["store"],
+            execution_schedule=self.experiment.seal.execution_schedule,
+        )
+        self.coordinator = PilotComponentCoordinator(
+            store=self.store,
+            phase_registry_key=self.experiment.component_keys["phase_registry"],
+            factor_bank_key=self.experiment.component_keys["factor_bank"],
+            manifest_verifier=self._verify_manifest,
+            factor_capabilities_factory=v5_factor_capabilities_factory(
+                authority=self.authority,
+                seal=self.experiment.seal,
+            ),
+            branch_receipt_verifier=self.branch_authority,
+        )
+        self.loaded = self.coordinator.restore_recovery_head()
+        return self.loaded
+
     @property
     def bank(self):
         return self.loaded.bank
@@ -834,6 +864,444 @@ class V5Harness:
             ingress=ingress,
         )
         return result
+
+
+@dataclass(frozen=True)
+class ArmPlan:
+    """Host-declared fake outcome for one probe arm (mechanics only)."""
+
+    terminal: str = "completed"  # completed | algorithm_failure | infrastructure_failure
+    v: float = 0.5
+    c: float = 25.0
+    safe_failure_code: str | None = None
+    failed_stage_rank: int | None = None
+
+
+def benefit_pair() -> tuple[ArmPlan, ArmPlan]:
+    return ArmPlan(v=0.5, c=25.0), ArmPlan(v=0.7, c=9.0)
+
+
+def null_pair() -> tuple[ArmPlan, ArmPlan]:
+    return ArmPlan(v=0.5, c=25.0), ArmPlan(v=0.5, c=25.0)
+
+
+def harm_pair() -> tuple[ArmPlan, ArmPlan]:
+    return ArmPlan(v=0.7, c=9.0), ArmPlan(v=0.4, c=30.0)
+
+
+class V5ProbeMixin:
+    """Six-unit probe execution over the shared v5 harness."""
+
+    def seal_plan_for(self, transition):
+        return self.bank.seal_probe_plan(
+            transition_id=transition.transition_id,
+            owner_kind="direct_factor",
+            epoch_id=self.authority.epoch_id_for(
+                transition_id=transition.transition_id
+            ),
+            unit_commitments=self.authority.unit_commitments,
+            arm_orders=self.authority.arm_orders,
+            assignment_manifest_sha256=self.authority.assignment_manifest_sha256,
+            runner_version=self.authority.runner_version,
+            budget=self.authority.plan_budget,
+        )
+
+    def probe_arm_coordinates(self, ordinal: int):
+        protocol = self.experiment.protocol
+        source = next(
+            item
+            for item in protocol.authorized_logical_arms
+            if item.operation_kind == "source_probe"
+            and item.execution_ordinal == ordinal
+        )
+        target = next(
+            item
+            for item in protocol.authorized_logical_arms
+            if item.operation_kind == "target_probe"
+            and item.execution_ordinal == ordinal
+        )
+        return source, target
+
+    def open_probe_unit(self, plan, *, ordinal: int, tag: str, action_id: str):
+        assignment = self.authority.make_assignment(plan, ordinal=ordinal)
+        runner_lease = self.authority.make_runner_lease(
+            plan=plan,
+            assignment=assignment,
+            runner_session_id=f"v5-probe-runner:{tag}:{ordinal}",
+            runner_lease_token_sha256=self._sha(f"probe-token:{tag}:{ordinal}"),
+            journal_anchor_sha256=self._sha(f"probe-journal:{tag}:{ordinal}"),
+        )
+        attempt = self.bank.open_next_attempt(
+            plan.plan_id, assignment, runner_lease
+        )
+        source_arm, target_arm = self.probe_arm_coordinates(ordinal)
+        from masbench.sft_pilot.scientific_runner import (
+            reserve_scheduled_execution,
+        )
+
+        for arm in (source_arm, target_arm):
+            reserve_scheduled_execution(
+                self.store,
+                schedule=self.experiment.seal.execution_schedule,
+                logical_arm=arm,
+                logical_execution_key=f"probe-{tag}-{ordinal}-{arm.pair_arm}",
+                action_id=action_id,
+            )
+        self.checkpoint()
+        assert (
+            self.loaded.snapshot.checkpoint.checkpoint_kind
+            == "probe_attempt_open"
+        )
+        return attempt, source_arm, target_arm
+
+    def _complete_probe_store_execution(
+        self, *, arm, key: str, tag: str, recovery_root: str
+    ) -> str:
+        schedule = self.experiment.seal.execution_schedule
+        scheduled_call = schedule.entry_for(arm).calls[0]
+        call_key = f"call-{key}"
+        self.store.reserve_call(
+            operation_id=f"reserve-{call_key}",
+            operation_request_sha256=self._sha(f"reserve:{call_key}"),
+            call_key=call_key,
+            logical_execution_key=key,
+            call_slot=0,
+            call_request_sha256=scheduled_call.request_envelope_sha256,
+            input_tokens_reserved=scheduled_call.input_tokens_reserved,
+            output_tokens_reserved=scheduled_call.output_tokens_reserved,
+            expected_component_recovery_root_sha256=recovery_root,
+        )
+        authorization = self.store.start_call(
+            call_key,
+            operation_id=f"start-{call_key}",
+            operation_request_sha256=self._sha(f"start:{call_key}"),
+            call_request_sha256=scheduled_call.request_envelope_sha256,
+            expected_component_recovery_root_sha256=recovery_root,
+        )
+        assert authorization.may_invoke_sdk
+        self.store.complete_call(
+            call_key,
+            operation_id=f"complete-{call_key}",
+            operation_request_sha256=self._sha(f"complete:{call_key}"),
+            call_request_sha256=scheduled_call.request_envelope_sha256,
+            output_envelope_sha256=self._sha(f"output:{call_key}"),
+            provider_usage_known=True,
+            input_tokens_used=20,
+            output_tokens_used=5,
+        )
+        self.store.complete_execution(
+            key,
+            operation_id=f"complete-{key}",
+            operation_request_sha256=self._sha(f"complete:{key}"),
+        )
+        return call_key
+
+    def execute_probe_unit(
+        self,
+        *,
+        edge,
+        plan,
+        action_id: str,
+        ordinal: int,
+        tag: str,
+        source: ArmPlan,
+        target: ArmPlan,
+        physical_order: str | None = None,
+    ):
+        """Run one unit end-to-end and consume its pair (or settle it)."""
+
+        from exp_graph.mas.factor_bank import DenseOutcome, ExecutionUsage
+        from masbench.engine import register_exact_phase_execution_result
+        from masbench.sft_pilot.execution_attestation import (
+            PilotExecutionAttestor,
+            PilotOutcomeScorer,
+        )
+        from masbench.sft_pilot.pair_adapter import (
+            make_phase_v3_factor_arm_receipt,
+        )
+        from masbench.sft_pilot.pair_consumer import consume_phase_v3_pair_once
+
+        import test_sft_execution_attestation as base
+
+        attempt, source_arm, target_arm = self.open_probe_unit(
+            plan, ordinal=ordinal, tag=tag, action_id=action_id
+        )
+        recovery_root = self.loaded.snapshot.recovery_root_sha256
+        unit_tag = f"{tag}-{ordinal}"
+        snapshot = base._verified_pair_snapshot(
+            self.experiment.root,
+            protocol=self.experiment.protocol,
+            registry=self.registry,
+            edge=edge,
+            pair_arm=source_arm,
+            tag=unit_tag,
+        )
+        attestor = PilotExecutionAttestor(
+            self.experiment.protocol,
+            engine_key=self.experiment.runtime_role_key("exact_phase_engine"),
+        )
+        scorer = PilotOutcomeScorer(
+            self.experiment.protocol,
+            scorer_key=self.experiment.runtime_role_key("train_scorer"),
+            execution_attestor=attestor,
+            scorer_id="sft-v5-train-scorer",
+            scorer_version_sha256=self._sha("sft-v5-train-scorer-code"),
+        )
+        scheduled_order = plan.units[ordinal].arm_order
+        observed_order = physical_order or scheduled_order
+        if observed_order == "AB":
+            seqs = {"source": (1, 2), "target": (3, 4)}
+        else:
+            seqs = {"target": (1, 2), "source": (3, 4)}
+        pair_receipt = self.authority.make_pair_execution(
+            plan=plan,
+            attempt=attempt,
+            source_root_id=self._sha(f"physical:{unit_tag}:source"),
+            target_root_id=self._sha(f"physical:{unit_tag}:target"),
+            source_started_seq=seqs["source"][0],
+            source_finished_seq=seqs["source"][1],
+            target_started_seq=seqs["target"][0],
+            target_finished_seq=seqs["target"][1],
+        )
+        usage = ExecutionUsage(
+            messages=1,
+            model_calls=1,
+            input_tokens=20,
+            output_tokens=5,
+            wall_time_ms=100,
+            cost_microusd=400,
+        )
+        receipts = {}
+        for arm_name, arm_coords, arm_plan in (
+            ("source", source_arm, source),
+            ("target", target_arm, target),
+        ):
+            key = f"probe-{tag}-{ordinal}-{arm_name}"
+            if arm_plan.terminal == "infrastructure_failure":
+                # The provider crossing itself completed (usage retained);
+                # a downstream runner-infrastructure failure prevented a
+                # scoreable execution, so the host records the arm directly
+                # with retained cost and no outcome.
+                self._complete_probe_store_execution(
+                    arm=arm_coords,
+                    key=key,
+                    tag=unit_tag,
+                    recovery_root=recovery_root,
+                )
+                receipts[arm_name] = self.authority.make_phase_arm_receipt(
+                    registry=self.registry,
+                    registered=edge,
+                    plan=plan,
+                    attempt=attempt,
+                    arm=arm_name,
+                    root_id=(
+                        pair_receipt.source_root_id
+                        if arm_name == "source"
+                        else pair_receipt.target_root_id
+                    ),
+                    paired_arm_root_id=(
+                        pair_receipt.target_root_id
+                        if arm_name == "source"
+                        else pair_receipt.source_root_id
+                    ),
+                    pair_execution_receipt=pair_receipt,
+                    activation_trace_root=self._sha(
+                        f"infra-activation:{unit_tag}:{arm_name}"
+                    ),
+                    usage=usage,
+                    execution_class="infrastructure_failure",
+                    outcome=None,
+                    safe_failure_code=(
+                        arm_plan.safe_failure_code or "provider_timeout"
+                    ),
+                    failed_stage_rank=None,
+                )
+                continue
+            call_key = self._complete_probe_store_execution(
+                arm=arm_coords,
+                key=key,
+                tag=unit_tag,
+                recovery_root=recovery_root,
+            )
+            capability = register_exact_phase_execution_result(
+                protocol=self.experiment.protocol,
+                logical_arm=arm_coords,
+                registry=self.registry,
+                registered_edge=edge,
+                store=self.store,
+                logical_execution_key=key,
+                call_keys=(call_key,),
+                journal_snapshot=snapshot,
+                engine_key=self.experiment.runtime_role_key(
+                    "exact_phase_engine"
+                ),
+            )
+            attestation = attestor.issue(capability)
+            metrics = DenseOutcome(
+                V=arm_plan.v,
+                K=arm_plan.v,
+                U=arm_plan.v,
+                P=arm_plan.v,
+                S=arm_plan.v,
+                stage_score=arm_plan.v,
+                C=arm_plan.c,
+                D=2.0,
+            )
+            outcome_receipt = scorer.score_train_update(
+                attestation,
+                metrics,
+                terminal_class=(
+                    "completed"
+                    if arm_plan.terminal == "completed"
+                    else "algorithm_failure"
+                ),
+            )
+            receipts[arm_name] = make_phase_v3_factor_arm_receipt(
+                authority=self.authority,
+                registry=self.registry,
+                registered=edge,
+                plan=plan,
+                attempt=attempt,
+                pair_execution_receipt=pair_receipt,
+                execution=attestation,
+                outcome_receipt=outcome_receipt,
+                execution_attestor=attestor,
+                scorer=scorer,
+                usage=usage,
+                safe_failure_code=arm_plan.safe_failure_code,
+                failed_stage_rank=arm_plan.failed_stage_rank,
+            )
+        consumed = consume_phase_v3_pair_once(
+            loaded=self.loaded,
+            coordinator=self.coordinator,
+            attempt_id=attempt.attempt_id,
+            source_receipt=receipts["source"],
+            target_receipt=receipts["target"],
+            pair_execution_receipt=pair_receipt,
+            operation_id=f"consume-{unit_tag}",
+            operation_request_sha256=self._sha(f"consume:{unit_tag}"),
+        )
+        self.loaded = consumed.loaded
+        return consumed
+
+
+    def cancel_probe_unit(
+        self,
+        *,
+        plan,
+        action_id: str,
+        ordinal: int,
+        tag: str,
+        started_arm_roots: tuple[str, ...] = (),
+        safe_failure_code: str = "provider_timeout",
+    ):
+        """Settle one half-pair by authority-fenced cancellation.
+
+        The second provider crossing may never have started; the store's
+        settlement law admits that terminal lease state for a cancelled
+        attempt (no-retry makes it permanent).
+        """
+
+        from exp_graph.mas.factor_bank_v2 import (
+            AttemptCancellationReceiptV3,
+            cancellation_event_root_v3,
+            runner_schedule_commitment_v1,
+        )
+        from masbench.sft_pilot.factor_authority import (
+            UNSIGNED_ATTESTATION_SHA256,
+        )
+        from masbench.sft_pilot.schema import canonical_sha256
+
+        attempt, _source_arm, _target_arm = self.open_probe_unit(
+            plan, ordinal=ordinal, tag=tag, action_id=action_id
+        )
+        assignment_sha256 = canonical_sha256(attempt.assignment)
+        open_attempt_sha256 = canonical_sha256(attempt)
+        unit_tag = f"{tag}-{ordinal}"
+        schedule_event_id = f"schedule:{unit_tag}"
+        abort_event_id = f"abort:{unit_tag}"
+        schedule = runner_schedule_commitment_v1(
+            expected_open_attempt_sha256=open_attempt_sha256,
+            assignment_receipt_sha256=assignment_sha256,
+            plan_id=plan.plan_id,
+            ordinal=attempt.ordinal,
+            scheduled_arm_order=attempt.assignment.arm_order,
+            runner_session_id=attempt.runner_lease.runner_session_id,
+            runner_lease_token_sha256=(
+                attempt.runner_lease.runner_lease_token_sha256
+            ),
+            fencing_generation=attempt.runner_lease.fencing_generation,
+            journal_anchor_sha256=attempt.runner_lease.journal_anchor_sha256,
+            prestart_schedule_event_id=schedule_event_id,
+            prestart_schedule_event_seq=0,
+        )
+        event_root = cancellation_event_root_v3(
+            journal_anchor_sha256=attempt.runner_lease.journal_anchor_sha256,
+            schedule_commitment_sha256=schedule,
+            started_arm_roots=started_arm_roots,
+            abort_event_id=abort_event_id,
+            abort_event_seq=1 + len(started_arm_roots),
+            cancel_kind="infrastructure",
+            safe_failure_code=safe_failure_code,
+            terminate_scope=False,
+            runner_lease_token_sha256=(
+                attempt.runner_lease.runner_lease_token_sha256
+            ),
+            fencing_generation=1,
+            next_fencing_generation=2,
+        )
+        unsigned = AttemptCancellationReceiptV3(
+            cancellation_id=(
+                "ac:"
+                + canonical_sha256(
+                    {
+                        "attempt": open_attempt_sha256,
+                        "runner_lease": attempt.runner_lease.digest,
+                        "terminal_event_root": event_root,
+                    }
+                )[:24]
+            ),
+            attempt_id=attempt.attempt_id,
+            plan_id=plan.plan_id,
+            ordinal=attempt.ordinal,
+            assignment_receipt_sha256=assignment_sha256,
+            expected_opened_seq=attempt.opened_seq,
+            expected_open_attempt_sha256=open_attempt_sha256,
+            scheduled_arm_order=attempt.assignment.arm_order,
+            runner_lease_sha256=attempt.runner_lease.digest,
+            runner_session_id=attempt.runner_lease.runner_session_id,
+            runner_lease_token_sha256=(
+                attempt.runner_lease.runner_lease_token_sha256
+            ),
+            journal_anchor_sha256=attempt.runner_lease.journal_anchor_sha256,
+            prestart_schedule_event_id=schedule_event_id,
+            prestart_schedule_event_seq=0,
+            schedule_commitment_sha256=schedule,
+            abort_event_id=abort_event_id,
+            abort_event_seq=1 + len(started_arm_roots),
+            runner_event_root_sha256=event_root,
+            cancel_kind="infrastructure",
+            safe_failure_code=safe_failure_code,
+            terminate_scope=False,
+            started_arm_roots=started_arm_roots,
+            verifier_epoch=self.authority.verifier_epoch,
+            attestation_sha256=UNSIGNED_ATTESTATION_SHA256,
+        )
+        cancellation = self.authority.attest_cancellation(
+            unsigned, attempt=attempt, plan=plan
+        )
+        cancelled = self.bank.cancel_open_attempt(
+            attempt.attempt_id, cancellation
+        )
+        self.checkpoint()
+        assert (
+            self.loaded.snapshot.checkpoint.checkpoint_kind == "probe_terminal"
+        )
+        return cancelled
+
+
+class V5ProbeHarness(V5ProbeMixin, V5Harness):
+    """Harness with the probe-unit execution surface enabled."""
 
 
 def build_v5_experiment(

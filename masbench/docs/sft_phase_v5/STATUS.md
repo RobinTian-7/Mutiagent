@@ -11,7 +11,7 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 3 | done | 02806a16+ | PASS | engine v3 7P; regression 28P + exp-graph v3 10P | 0 | binder-dispatched edge law; image_loaded only |
 | 4 | done | 59e8c483+ | PASS | v5 generation 5P; SFT targeted 225P | 0 | context/lease/abort closed; renderer + metered fake e2e |
 | 5 | done | d8c71fe2+ | PASS | pair consumer 3P; SFT targeted 228P; factor bank 181P | 0 | adapter+consumer closed; one pair == one vote |
-| 6 | pending | — | — | — | 0 | six-unit probe + recovery |
+| 6 | done | 47e313d7+ | PASS | probe 9P; regression batch 50P (incl saga/store) | 0 | native-reducer scenarios; crash + half-pair settle |
 | 7 | pending | — | — | — | 0 | failure/repair/branch loop |
 | 8 | pending | — | — | — | 0 | FINAL_VAL whole-snapshot gate |
 | 9 | pending | — | — | — | 0 | TEST facade + result ledger |

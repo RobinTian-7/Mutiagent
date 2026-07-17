@@ -1837,9 +1837,28 @@ class SingleWriterPilotStore:
                     "probe-open checkpoint requires a reserved first-arm execution"
                 )
         elif kind == "probe_terminal":
-            if stage.state != "completed":
+            # The admissible second-arm lease states depend on how the
+            # attempt settled: a complete pair proves both crossings, an
+            # incomplete/quarantined pair may carry a permanently
+            # indeterminate crossing, and a cancelled pair may legitimately
+            # settle before its second crossing ever started (no-retry makes
+            # every such lease state terminal for this logical arm).
+            attempt_state = witness.attempt_state
+            if attempt_state == "complete":
+                allowed_states = {"completed"}
+            elif attempt_state in {"incomplete", "quarantine"}:
+                allowed_states = {"completed", "indeterminate"}
+            else:
+                allowed_states = {
+                    "completed",
+                    "indeterminate",
+                    "reserved",
+                    "failed_before_start",
+                }
+            if stage.state not in allowed_states:
                 raise PilotStateTransitionError(
-                    "probe-terminal checkpoint requires a completed second arm"
+                    "probe-terminal checkpoint requires a terminal second arm "
+                    "consistent with the attempt settlement"
                 )
         elif owner.state != "completed" or stage != owner:
             raise PilotStateTransitionError(
