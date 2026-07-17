@@ -2716,9 +2716,18 @@ class SingleWriterPilotStore:
                 "provider crossing expected a stale component recovery root"
             )
         if lease.split == "FINAL_VAL" or lease.operation_kind == "final_val":
-            if recovery.origin != "scientific_bundle":
+            # FINAL_VAL evidence must precede the gate receipt, yet promotion
+            # requires the settled gate checkpoint — so a promoted bundle
+            # cannot be a precondition here.  The honest quiescence law:
+            # FINAL_VAL crossings run against either the promoted head or an
+            # unpromoted head whose latest checkpoint is a settled
+            # ``probe_terminal`` (no TRAIN provider stage is in flight).
+            if recovery.origin != "scientific_bundle" and (
+                recovery.checkpoint is None
+                or recovery.checkpoint.checkpoint_kind != "probe_terminal"
+            ):
                 raise PilotStateTransitionError(
-                    "FINAL_VAL cannot run with unpromoted component state"
+                    "FINAL_VAL cannot run while a TRAIN stage is in flight"
                 )
             return
         checkpoint = recovery.checkpoint
@@ -3356,6 +3365,70 @@ class SingleWriterPilotStore:
                 operation_id=operation_id,
                 request_sha256=operation_request_sha256,
                 operation_kind="complete_execution",
+                result_key=logical_execution_key,
+                result_sha256=result_sha,
+            )
+            return self._load_execution(connection, logical_execution_key)
+
+    def abandon_reserved_execution(
+        self,
+        logical_execution_key: str,
+        *,
+        operation_id: str,
+        operation_request_sha256: str,
+        reason: str,
+    ) -> PilotExecutionLeaseV1:
+        """Terminalize one never-started reserved execution as unspendable.
+
+        The frozen physical block order is linear, but a probe plan may
+        legitimately settle before its reserve units run.  Those blocks are
+        then skipped honestly: the lease becomes ``failed_before_start`` with
+        a receipted reason, no call may ever have existed for it, and the
+        logical arm remains globally consumed (no alias can respend it).
+        """
+
+        require_opaque_id(reason, field_name="reason")
+        result_sha = canonical_sha256(
+            {
+                "logical_execution_key": logical_execution_key,
+                "state": "failed_before_start",
+                "reason": reason,
+            }
+        )
+        with self._write_transaction() as connection:
+            self._require_active(connection)
+            if self._operation_already_applied(
+                connection,
+                operation_id=operation_id,
+                request_sha256=operation_request_sha256,
+                operation_kind="abandon_execution",
+                result_key=logical_execution_key,
+                result_sha256=result_sha,
+            ):
+                return self._load_execution(connection, logical_execution_key)
+            lease = self._load_execution(connection, logical_execution_key)
+            if lease.state != "reserved":
+                raise PilotStateTransitionError(
+                    "only a never-started reserved execution can be abandoned"
+                )
+            rows = connection.execute(
+                "SELECT COUNT(*) FROM call_receipt WHERE logical_execution_key=?",
+                (logical_execution_key,),
+            ).fetchone()
+            if int(rows[0]) != 0:
+                raise PilotStateTransitionError(
+                    "an execution with reserved calls cannot be abandoned"
+                )
+            connection.execute(
+                "UPDATE execution_lease SET state='failed_before_start' "
+                "WHERE logical_execution_key=?",
+                (logical_execution_key,),
+            )
+            self._insert_operation(
+                connection,
+                operation_id=operation_id,
+                request_sha256=operation_request_sha256,
+                operation_kind="abandon_execution",
                 result_key=logical_execution_key,
                 result_sha256=result_sha,
             )

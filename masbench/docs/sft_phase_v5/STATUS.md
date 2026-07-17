@@ -13,7 +13,7 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 5 | done | d8c71fe2+ | PASS | pair consumer 3P; SFT targeted 228P; factor bank 181P | 0 | adapter+consumer closed; one pair == one vote |
 | 6 | done | 47e313d7+ | PASS | probe 9P; regression batch 50P (incl saga/store) | 0 | native-reducer scenarios; crash + half-pair settle |
 | 7 | done | 32198452+ | PASS | train loop 2P | 0 | Bank-truth scheduler; capacity pre-call rejection |
-| 8 | pending | — | — | — | 0 | FINAL_VAL whole-snapshot gate |
+| 8 | done | 2f550776+ | PASS | final_val 3P | 0 | strict gate + promotion; quiescence law |
 | 9 | pending | — | — | — | 0 | TEST facade + result ledger |
 | 10 | pending | — | — | — | 0 | controls + equal budget driver |
 | 11 | pending | — | — | — | 0 | full regression + docs |

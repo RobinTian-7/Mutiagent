@@ -219,6 +219,55 @@ def reserve_scheduled_execution(
     )
 
 
+def skip_settled_probe_blocks(
+    store: Any,
+    *,
+    schedule: Any,
+    ordinals: tuple[int, ...],
+    action_id: str | None = None,
+    reason: str = "probe_plan_settled_before_reserve_units",
+) -> tuple[str, ...]:
+    """Honestly consume unused probe blocks after early plan settlement.
+
+    Each skipped block is reserved exactly as frozen and immediately
+    terminalized as ``failed_before_start`` with a receipted reason, keeping
+    the linear physical order law intact without ever starting a call.
+    """
+
+    from masbench.sft_pilot.schema import canonical_sha256
+
+    skipped: list[str] = []
+    for entry in sorted(
+        schedule.entries, key=lambda item: item.physical_block_ordinal
+    ):
+        arm = entry.logical_arm
+        if arm.operation_kind not in {"source_probe", "target_probe"}:
+            continue
+        if arm.execution_ordinal not in ordinals:
+            continue
+        key = f"skipped-probe-{arm.execution_ordinal}-{arm.pair_arm}"
+        reserve_scheduled_execution(
+            store,
+            schedule=schedule,
+            logical_arm=arm,
+            logical_execution_key=key,
+            action_id=action_id,
+        )
+        payload = {
+            "domain": "sft-pilot-abandon-execution-v1",
+            "logical_execution_key": key,
+            "reason": reason,
+        }
+        store.abandon_reserved_execution(
+            key,
+            operation_id=f"op-abandon:{canonical_sha256(payload)[:24]}",
+            operation_request_sha256=canonical_sha256(payload),
+            reason=reason,
+        )
+        skipped.append(key)
+    return tuple(skipped)
+
+
 def execute_metered_generation_call(
     *,
     store: Any,
