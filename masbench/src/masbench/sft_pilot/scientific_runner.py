@@ -20,6 +20,7 @@ from typing import Any
 from masbench.core.config import RunConfig
 from masbench.sft_phase_pilot import (
     _decode_master_key,
+    _derive_key,
     _load_frozen_protocol,
     _validate_v4_protocol,
 )
@@ -28,6 +29,37 @@ from masbench.sft_pilot.store import DATABASE_FILENAME
 
 V5_PROFILE = "phase_v5_executable_sft"
 _MAX_FROZEN_INPUT_BYTES = 8 * 1024 * 1024
+
+# v5 key-derivation law.  Domains are distinct from every v3/v4 domain so a
+# v5 experiment can never silently reopen (or be reopened by) an older
+# profile's authenticated state.
+V5_STORE_KEY_DOMAIN = b"pilot-store-v5"
+V5_PHASE_KEY_DOMAIN = b"phase-registry-v5"
+V5_FACTOR_KEY_DOMAIN = b"factor-bank-v5"
+V5_SOURCE_AUTHORITY_KEY_DOMAIN = b"source-authority-v5"
+
+
+def derive_v5_component_keys(master: bytes) -> dict[str, bytes]:
+    """Derive the four v5 state keys from the host master key."""
+
+    return {
+        "store": _derive_key(master, V5_STORE_KEY_DOMAIN),
+        "phase_registry": _derive_key(master, V5_PHASE_KEY_DOMAIN),
+        "factor_bank": _derive_key(master, V5_FACTOR_KEY_DOMAIN),
+        "source_authority": _derive_key(master, V5_SOURCE_AUTHORITY_KEY_DOMAIN),
+    }
+
+
+def derive_v5_runtime_role_key(master: bytes, role: str) -> bytes:
+    """Derive one runtime authority role key under a role-separated domain."""
+
+    return _derive_key(master, b"runtime-role-v5:" + role.encode("ascii"))
+
+
+def derive_v5_bootstrap_role_key(master: bytes, role: str) -> bytes:
+    """Derive one bootstrap authority role key under a role-separated domain."""
+
+    return _derive_key(master, b"bootstrap-role-v5:" + role.encode("ascii"))
 
 
 def _read_frozen_input(path_value: str | None, *, description: str) -> bytes:
@@ -134,6 +166,27 @@ def run_phase_v5_executable_sft(
     protocol = _load_frozen_protocol(cfg.sft_protocol_path)
     _validate_v5_protocol(protocol, cfg, agent_counts=agent_counts)
 
+    # Seal closure: the experiment root must bind this exact protocol and
+    # both frozen authority manifests before the store may even be opened.
+    from masbench.sft_pilot.experiment import (
+        load_experiment_seal,
+        load_sealed_authority_manifests,
+        validate_experiment_seal,
+    )
+
+    seal = load_experiment_seal(str(cfg.sft_experiment_manifest_path))
+    runtime_authority, bootstrap_authority = load_sealed_authority_manifests(
+        seal,
+        runtime_authority_path=str(cfg.sft_runtime_authority_path),
+        bootstrap_authority_path=str(cfg.sft_bootstrap_authority_path),
+    )
+    validate_experiment_seal(
+        seal,
+        runtime_authority=runtime_authority,
+        bootstrap_authority=bootstrap_authority,
+        protocol=protocol,
+    )
+
     state_root = Path(str(cfg.sft_state_dir))
     database_path = state_root / DATABASE_FILENAME
     try:
@@ -148,9 +201,8 @@ def run_phase_v5_executable_sft(
         )
 
     raise RuntimeError(
-        "phase_v5_executable_sft is fail-closed: this build cannot verify a "
-        "sealed experiment manifest yet, so no scientific execution is "
-        "authorized"
+        "phase_v5_executable_sft is fail-closed: the scientific execution "
+        "loop is not authorized in this build"
     )
 
 

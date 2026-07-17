@@ -220,6 +220,30 @@ def component_bundle_state_sha256(
     )
 
 
+def component_genesis_sha256_from_envelope_digests(
+    *,
+    phase_registry_envelope_sha256: str,
+    factor_bank_envelope_sha256: str,
+) -> str:
+    """Derive the generation-zero commitment from already-frozen digests.
+
+    Manifest-level authorities (e.g. the v5 experiment seal) pin envelope
+    digests, not raw bytes; this shares the exact bundle body law with
+    :func:`component_bundle_state_sha256` so the two derivations can never
+    drift.  Byte-level validation still happens wherever real bytes exist.
+    """
+
+    return canonical_sha256(
+        _component_bundle_body(
+            generation=0,
+            scientific_commit_ordinal=None,
+            phase_registry_envelope_sha256=phase_registry_envelope_sha256,
+            factor_bank_envelope_sha256=factor_bank_envelope_sha256,
+            previous_bundle_sha256=ZERO_SHA256,
+        )
+    )
+
+
 _CHECKPOINT_PREDECESSORS: dict[
     PilotComponentCheckpointKind, frozenset[PilotComponentCheckpointKind]
 ] = {

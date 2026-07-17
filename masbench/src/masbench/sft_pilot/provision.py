@@ -120,6 +120,7 @@ def provision_pilot_store(
     factor_bank_envelope_bytes: bytes,
     structural_anchor: StructuralAnchorBundleV1 | None = None,
     structural_anchor_plan: StructuralAnchorPlanV1 | None = None,
+    execution_schedule: object | None = None,
 ) -> PilotProvisioningReceipt:
     """Record and reverify the exact generation-zero pilot state.
 
@@ -178,6 +179,7 @@ def provision_pilot_store(
         root,
         protocol=protocol,
         hmac_key=store_hmac_key,
+        execution_schedule=execution_schedule,
     ) as store:
         snapshot = store.record_genesis_component_bundle(
             operation_id="sft-provision-genesis-v1",
