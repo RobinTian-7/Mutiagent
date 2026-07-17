@@ -116,6 +116,33 @@ class V5BranchReceiptAuthority:
             return False
 
 
+def pending_repair_opportunities(bank: Any) -> tuple[Any, ...]:
+    """Return the Bank-truth queue of open repair opportunities.
+
+    The scheduler owns no hidden state: an opportunity is pending exactly
+    when the Bank holds it, no proposal decision has consumed it, and its
+    expiry sequence has not passed.  Order is the Bank's creation order.
+    """
+
+    state = bank.to_state()
+    consumed = {item.repair_opportunity_id for item in state.proposal_decisions}
+    return tuple(
+        item
+        for item in state.repair_opportunities
+        if item.opportunity_id not in consumed
+        and item.expiry_seq > state.event_seq
+    )
+
+
+def branch_assignment_counts(bank: Any) -> dict[str, int]:
+    """Bank-truth reuse/mutate/fresh exposure counters (no caller cache)."""
+
+    counts = {"reuse": 0, "mutate": 0, "fresh": 0}
+    for assignment in bank.to_state().branch_assignments:
+        counts[assignment.branch] += 1
+    return counts
+
+
 def v5_factor_capabilities_factory(
     *,
     authority: Any,

@@ -663,6 +663,48 @@ class V5Harness:
             observation, feasible_branches=(branch,)
         )
         assert opportunity is not None
+        return self.prepare_action_from(
+            edge, opportunity, observation, expected_branch=branch
+        )
+
+    def prepare_action_from(
+        self,
+        edge,
+        opportunity,
+        observation,
+        *,
+        expected_branch: str,
+        source_factor=None,
+        source_composition=None,
+    ):
+        from exp_graph.mas.factor_bank_v2 import (
+            ProposalCursorV1,
+            ProposalRequestV1,
+            SFTProposalInputV1,
+            proposal_counter_state_sha256,
+        )
+        from exp_graph.mas.sft_proposal import (
+            ExactFactorLocusV1,
+            ExactProposalCellV1,
+            select_exact_edge_proposal,
+        )
+        from masbench.sft_pilot.request_renderer import (
+            GENERATION_POLICY_SHA256,
+            PROMPT_TEMPLATE_SHA256,
+            SCALAR_OUTPUT_SCHEMA_SHA256,
+        )
+
+        branch = expected_branch
+        if source_factor is not None or source_composition is not None:
+            # Repairing a deployed-bad composition: the failing composition
+            # becomes the proposal source cell.
+            assert source_factor is not None and source_composition is not None
+            edge = edge.model_copy(
+                update={
+                    "source_factor": source_factor,
+                    "source_composition": source_composition,
+                }
+            )
         locus = ExactFactorLocusV1(
             carrier="phase_program",
             slot_id=edge.transition.slot_id,
