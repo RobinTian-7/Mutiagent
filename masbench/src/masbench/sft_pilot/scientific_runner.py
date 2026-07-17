@@ -219,6 +219,99 @@ def reserve_scheduled_execution(
     )
 
 
+def all_scientific_state_roots(*, store: Any, loaded: Any) -> dict[str, str]:
+    """Every scientific-state root a frozen TEST run must leave untouched."""
+
+    from masbench.sft_pilot.schema import canonical_sha256
+
+    bundle = store.latest_component_bundle()
+    bank_state = loaded.bank.to_state()
+    return {
+        "store_commit_head_sha256": store.commit_head_sha256,
+        "store_budget_ledger_root_sha256": store.budget_ledger_root_sha256,
+        "store_operation_ledger_root_sha256": (
+            store.operation_ledger_root_sha256
+        ),
+        "component_bundle_sha256": bundle.metadata.bundle_sha256,
+        "component_bundle_generation": str(bundle.metadata.generation),
+        "factor_bank_state_sha256": loaded.bank.scientific_state_sha256,
+        "phase_registry_state_sha256": loaded.registry.scientific_state_sha256,
+        "deployment_heads_sha256": canonical_sha256(
+            tuple(
+                sorted(
+                    bank_state.deployment_heads,
+                    key=lambda i: i.deployment_slot_id,
+                )
+            )
+        ),
+        "proposal_counters_sha256": canonical_sha256(
+            bank_state.proposal_lifetime_counters
+        ),
+        "failures_sha256": canonical_sha256(bank_state.failures),
+    }
+
+
+def run_frozen_test_readonly(
+    *,
+    store: Any,
+    loaded: Any,
+    seal: Any,
+    protocol: Any,
+    test_manifest: Any,
+    ledger: Any,
+    test_executor: Any,
+) -> Any:
+    """Run the sealed TEST manifest with zero writer capability.
+
+    The executor receives only the frozen manifest and a read-only deployment
+    view (Bank snapshot facade plus safe head identifiers) and must return
+    ``(report_sha256, metrics)`` where metrics are safe scalars.  All
+    scientific roots are captured before and after; any difference aborts
+    without writing a result row.  TEST failures never enter failure memory —
+    there is no writer to enter them with.
+    """
+
+    from masbench.sft_pilot.result_ledger import PilotTestManifestV1
+
+    manifest = PilotTestManifestV1.model_validate(
+        test_manifest.model_dump(mode="python")
+    )
+    if manifest.digest != seal.test_manifest_sha256:
+        raise ValueError("TEST manifest differs from its sealed commitment")
+    before = all_scientific_state_roots(store=store, loaded=loaded)
+    snapshot = loaded.bank.read_only_snapshot()
+    bank_state = loaded.bank.to_state()
+    deployment_view = {
+        "heads": tuple(
+            {
+                "slot_id": head.deployment_slot_id,
+                "active_snapshot_id": head.active_snapshot_id,
+                "active_composition_id": head.active_composition_id,
+                "generation": head.generation,
+            }
+            for head in sorted(
+                bank_state.deployment_heads,
+                key=lambda item: item.deployment_slot_id,
+            )
+        ),
+    }
+    report_sha256, metrics = test_executor(
+        manifest, snapshot, deployment_view
+    )
+    after = all_scientific_state_roots(store=store, loaded=loaded)
+    if before != after:
+        raise RuntimeError(
+            "frozen TEST run mutated scientific state; result withheld"
+        )
+    return ledger.append(
+        row_kind="test_report",
+        experiment_seal_sha256=seal.digest,
+        protocol_sha256=protocol.digest,
+        report_sha256=report_sha256,
+        metrics=metrics,
+    )
+
+
 def skip_settled_probe_blocks(
     store: Any,
     *,

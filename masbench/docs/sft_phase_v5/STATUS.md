@@ -14,7 +14,7 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 6 | done | 47e313d7+ | PASS | probe 9P; regression batch 50P (incl saga/store) | 0 | native-reducer scenarios; crash + half-pair settle |
 | 7 | done | 32198452+ | PASS | train loop 2P | 0 | Bank-truth scheduler; capacity pre-call rejection |
 | 8 | done | 2f550776+ | PASS | final_val 3P | 0 | strict gate + promotion; quiescence law |
-| 9 | pending | — | — | — | 0 | TEST facade + result ledger |
+| 9 | done | e989e852+ | PASS | result ledger 4P | 0 | roots-identical TEST; chained external ledger |
 | 10 | pending | — | — | — | 0 | controls + equal budget driver |
 | 11 | pending | — | — | — | 0 | full regression + docs |
 | 12 | NOT RUN | — | — | — | 0 | paid pilot outside this task's authorization |

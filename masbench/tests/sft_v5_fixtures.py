@@ -469,6 +469,7 @@ class V5Experiment:
     anchor_runtime: StructuralAnchorRuntimeV1
     provision_receipt: PilotExperimentProvisionReceipt
     component_keys: dict[str, bytes]
+    test_manifest: object = None
 
     def run_config(self, **updates: object) -> RunConfig:
         values: dict[str, object] = {
@@ -1419,6 +1420,16 @@ def build_v5_experiment(
         arms=arms,
     )
 
+    from masbench.sft_pilot.result_ledger import PilotTestManifestV1
+
+    test_manifest = PilotTestManifestV1(
+        test_id="sft-v5-frozen-test",
+        experiment_id="sft-v5-experiment",
+        case_commitments=tuple(
+            sorted(_h(f"test-case-{index}") for index in range(3))
+        ),
+        scoring_policy_sha256=_h("sft-v5-test-scoring-policy"),
+    )
     method_arms = ("sft_unified", "ect_whole_transaction")
     experiment = PilotExperimentManifestV1(
         experiment_id="sft-v5-experiment",
@@ -1548,7 +1559,7 @@ def build_v5_experiment(
         final_val_case_manifest_sha256=split_case_manifest_sha256(
             cases, split="FINAL_VAL"
         ),
-        test_manifest_sha256=_h("sft-v5-test-manifest-commitment"),
+        test_manifest_sha256=test_manifest.digest,
         report_manifest_sha256=_h("sft-v5-report-manifest-commitment"),
         state_genesis_sha256=genesis,
     )
@@ -1607,4 +1618,5 @@ def build_v5_experiment(
         anchor_runtime=anchor_runtime,
         provision_receipt=receipt,
         component_keys=keys,
+        test_manifest=test_manifest,
     )
