@@ -505,6 +505,337 @@ class V5Experiment:
         return derive_v5_runtime_role_key(self.master, role)
 
 
+class V5Harness:
+    """One coordinator-restored v5 experiment with real authority verifiers.
+
+    Shared by the generation/probe/pair test layers so every stage exercises
+    the same production wiring: real registry, real Bank verifiers, real saga
+    checkpoints, real store schedule, fake transport only.
+    """
+
+    def __init__(self, tmp_path: Path) -> None:
+        import hashlib as _hashlib
+
+        from masbench.sft_pilot.factor_authority import SFTPilotFactorAuthority
+        from masbench.sft_pilot.components import PilotComponentCoordinator
+        from masbench.sft_pilot.scientific_runner import (
+            V5BranchReceiptAuthority,
+            v5_factor_capabilities_factory,
+        )
+        from masbench.sft_pilot.store import SingleWriterPilotStore
+
+        self._sha = lambda value: _hashlib.sha256(
+            value.encode("utf-8")
+        ).hexdigest()
+        self.experiment = build_v5_experiment(tmp_path)
+        self.authority = SFTPilotFactorAuthority(
+            self.experiment.protocol,
+            pair_manifest=self.experiment.seal.pair_manifest,
+            attestation_key=self.experiment.runtime_role_key(
+                "factor_pair_adapter"
+            ),
+        )
+        anchor = self.experiment.seal.structural_anchor
+        self.branch_authority = V5BranchReceiptAuthority(
+            anchor_source_manifest_sha256=anchor.source_manifest_sha256,
+        )
+        self.store = SingleWriterPilotStore.open(
+            self.experiment.state_dir,
+            protocol=self.experiment.protocol,
+            hmac_key=self.experiment.component_keys["store"],
+            execution_schedule=self.experiment.seal.execution_schedule,
+        )
+        self.coordinator = PilotComponentCoordinator(
+            store=self.store,
+            phase_registry_key=self.experiment.component_keys["phase_registry"],
+            factor_bank_key=self.experiment.component_keys["factor_bank"],
+            manifest_verifier=self._verify_manifest,
+            factor_capabilities_factory=v5_factor_capabilities_factory(
+                authority=self.authority,
+                seal=self.experiment.seal,
+            ),
+            branch_receipt_verifier=self.branch_authority,
+        )
+        self.loaded = self.coordinator.restore_recovery_head()
+        self.checkpoint_ordinal = 0
+
+    def _verify_manifest(self, manifest: object) -> bool:
+        anchor = self.experiment.seal.structural_anchor
+        return bool(
+            manifest.manifest_sha256 == anchor.source_manifest_sha256
+            and manifest.split == "TRAIN_UPDATE"
+        )
+
+    def close(self) -> None:
+        self.store.close()
+
+    @property
+    def bank(self):
+        return self.loaded.bank
+
+    @property
+    def registry(self):
+        return self.loaded.registry
+
+    def checkpoint(self):
+        self.checkpoint_ordinal += 1
+        self.loaded = self.coordinator.checkpoint_loaded(
+            self.loaded,
+            operation_id=f"v5-checkpoint-{self.checkpoint_ordinal}",
+            operation_request_sha256=self._sha(
+                f"v5-checkpoint:{self.checkpoint_ordinal}"
+            ),
+        )
+        return self.loaded
+
+    def anchor_edge(self):
+        from exp_graph.mas.phase_factor_binding_v3 import (
+            register_phase_materialization_v3,
+        )
+
+        proofs = self.registry.to_state().proofs
+        return register_phase_materialization_v3(
+            registry=self.registry,
+            bank=self.bank,
+            proof=proofs[0].handle,
+        )
+
+    def prepare_action(self, branch: str, *, tag: str):
+        from exp_graph.mas.factor_bank_v2 import (
+            FailureObservationV2,
+            ProposalCursorV1,
+            ProposalRequestV1,
+            SFTProposalInputV1,
+            proposal_counter_state_sha256,
+        )
+        from exp_graph.mas.sft_proposal import (
+            ExactFactorLocusV1,
+            ExactProposalCellV1,
+            select_exact_edge_proposal,
+        )
+        from masbench.sft_pilot.request_renderer import (
+            GENERATION_POLICY_SHA256,
+            PROMPT_TEMPLATE_SHA256,
+            SCALAR_OUTPUT_SCHEMA_SHA256,
+        )
+
+        edge = self.anchor_edge()
+        observation = FailureObservationV2(
+            failure_id=f"failure:v5:{tag}",
+            failure_class="algorithm",
+            failed_stage="execute",
+            safe_failure_code="algorithm_failure",
+            composition_id=edge.source_composition.composition_id,
+            artifact_sha256=edge.source_composition.artifact_sha256,
+            created_seq=self.bank.to_state().event_seq + 1,
+        )
+        opportunity = self.bank.record_failure(
+            observation, feasible_branches=(branch,)
+        )
+        assert opportunity is not None
+        locus = ExactFactorLocusV1(
+            carrier="phase_program",
+            slot_id=edge.transition.slot_id,
+            logical_factor_id=edge.source_factor.logical_factor_id,
+            locator_surface="phase_field",
+            locator_path=edge.source_factor.locator.path,
+            locator_version=edge.source_factor.locator.locator_version,
+        )
+        cell = ExactProposalCellV1(
+            namespace=self.experiment.protocol.namespace,
+            locus=locus,
+            from_revision_id=edge.source_factor.revision_id,
+            canonical_from_factor_key_sha256=(
+                self.bank._factor_carrier_key_sha256(edge.source_factor)
+            ),
+            canonical_background_sha256=(
+                self.bank._canonical_direct_background_sha256(
+                    self.bank.to_state(),
+                    source=edge.source_composition,
+                    source_factor=edge.source_factor,
+                    slot_id=locus.slot_id,
+                )
+            ),
+        )
+        candidates, _root, _count = self.bank._proposal_candidate_slate(
+            opportunity=opportunity,
+            source_factor=edge.source_factor,
+            slot_id=locus.slot_id,
+        )
+        state = self.bank.to_state()
+        proposal = select_exact_edge_proposal(
+            SFTProposalInputV1(
+                request=ProposalRequestV1(
+                    opportunity_id=opportunity.opportunity_id,
+                    cell=cell,
+                ),
+                cursor=ProposalCursorV1.empty(cell),
+                candidates=candidates,
+                proposal_counter_state_sha256=proposal_counter_state_sha256(
+                    tuple(
+                        item.witness
+                        for item in state.proposal_lifetime_counters
+                        if item.cell_sha256 == cell.scheduler_key_sha256
+                    )
+                ),
+                candidate_counter_witnesses=(
+                    self.bank._proposal_counter_witnesses(
+                        state,
+                        cell_sha256=cell.scheduler_key_sha256,
+                        candidates=candidates,
+                    )
+                ),
+            )
+        )
+        context = None
+        if branch in {"mutate", "fresh"}:
+            context = self.authority.make_generation_context(
+                opportunity=opportunity,
+                failure=observation,
+                proposal_receipt=proposal,
+                source=edge.source_composition,
+                source_factor=edge.source_factor,
+                source_manifest_sha256=(
+                    self.experiment.seal.structural_anchor.source_manifest_sha256
+                ),
+                generation_policy_sha256=GENERATION_POLICY_SHA256,
+                prompt_template_sha256=PROMPT_TEMPLATE_SHA256,
+                scalar_output_schema_sha256=SCALAR_OUTPUT_SCHEMA_SHA256,
+            )
+        decision, assignment, action = self.bank.screen_and_allocate_branch(
+            opportunity.opportunity_id,
+            proposal,
+            producer_epoch=self.authority.assignment_producer_epoch,
+            attestation_sha256=self.authority.proposal_action_attestation(
+                opportunity_id=opportunity.opportunity_id,
+                proposal_receipt_sha256=proposal.digest,
+            ),
+            generation_context=context,
+        )
+        assert assignment is not None and action is not None
+        assert assignment.branch == branch
+        return edge, opportunity, observation, proposal, context, action
+
+    def commit_mutate_edge(self, *, tag: str, generated_value: int = 2):
+        """Run the complete Stage-4 mutate slice and return the new edge."""
+
+        import json as _json
+
+        from exp_graph.mas.factor_bank import ExecutionUsage
+        from exp_graph.mas.phase_artifact_registry import (
+            PhaseGenerationTerminalV1,
+            phase_generated_scalar_sha256,
+        )
+        from exp_graph.mas.phase_factor_binding_v3 import (
+            reconcile_phase_proposal_action_v3,
+        )
+        from masbench.sft_pilot.llm_meter import FakeDeterministicPilotTransport
+        from masbench.sft_pilot.request_renderer import (
+            SafeSourceScalar,
+            parse_generated_scalar,
+            render_generation_request,
+        )
+        from masbench.sft_pilot.scientific_runner import (
+            execute_metered_generation_call,
+            reserve_scheduled_execution,
+        )
+
+        edge, _opp, _obs, _prop, context, action = self.prepare_action(
+            "mutate", tag=tag
+        )
+        arm = next(
+            item
+            for item in self.experiment.protocol.authorized_logical_arms
+            if item.operation_kind == "proposal_generation"
+        )
+        reserve_scheduled_execution(
+            self.store,
+            schedule=self.experiment.seal.execution_schedule,
+            logical_arm=arm,
+            logical_execution_key=f"v5-generation-owner-{tag}",
+            action_id=action.action_id,
+        )
+        self.checkpoint()
+        lease = self.authority.make_generation_lease(
+            action=action,
+            runner_session_id=f"v5-generation-runner:{tag}",
+            runner_lease_token_sha256=self._sha(f"gen-token:{tag}"),
+            journal_anchor_sha256=self._sha(f"gen-journal:{tag}"),
+        )
+        executing = self.bank.begin_proposal_generation(action.action_id, lease)
+        self.checkpoint()
+        rendered = render_generation_request(
+            context=context,
+            request=executing.generation_request,
+            scalar_type="int",
+            value_domain_description="an integer agent index in [0, 3)",
+            source_scalar=SafeSourceScalar(scalar_type="int", value=0),
+        )
+        response = execute_metered_generation_call(
+            store=self.store,
+            schedule=self.experiment.seal.execution_schedule,
+            logical_arm=arm,
+            logical_execution_key=f"v5-generation-owner-{tag}",
+            rendered=rendered,
+            transport=FakeDeterministicPilotTransport(
+                reply_factory=lambda _digest: _json.dumps(
+                    {"value": generated_value}
+                ),
+            ),
+            expected_component_recovery_root_sha256=(
+                self.loaded.snapshot.recovery_root_sha256
+            ),
+        )
+        value = parse_generated_scalar(response.text, scalar_type="int")
+        self.branch_authority.authorize_action(executing)
+        ingress = self.registry.issue_ingress(
+            self.experiment.seal.structural_anchor.source_manifest_sha256
+        )
+        request = executing.generation_request
+        generation_lease = executing.generation_lease
+        terminal = PhaseGenerationTerminalV1(
+            terminal_id=f"terminal:{tag}",
+            action_transaction_id=executing.action_id,
+            action_intent_sha256=executing.action_intent_sha256,
+            branch=executing.branch,
+            generation_request_id=request.request_id,
+            generation_request_sha256=request.digest,
+            generation_lease_id=generation_lease.lease_id,
+            generation_lease_sha256=generation_lease.digest,
+            runner_lease_token_sha256=generation_lease.runner_lease_token_sha256,
+            generation_lease_started_sequence=generation_lease.started_seq,
+            runtime_version=request.runtime_version,
+            budget=request.budget,
+            budget_sha256=request.budget_sha256,
+            usage=ExecutionUsage(
+                messages=1,
+                model_calls=1,
+                input_tokens=response.usage.prompt_tokens,
+                output_tokens=response.usage.completion_tokens,
+                wall_time_ms=500,
+                cost_microusd=(
+                    response.usage.prompt_tokens * 10
+                    + response.usage.completion_tokens * 40
+                ),
+            ),
+            generated_scalar_sha256=phase_generated_scalar_sha256(value),
+            response_envelope_sha256=self._sha(f"generation-response:{tag}"),
+            terminal_event_id=f"generation-event:{tag}",
+            terminal_event_sequence=generation_lease.started_seq + 1,
+            verifier_epoch=f"v5-generation-terminal:{tag}",
+            attestation_sha256=self._sha(f"generation-terminal:{tag}"),
+        )
+        result = reconcile_phase_proposal_action_v3(
+            registry=self.registry,
+            bank=self.bank,
+            action_id=executing.action_id,
+            generation_terminal=terminal,
+            generated_value=value,
+            ingress=ingress,
+        )
+        return result
+
+
 def build_v5_experiment(
     tmp_path: Path,
     *,

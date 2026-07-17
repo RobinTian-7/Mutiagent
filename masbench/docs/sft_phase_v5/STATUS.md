@@ -10,7 +10,7 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 2 | done | 0a2e0062+ | PASS | v5 experiment 9P; SFT targeted 213P | 0 | seal + idempotent provision + anchor genesis |
 | 3 | done | 02806a16+ | PASS | engine v3 7P; regression 28P + exp-graph v3 10P | 0 | binder-dispatched edge law; image_loaded only |
 | 4 | done | 59e8c483+ | PASS | v5 generation 5P; SFT targeted 225P | 0 | context/lease/abort closed; renderer + metered fake e2e |
-| 5 | pending | — | — | — | 0 | arm adapter + pair consumer |
+| 5 | done | d8c71fe2+ | PASS | pair consumer 3P; SFT targeted 228P; factor bank 181P | 0 | adapter+consumer closed; one pair == one vote |
 | 6 | pending | — | — | — | 0 | six-unit probe + recovery |
 | 7 | pending | — | — | — | 0 | failure/repair/branch loop |
 | 8 | pending | — | — | — | 0 | FINAL_VAL whole-snapshot gate |
