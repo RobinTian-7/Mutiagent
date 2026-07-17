@@ -209,20 +209,32 @@ def register_exact_phase_execution_result(
     order is taken from a freshly authenticated journal snapshot.  No outcome,
     answer, raw task input, model text, or caller activation root is accepted.
 
-    The current minimal boundary accepts only registry loci whose activation
-    requirement is ``execution_image_load``.  Step/submission loci fail closed
-    until ProtocolRunner exposes a trusted event capability for those events.
+    The frozen protocol's binder version selects the edge law: leaf-v2
+    protocols accept only ``RegisteredPhaseFactorEdgeV2``; full-factor-v3
+    protocols accept only ``RegisteredPhaseFactorEdgeV3`` and replay the
+    complete canonical bundle (locked skeleton + every unchanged scalar) so
+    an edge whose background drifted can never execute.
+
+    The boundary accepts only registry loci whose activation requirement is
+    ``execution_image_load``.  Step/submission loci fail closed until
+    ProtocolRunner exposes a trusted event capability for those events.
     """
 
     import hmac
 
     from exp_graph.mas.phase_artifact_registry import (
+        PHASE_FACTOR_BINDER_VERSION,
+        PHASE_FULL_FACTOR_BINDER_VERSION,
         PhaseArtifactRegistry,
         phase_materialization_event_sha256_v1,
     )
     from exp_graph.mas.phase_factor_binding_v2 import (
         RegisteredPhaseFactorEdgeV2,
         make_phase_v2_binding_verifier,
+    )
+    from exp_graph.mas.phase_factor_binding_v3 import (
+        RegisteredPhaseFactorEdgeV3,
+        make_phase_v3_binding_verifier,
     )
     from exp_graph.mas.sft_journal import (
         PairCompletePayloadV2,
@@ -247,9 +259,23 @@ def register_exact_phase_execution_result(
     checked_arm = PilotLogicalArmCoordinatesV1.model_validate(
         logical_arm.model_dump(mode="python")
     )
-    checked_edge = RegisteredPhaseFactorEdgeV2.model_validate(
-        registered_edge.model_dump(mode="python")
-    )
+    # The frozen protocol's binder version selects the edge law.  Re-parsing
+    # from a dump means a v2 edge can never impersonate a v3 edge (and vice
+    # versa): each model forbids the other's fields.
+    binder_version = checked_protocol.namespace.binder_version
+    if binder_version == PHASE_FULL_FACTOR_BINDER_VERSION:
+        checked_edge = RegisteredPhaseFactorEdgeV3.model_validate(
+            registered_edge.model_dump(mode="python")
+        )
+    elif binder_version == PHASE_FACTOR_BINDER_VERSION:
+        checked_edge = RegisteredPhaseFactorEdgeV2.model_validate(
+            registered_edge.model_dump(mode="python")
+        )
+    else:
+        raise ValueError(
+            "exact Phase execution requires an explicit leaf-v2 or "
+            "full-factor-v3 binder"
+        )
     if not isinstance(registry, PhaseArtifactRegistry):
         raise TypeError("exact Phase execution requires a live registry")
     if not isinstance(store, SingleWriterPilotStore):
@@ -309,14 +335,27 @@ def register_exact_phase_execution_result(
     proof = verified.proof
     if proof.handle != checked_edge.proof:
         raise ValueError("registered edge does not own the exact Phase proof")
-    binding_verifier = make_phase_v2_binding_verifier(registry)
+    if binder_version == PHASE_FULL_FACTOR_BINDER_VERSION:
+        # Full-factor closure: the background is the locked structural
+        # skeleton plus every unchanged scalar factor, and the verifier
+        # rebuilds the complete canonical bundle (exactly one scalar-leaf
+        # delta over an identical scalar domain) from the registry proof.
+        binding_verifier = make_phase_v3_binding_verifier(registry)
+        background_factors = (checked_edge.structural_factor,) + tuple(
+            item
+            for item in checked_edge.source_scalar_factors
+            if item.revision_id != checked_edge.transition.from_revision_id
+        )
+    else:
+        binding_verifier = make_phase_v2_binding_verifier(registry)
+        background_factors = (checked_edge.background_factor,)
     if not binding_verifier(
         checked_edge.transition,
         checked_edge.source_composition,
         checked_edge.target_composition,
         checked_edge.source_factor,
         checked_edge.target_factor,
-        (checked_edge.background_factor,),
+        background_factors,
     ):
         raise ValueError("registered edge differs from its canonical Phase bundle")
 

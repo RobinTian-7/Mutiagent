@@ -8,7 +8,7 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 0 | done | 3c6380d0 | PASS | masbench 590P/1F(env)→green after submodule init; exp-graph 783P | 0 | see stage_00_baseline.md |
 | 1 | done | fb2c52e7+ | PASS | v5 suite 34P; masbench full 631P | 0 | fail-closed profile; no runner yet |
 | 2 | done | 0a2e0062+ | PASS | v5 experiment 9P; SFT targeted 213P | 0 | seal + idempotent provision + anchor genesis |
-| 3 | pending | — | — | — | 0 | full-factor-v3 execution closure |
+| 3 | done | 02806a16+ | PASS | engine v3 7P; regression 28P + exp-graph v3 10P | 0 | binder-dispatched edge law; image_loaded only |
 | 4 | pending | — | — | — | 0 | proposal generation authority |
 | 5 | pending | — | — | — | 0 | arm adapter + pair consumer |
 | 6 | pending | — | — | — | 0 | six-unit probe + recovery |
