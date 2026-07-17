@@ -29,6 +29,15 @@ class RunConfig:
     # from the mutable state directory prevents a run from inventing its own
     # protocol after seeing outcomes.
     sft_protocol_path: str | None = None
+    # ``phase_v5_executable_sft`` additionally requires the externally frozen
+    # experiment seal plus both authority manifests, and a result directory
+    # for external (non-Bank) reports.  Every path must be absolute and the
+    # frozen inputs must be stable non-symlink regular files, so a run cannot
+    # swap its own authority after seeing outcomes.  No secret keys live here.
+    sft_experiment_manifest_path: str | None = None
+    sft_runtime_authority_path: str | None = None
+    sft_bootstrap_authority_path: str | None = None
+    sft_result_dir: str | None = None
     # 中文：B2（可选开启）：让 LLM 设计洞察 minister（大臣）审阅进化证据，在留出集上
     #   证伪洞察，把通过验证的洞察并入技能库（形成更丰富、驱动生成的设计规则）。
     #   默认关闭（额外 LLM 调用）。

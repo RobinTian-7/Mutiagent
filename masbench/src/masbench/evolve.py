@@ -237,6 +237,7 @@ def _validate_v2_config(cfg: RunConfig) -> None:
         "off",
         "phase_v3_shadow_register",
         "phase_v4_single_writer_preliminary",
+        "phase_v5_executable_sft",
     }:
         raise ValueError(f"unknown sft_profile {sft_profile!r}")
     if sft_profile == "off":
@@ -278,8 +279,68 @@ def _validate_v2_config(cfg: RunConfig) -> None:
             raise ValueError(
                 "phase_v4 forbids a planner model outside frozen gpt-4o-mini"
             )
+    elif sft_profile == "phase_v5_executable_sft":
+        # The executable profile is the only one allowed to spend scientific
+        # calls, so its entire authority surface must be pinned up front:
+        # every frozen input is a required absolute path, and the model
+        # surface is closed to fake or official-endpoint gpt-4o-mini at
+        # temperature zero with no planner-model split.
+        required_paths = {
+            "sft_protocol_path": protocol_path,
+            "sft_experiment_manifest_path": getattr(
+                cfg, "sft_experiment_manifest_path", None
+            ),
+            "sft_runtime_authority_path": getattr(
+                cfg, "sft_runtime_authority_path", None
+            ),
+            "sft_bootstrap_authority_path": getattr(
+                cfg, "sft_bootstrap_authority_path", None
+            ),
+            "sft_result_dir": getattr(cfg, "sft_result_dir", None),
+        }
+        for path_name, path_value in required_paths.items():
+            if not path_value:
+                raise ValueError(
+                    f"phase_v5_executable_sft requires {path_name}"
+                )
+            if not os.path.isabs(str(path_value)):
+                raise ValueError(
+                    f"phase_v5_executable_sft requires an absolute {path_name}"
+                )
+        if cfg.llm_provider not in {"fake", "openai"}:
+            raise ValueError(
+                "phase_v5 real mode requires the openai provider"
+            )
+        if cfg.llm_provider == "openai" and cfg.model_name != "gpt-4o-mini":
+            raise ValueError(
+                "phase_v5 real mode requires model_name gpt-4o-mini"
+            )
+        if cfg.llm_provider == "openai" and getattr(cfg, "base_url", None):
+            raise ValueError(
+                "phase_v5 real mode requires the official OpenAI endpoint"
+            )
+        planner_model = getattr(cfg, "planner_model_name", None)
+        if planner_model not in {None, "gpt-4o-mini"}:
+            raise ValueError(
+                "phase_v5 forbids a planner model outside frozen gpt-4o-mini"
+            )
+        if float(getattr(cfg, "temperature", 0.0)) != 0.0:
+            raise ValueError("phase_v5 requires temperature=0.0")
     elif protocol_path is not None:
-        raise ValueError("sft_protocol_path is only valid for the phase_v4 profile")
+        raise ValueError(
+            "sft_protocol_path is only valid for the phase_v4/v5 profiles"
+        )
+    if sft_profile != "phase_v5_executable_sft":
+        for v5_only_name in (
+            "sft_experiment_manifest_path",
+            "sft_runtime_authority_path",
+            "sft_bootstrap_authority_path",
+            "sft_result_dir",
+        ):
+            if getattr(cfg, v5_only_name, None) is not None:
+                raise ValueError(
+                    f"{v5_only_name} is only valid for the phase_v5 profile"
+                )
     if failure_policy != "honest_v2" or gate_policy != "strict_dense_v2":
         raise ValueError(
             "active SFT profile requires honest_v2 failures and strict_dense_v2 gate"
@@ -4249,10 +4310,16 @@ def run_evolution(
             )
         if (
             getattr(cfg, "sft_profile", "off")
-            == "phase_v4_single_writer_preliminary"
+            in {
+                "phase_v4_single_writer_preliminary",
+                "phase_v5_executable_sft",
+            }
             and workers != 1
         ):
-            raise ValueError("phase_v4 requires workers=1 for single-writer authority")
+            raise ValueError(
+                f"{getattr(cfg, 'sft_profile')} requires workers=1 for "
+                "single-writer authority"
+            )
         # Lazy import is a tested invariant: the legacy/default path must not
         # import SFT modules, read a key, create files, or add model calls.
         from masbench.sft_phase_pilot import run_sft_phase_evolution

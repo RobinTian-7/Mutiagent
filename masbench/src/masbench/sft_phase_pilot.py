@@ -43,6 +43,7 @@ from masbench.sft_pilot.store import (
 
 _STATE_KEY_ENV = "MASBENCH_SFT_STATE_KEY"
 _V4_PROFILE = "phase_v4_single_writer_preliminary"
+_V5_PROFILE = "phase_v5_executable_sft"
 _V4_STORE_KEY_DOMAIN = b"pilot-store-v1"
 _V4_PHASE_KEY_DOMAIN = b"phase-registry-v8"
 _V4_FACTOR_KEY_DOMAIN = b"factor-bank-v14"
@@ -316,8 +317,27 @@ def run_sft_phase_evolution(
     initial_skills: list[dict[str, Any]] | None = None,
     **_unused: Any,
 ) -> dict[str, Any]:
-    """Run the explicit mechanics-only SFT profile with zero model calls."""
+    """Route one active SFT profile; v3/v4 stay mechanics-only, v5 routes on.
 
+    This module remains profile routing only: the v5 orchestrator lives in
+    ``masbench.sft_pilot.scientific_runner`` and is imported lazily so the
+    mechanics-only profiles never load executable-runner code.
+    """
+
+    if cfg.sft_profile == _V5_PROFILE:
+        if held_out_rows is not None or initial_skills:
+            raise ValueError(
+                "phase_v5 rejects synthetic held-out rows and initial skills"
+            )
+        from masbench.sft_pilot.scientific_runner import (
+            run_phase_v5_executable_sft,
+        )
+
+        return run_phase_v5_executable_sft(
+            cfg,
+            agent_counts=agent_counts,
+            workers=workers,
+        )
     if cfg.sft_profile == _V4_PROFILE:
         if held_out_rows is not None or initial_skills:
             raise ValueError(

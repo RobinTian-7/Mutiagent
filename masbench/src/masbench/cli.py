@@ -192,6 +192,20 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
         sft_state_dir = str(Path(sft_state_dir).resolve())
     if sft_protocol_path is not None:
         sft_protocol_path = str(Path(sft_protocol_path).resolve())
+    sft_experiment_manifest = getattr(args, "sft_experiment_manifest", None)
+    if sft_experiment_manifest is not None:
+        sft_experiment_manifest = str(Path(sft_experiment_manifest).resolve())
+    sft_runtime_authority = getattr(args, "sft_runtime_authority", None)
+    if sft_runtime_authority is not None:
+        sft_runtime_authority = str(Path(sft_runtime_authority).resolve())
+    sft_bootstrap_authority = getattr(args, "sft_bootstrap_authority", None)
+    if sft_bootstrap_authority is not None:
+        sft_bootstrap_authority = str(Path(sft_bootstrap_authority).resolve())
+    sft_result_dir = getattr(args, "sft_result_dir", None)
+    if sft_result_dir is None and sft_profile == "phase_v5_executable_sft":
+        sft_result_dir = str((Path(args.out).resolve() / "sft-results").resolve())
+    elif sft_result_dir is not None:
+        sft_result_dir = str(Path(sft_result_dir).resolve())
     cfg = RunConfig(
         benchmark=args.benchmark,
         use_planner=True,
@@ -199,6 +213,10 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
         sft_profile=sft_profile,
         sft_state_dir=sft_state_dir,
         sft_protocol_path=sft_protocol_path,
+        sft_experiment_manifest_path=sft_experiment_manifest,
+        sft_runtime_authority_path=sft_runtime_authority,
+        sft_bootstrap_authority_path=sft_bootstrap_authority,
+        sft_result_dir=sft_result_dir,
         planner_mode=getattr(args, "planner_mode", "topology_select"),
         evolved_mode=getattr(args, "planner_mode", "topology_select"),
         objective=args.objective,
@@ -665,12 +683,16 @@ def build_parser() -> argparse.ArgumentParser:
             "off",
             "phase_v3_shadow_register",
             "phase_v4_single_writer_preliminary",
+            "phase_v5_executable_sft",
         ],
         default="off",
         help=(
             "opt into the isolated Phase SFT control plane; v3 creates/loads "
-            "empty authenticated state and v4 restores a pre-provisioned "
-            "SQLite component bundle; neither runs probes or claims efficacy"
+            "empty authenticated state, v4 restores a pre-provisioned "
+            "SQLite component bundle (both mechanics-only, no probes or "
+            "efficacy claim), and v5 is the executable profile that "
+            "additionally requires a sealed experiment manifest plus both "
+            "frozen authority manifests"
         ),
     )
     p_evolve.add_argument(
@@ -683,7 +705,39 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "absolute path to a frozen PilotProtocolV1 JSON file; required "
-            "only by phase_v4_single_writer_preliminary"
+            "by phase_v4_single_writer_preliminary and phase_v5_executable_sft"
+        ),
+    )
+    p_evolve.add_argument(
+        "--sft-experiment-manifest",
+        default=None,
+        help=(
+            "absolute path to the sealed PilotExperimentManifestV1 JSON "
+            "file; required only by phase_v5_executable_sft"
+        ),
+    )
+    p_evolve.add_argument(
+        "--sft-runtime-authority",
+        default=None,
+        help=(
+            "absolute path to the frozen runtime authority manifest; "
+            "required only by phase_v5_executable_sft"
+        ),
+    )
+    p_evolve.add_argument(
+        "--sft-bootstrap-authority",
+        default=None,
+        help=(
+            "absolute path to the frozen bootstrap authority manifest; "
+            "required only by phase_v5_executable_sft"
+        ),
+    )
+    p_evolve.add_argument(
+        "--sft-result-dir",
+        default=None,
+        help=(
+            "external result-ledger directory for phase_v5_executable_sft "
+            "(active default: OUT/sft-results); never a Bank writer"
         ),
     )
     p_evolve.add_argument(

@@ -6,7 +6,7 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | Stage | State | Commit/HEAD | Exit Gate | Tests | Paid Calls | Notes |
 |---|---|---|---|---|---|---|
 | 0 | done | 3c6380d0 | PASS | masbench 590P/1F(env)→green after submodule init; exp-graph 783P | 0 | see stage_00_baseline.md |
-| 1 | pending | — | — | — | 0 | v5 profile + config closure |
+| 1 | done | fb2c52e7+ | PASS | v5 suite 34P; masbench full 631P | 0 | fail-closed profile; no runner yet |
 | 2 | pending | — | — | — | 0 | experiment manifest + provision |
 | 3 | pending | — | — | — | 0 | full-factor-v3 execution closure |
 | 4 | pending | — | — | — | 0 | proposal generation authority |
