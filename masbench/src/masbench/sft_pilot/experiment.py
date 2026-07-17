@@ -540,6 +540,44 @@ def provision_phase_v5_experiment(
     )
 
 
+def preview_experiment_budget(
+    seal: PilotExperimentSealV1,
+    protocol: PilotProtocolV1,
+) -> dict[str, object]:
+    """Pre-run worst-case call/token/cost preview for one sealed arm.
+
+    Cost uses the fixed conservative authorization coefficients (an upper
+    bound, not a provider list-price claim).  This function performs no
+    provisioning and no model call; it exists so a human can freeze the
+    budget before authorizing a paid pilot.
+    """
+
+    schedule = seal.execution_schedule
+    total_calls = sum(len(entry.calls) for entry in schedule.entries)
+    input_tokens = sum(
+        call.input_tokens_reserved
+        for entry in schedule.entries
+        for call in entry.calls
+    )
+    output_tokens = sum(
+        call.output_tokens_reserved
+        for entry in schedule.entries
+        for call in entry.calls
+    )
+    return {
+        "experiment_seal_sha256": seal.digest,
+        "protocol_sha256": protocol.digest,
+        "method_arm": protocol.method_arm,
+        "model_name": protocol.model_name,
+        "max_executions": len(schedule.entries),
+        "max_model_calls": total_calls,
+        "max_input_tokens": input_tokens,
+        "max_output_tokens": output_tokens,
+        "max_cost_microusd_upper_bound": input_tokens * 10 + output_tokens * 40,
+        "paid_calls_authorized": False,
+    }
+
+
 def load_sealed_authority_manifests(
     seal: PilotExperimentSealV1,
     *,
@@ -571,6 +609,7 @@ __all__ = [
     "derive_method_policy_sha256",
     "load_experiment_seal",
     "load_sealed_authority_manifests",
+    "preview_experiment_budget",
     "provision_phase_v5_experiment",
     "runtime_code_source_paths",
     "split_case_manifest_sha256",

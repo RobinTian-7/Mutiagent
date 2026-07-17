@@ -525,6 +525,20 @@ def run_phase_v5_executable_sft(
     protocol = _load_frozen_protocol(cfg.sft_protocol_path)
     _validate_v5_protocol(protocol, cfg, agent_counts=agent_counts)
 
+    # Paid-call protection: a real provider run additionally requires an
+    # explicit external authorization marker.  Nothing in this module ever
+    # constructs a provider client before this point, and the fake path
+    # never needs the marker.
+    if cfg.llm_provider == "openai" and (
+        os.environ.get("MASBENCH_SFT_PAID_PILOT_AUTHORIZED")
+        != "yes-i-authorize-paid-gpt-4o-mini-calls"
+    ):
+        raise RuntimeError(
+            "PAID_CALLS_NOT_AUTHORIZED: a real phase_v5 pilot requires the "
+            "MASBENCH_SFT_PAID_PILOT_AUTHORIZED marker plus a frozen budget "
+            "and external human authorization"
+        )
+
     # Seal closure: the experiment root must bind this exact protocol and
     # both frozen authority manifests before the store may even be opened.
     from masbench.sft_pilot.experiment import (

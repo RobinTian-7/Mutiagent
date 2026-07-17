@@ -257,20 +257,33 @@ def test_off_path_ignores_v5_fields_and_stays_lazy(
     class LegacyPathReached(RuntimeError):
         pass
 
-    for name in [m for m in sys.modules if m.startswith("masbench.sft_")]:
-        sys.modules.pop(name, None)
-    monkeypatch.setenv("MASBENCH_SFT_STATE_KEY", "not-a-key")
+    # Pop (but keep) the loaded SFT modules so a re-import would be visible;
+    # restore them afterwards or later test files would rebind fresh class
+    # objects while shared fixtures still hold the originals.
+    removed = {
+        name: sys.modules.pop(name)
+        for name in list(sys.modules)
+        if name.startswith("masbench.sft_")
+    }
+    try:
+        monkeypatch.setenv("MASBENCH_SFT_STATE_KEY", "not-a-key")
 
-    def stop(_cfg: RunConfig) -> None:
-        raise LegacyPathReached
+        def stop(_cfg: RunConfig) -> None:
+            raise LegacyPathReached
 
-    monkeypatch.setattr(evolve, "_build_llm_client", stop)
-    cfg = _v5_cfg(tmp_path, sft_profile="off")
-    with pytest.raises(LegacyPathReached):
-        _run(cfg)
-    assert "masbench.sft_phase_pilot" not in sys.modules
-    assert not any(
-        name.startswith("masbench.sft_pilot") for name in sys.modules
-    )
-    assert not (tmp_path / "state").exists()
-    assert not (tmp_path / "results").exists()
+        monkeypatch.setattr(evolve, "_build_llm_client", stop)
+        cfg = _v5_cfg(tmp_path, sft_profile="off")
+        with pytest.raises(LegacyPathReached):
+            _run(cfg)
+        assert "masbench.sft_phase_pilot" not in sys.modules
+        assert not any(
+            name.startswith("masbench.sft_pilot") for name in sys.modules
+        )
+        assert not (tmp_path / "state").exists()
+        assert not (tmp_path / "results").exists()
+    finally:
+        for name in [
+            m for m in sys.modules if m.startswith("masbench.sft_")
+        ]:
+            sys.modules.pop(name, None)
+        sys.modules.update(removed)

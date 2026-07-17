@@ -16,5 +16,5 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 8 | done | 2f550776+ | PASS | final_val 3P | 0 | strict gate + promotion; quiescence law |
 | 9 | done | e989e852+ | PASS | result ledger 4P | 0 | roots-identical TEST; chained external ledger |
 | 10 | done | ed07b60a+ | PASS | controls 3P | 0 | policy-gated backends; equal all-in verifier |
-| 11 | pending | — | — | — | 0 | full regression + docs |
-| 12 | NOT RUN | — | — | — | 0 | paid pilot outside this task's authorization |
+| 11 | done | 28b1c997+ | PASS | masbench full 677P; exp-graph full 783P | 0 | docs synced; order-dependence fixed |
+| 12 | NOT RUN (prepared) | — | — | — | 0 | guard+preview+template ready; needs human authorization |

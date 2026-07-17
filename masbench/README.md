@@ -289,3 +289,11 @@ So if a run dies mid-way: just re-run with `--resume` added.
     `results.json`/`results.csv` + `report.md`). See "Paper-grade experiments" above
     and `docs/experiments.md`.
 - Suites: exp_graph 248 passed, 1 skipped; masbench 77 passed.
+- SFT (Sealed Factor–Transition Bank) profiles: `--sft-profile
+  phase_v3_shadow_register` / `phase_v4_single_writer_preliminary` are
+  mechanics-only; `phase_v5_executable_sft` is the executable profile
+  (sealed experiment manifest, frozen authorities, single-writer recovery,
+  whole-snapshot FINAL_VAL gate, external result ledger). All are default-off
+  and make no efficacy claim; real pilots need explicit external
+  authorization. See `docs/sft_phase_v5_executable.md` and
+  `docs/sft_phase_v5/STATUS.md`.

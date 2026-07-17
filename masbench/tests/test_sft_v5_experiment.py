@@ -290,3 +290,44 @@ def test_authority_manifest_files_round_trip_canonically(experiment) -> None:
         experiment.bootstrap_authority_path.read_bytes()
         == published_manifest_bytes(experiment.bootstrap_authority)
     )
+
+
+def test_paid_pilot_guard_and_budget_preview(
+    experiment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real-provider run is impossible without the explicit external
+    authorization marker, and the budget preview derives the frozen worst
+    case without provisioning or calling anything."""
+
+    import masbench.evolve as evolve
+    from masbench.sft_pilot.experiment import preview_experiment_budget
+
+    preview = preview_experiment_budget(
+        experiment.seal, experiment.protocol
+    )
+    assert preview["max_model_calls"] == 15
+    assert preview["max_input_tokens"] == 15 * 1_024
+    assert preview["max_output_tokens"] == 15 * 256
+    assert preview["paid_calls_authorized"] is False
+
+    monkeypatch.setenv("MASBENCH_SFT_STATE_KEY", experiment.master.hex())
+    monkeypatch.delenv(
+        "MASBENCH_SFT_PAID_PILOT_AUTHORIZED", raising=False
+    )
+    cfg = experiment.run_config(
+        llm_provider="openai", model_name="gpt-4o-mini"
+    )
+    with pytest.raises(RuntimeError, match="PAID_CALLS_NOT_AUTHORIZED"):
+        evolve.run_evolution(
+            object(),
+            cases=None,
+            validation_cases=None,
+            agent_counts=[3],
+            train_seeds=[],
+            val_seeds=[],
+            cfg=cfg,
+            held_out_rows=None,
+            initial_skills=None,
+            workers=1,
+        )
