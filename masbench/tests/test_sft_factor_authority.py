@@ -628,11 +628,9 @@ def test_authenticated_lifecycle_round_trips_through_native_bank_load(
         **harness.authority.capabilities(harness.registry),
     )
     assert reloaded.to_state() == harness.bank.to_state()
-    assert set(harness.authority.uncovered_capabilities) == {
-        "proposal_generation_context_verifier",
-        "proposal_generation_lease_verifier",
-        "proposal_abort_verifier",
-    }
+    # Stage-4 closure: generation context/lease/abort verification is now
+    # authority-covered, so nothing remains uncovered.
+    assert set(harness.authority.uncovered_capabilities) == set()
     persisted = state_path.read_text(encoding="utf-8").casefold()
     for forbidden in ('"prompt"', '"answer"', '"ground_truth"', '"expected_output"'):
         assert forbidden not in persisted

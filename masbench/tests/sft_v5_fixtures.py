@@ -96,7 +96,7 @@ def _h(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def v5_namespace(*, n_agents: int = 2) -> ExecutionNamespace:
+def v5_namespace(*, n_agents: int = 3) -> ExecutionNamespace:
     return ExecutionNamespace(
         task_family="silo_bench",
         objective="balanced",
@@ -294,12 +294,54 @@ _ARM_ROLE = {
     "final_val": "final_deployment",
 }
 
+# The anchor's sole mutable locus is an int-typed hub slot; the generation
+# schedule entry pins the real renderer envelope over that frozen shape.
+ANCHOR_LOCATOR = "/phases/1/hub"
+ANCHOR_SCALAR_TYPE = "int"
+
+
+def _generation_envelope() -> tuple[str, str]:
+    from masbench.sft_pilot.factor_authority import derive_generation_budget
+    from masbench.sft_pilot.request_renderer import (
+        GENERATION_POLICY_SHA256,
+        PROMPT_TEMPLATE_SHA256,
+        RENDERER_POLICY_SHA256,
+        SCALAR_OUTPUT_SCHEMA_SHA256,
+        generation_request_envelope_sha256,
+    )
+
+    budget = derive_generation_budget(_phase_budgets("sft_unified")[0])
+    return (
+        generation_request_envelope_sha256(
+            locator_path=ANCHOR_LOCATOR,
+            scalar_type=ANCHOR_SCALAR_TYPE,
+            generation_policy_sha256=GENERATION_POLICY_SHA256,
+            prompt_template_sha256=PROMPT_TEMPLATE_SHA256,
+            scalar_output_schema_sha256=SCALAR_OUTPUT_SCHEMA_SHA256,
+            budget_sha256=budget.digest,
+        ),
+        RENDERER_POLICY_SHA256,
+    )
+
 
 def _execution_schedule(
     arms: tuple[PilotLogicalArmCoordinatesV1, ...],
 ) -> PilotExecutionScheduleV1:
+    generation_envelope, renderer_policy = _generation_envelope()
+    from masbench.sft_pilot.request_renderer import PROMPT_TEMPLATE_SHA256
+
     entries = []
     for index, arm in enumerate(arms):
+        if arm.operation_kind == "proposal_generation":
+            envelope = generation_envelope
+            renderer_sha = renderer_policy
+            template_sha = PROMPT_TEMPLATE_SHA256
+        else:
+            envelope = _h(
+                f"request-envelope-{index}-{arm.pair_id}-{arm.pair_arm}"
+            )
+            renderer_sha = _h("sft-v5-request-renderer")
+            template_sha = _h(f"prompt-template-{arm.operation_kind}")
         entries.append(
             PilotExecutionScheduleEntryV1(
                 logical_arm=arm,
@@ -309,13 +351,9 @@ def _execution_schedule(
                         call_slot=0,
                         input_tokens_reserved=1_024,
                         output_tokens_reserved=256,
-                        request_envelope_sha256=_h(
-                            f"request-envelope-{index}-{arm.pair_id}-{arm.pair_arm}"
-                        ),
-                        request_renderer_sha256=_h("sft-v5-request-renderer"),
-                        prompt_template_sha256=_h(
-                            f"prompt-template-{arm.operation_kind}"
-                        ),
+                        request_envelope_sha256=envelope,
+                        request_renderer_sha256=renderer_sha,
+                        prompt_template_sha256=template_sha,
                         json_mode=True,
                         artifact_role=_ARM_ROLE[arm.operation_kind],
                     ),

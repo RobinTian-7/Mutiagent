@@ -3,9 +3,10 @@
 The protocol, not an LLM, reconstructs the six outcome-before pairs, their
 balanced order, the assignment manifest, and every execution budget.  Every
 later receipt is authenticated with a distinct HMAC domain and is rechecked
-on native Bank load.  Proposal-generation context and lease authority are
-intentionally absent: states containing either fail closed until that separate
-capability is implemented and audited.
+on native Bank load.  Proposal generation is closed by the same key: the
+context, the one-shot lease, and honest aborts each carry a domain-separated
+attestation, so a caller can neither start a second model call for one action
+nor disguise a failed generation as a successful target.
 """
 
 from __future__ import annotations
@@ -22,17 +23,31 @@ from exp_graph.mas.factor_bank_v2 import (
     AssignmentReceiptV2,
     AttemptCancellationReceiptV3,
     BaseSnapshotReceiptV2,
+    CompositionRevisionV2,
+    DirectFactorTransitionV2,
     FactorBankStateV2,
+    FactorRevisionV2,
+    FailureObservationV2,
     GateReceiptV2,
     PairExecutionReceiptV2,
     ProbeAttemptV3,
     ProbePlanV2,
+    ProposalActionAbortReceiptV2,
+    ProposalActionV2,
+    ProposalCarrierAdmissionV1,
+    ProposalGenerationContextV1,
+    ProposalGenerationLeaseV1,
+    RepairOpportunityV2,
     RollbackTriggerV2,
     RunnerLeaseGrantV1,
     make_assignment_receipt_v2,
     make_pair_execution_receipt_v2,
+    make_proposal_action_abort_receipt_v2,
+    make_proposal_generation_context_v1,
+    make_proposal_generation_lease_v1,
     make_runner_lease_grant_v1,
 )
+from exp_graph.mas.sft_proposal import ProposalReceiptV1
 from exp_graph.mas.phase_artifact_registry import (
     PHASE_FACTOR_BINDER_VERSION,
     PHASE_FULL_FACTOR_BINDER_VERSION,
@@ -78,6 +93,10 @@ _BASE_SNAPSHOT_DOMAIN = "sft-pilot-factor-base-snapshot-v1"
 _GATE_DOMAIN = "sft-pilot-factor-gate-v1"
 _ROLLBACK_DOMAIN = "sft-pilot-factor-rollback-v1"
 _ARCHIVE_DOMAIN = "sft-pilot-factor-archive-v1"
+_GENERATION_CONTEXT_DOMAIN = "sft-pilot-proposal-generation-context-v1"
+_GENERATION_LEASE_DOMAIN = "sft-pilot-proposal-generation-lease-v1"
+_PROPOSAL_ABORT_DOMAIN = "sft-pilot-proposal-abort-v1"
+_PROPOSAL_ACTION_DOMAIN = "sft-pilot-proposal-action-v1"
 
 _SUPPORTED_METHOD_ARMS = frozenset(
     {
@@ -271,14 +290,41 @@ def _without_field(value: Any, field_name: str) -> dict[str, Any]:
     return value.model_dump(mode="python", exclude={field_name})
 
 
+def derive_generation_budget(train_budget: Any) -> ExecutionBudget:
+    """Derive the single-call generation budget from the frozen TRAIN budget.
+
+    Shared by the authority and by experiment authoring so the sealed
+    schedule and the runtime authority can never disagree on the budget.
+    """
+
+    if train_budget.executions < 1:
+        raise ValueError(
+            "generation budget requires at least one TRAIN_UPDATE execution"
+        )
+    for field_name in ("call_slots", "input_tokens", "output_tokens"):
+        if getattr(train_budget, field_name) % train_budget.executions:
+            raise ValueError(
+                f"TRAIN_UPDATE {field_name} must divide exactly across "
+                "its executions"
+            )
+    generation_input = train_budget.input_tokens // train_budget.executions
+    generation_output = train_budget.output_tokens // train_budget.executions
+    return ExecutionBudget(
+        max_messages=4,
+        max_model_calls=1,
+        max_input_tokens=generation_input,
+        max_output_tokens=generation_output,
+        max_wall_time_ms=60_000,
+        max_cost_microusd=generation_input * 10 + generation_output * 40,
+    )
+
+
 class SFTPilotFactorAuthority:
     """Deterministic signer/verifier bundle for one exact Phase pilot."""
 
-    uncovered_capabilities: tuple[str, ...] = (
-        "proposal_generation_context_verifier",
-        "proposal_generation_lease_verifier",
-        "proposal_abort_verifier",
-    )
+    # Every FactorBankV2 verifier capability is now authority-covered; this
+    # stays as the explicit (empty) record of that closure.
+    uncovered_capabilities: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -317,14 +363,33 @@ class SFTPilotFactorAuthority:
                 "protocol pair manifest is not the exact typed manifest"
             )
         self._key = bytes(attestation_key)
+        # A v5 protocol also authorizes generation and FINAL_VAL arms; Factor
+        # authority operates on exactly the probe subset (still exactly six
+        # typed pairs and twelve arms) and rejects any probe alias among them.
+        probe_arms = tuple(
+            item
+            for item in self.protocol.authorized_logical_arms
+            if item.operation_kind in {"source_probe", "target_probe"}
+        )
+        probe_pair_ids = {item.pair_id for item in probe_arms}
+        probe_pairs = tuple(
+            item
+            for item in self.pair_manifest.pairs
+            if item.pair_id in probe_pair_ids
+        )
+        self.probe_pair_manifest = (
+            self.pair_manifest
+            if len(probe_pairs) == len(self.pair_manifest.pairs)
+            else PilotPairManifestV1(pairs=probe_pairs)
+        )
         self._pairs = _reconstruct_authorized_pairs(
-            self.protocol.authorized_logical_arms,
-            pair_manifest=self.pair_manifest,
+            probe_arms,
+            pair_manifest=self.probe_pair_manifest,
         )
         self.factor_assignment_schedule_sha256 = (
             pilot_factor_assignment_schedule_sha256(
-                self.protocol.authorized_logical_arms,
-                pair_manifest=self.pair_manifest,
+                probe_arms,
+                pair_manifest=self.probe_pair_manifest,
             )
         )
         probe_budget = next(
@@ -351,6 +416,20 @@ class SFTPilotFactorAuthority:
             # hard authorization cap, not a provider list-price claim.
             max_cost_microusd=input_tokens * 10 + output_tokens * 40,
         )
+        train_budget = next(
+            (
+                item
+                for item in self.protocol.phase_budgets
+                if item.phase == "TRAIN_UPDATE"
+            ),
+            None,
+        )
+        if train_budget is None:
+            raise ValueError(
+                "factor generation protocol must authorize a TRAIN_UPDATE budget"
+            )
+        # One frozen model call per mutate/fresh action; reuse spends zero.
+        self.generation_budget = derive_generation_budget(train_budget)
         self.aggregate_policy = AggregatePolicyV1()
         suffix = self.protocol.digest[:24]
         self.verifier_epoch = f"sft-factor-authority:{suffix}"
@@ -1018,6 +1097,256 @@ class SFTPilotFactorAuthority:
         except (TypeError, ValueError):
             return False
 
+    def make_generation_context(
+        self,
+        *,
+        opportunity: RepairOpportunityV2,
+        failure: FailureObservationV2,
+        proposal_receipt: ProposalReceiptV1,
+        source: CompositionRevisionV2,
+        source_factor: FactorRevisionV2,
+        source_manifest_sha256: str,
+        generation_policy_sha256: str,
+        prompt_template_sha256: str,
+        scalar_output_schema_sha256: str,
+    ) -> ProposalGenerationContextV1:
+        """Seal one answer-free generation context under the authority key."""
+
+        unsigned = make_proposal_generation_context_v1(
+            opportunity=opportunity,
+            failure=failure,
+            proposal_receipt=proposal_receipt,
+            source=source,
+            source_factor=source_factor,
+            source_manifest_sha256=source_manifest_sha256,
+            train_update_source_catalog_sha256=(
+                self.protocol.source_manifest.source_catalog_sha256
+            ),
+            train_update_policy_sha256=(
+                self.protocol.source_manifest.source_policy_sha256
+            ),
+            generation_policy_sha256=generation_policy_sha256,
+            prompt_template_sha256=prompt_template_sha256,
+            scalar_output_schema_sha256=scalar_output_schema_sha256,
+            budget=self.generation_budget,
+            verifier_epoch=self.verifier_epoch,
+            attestation_sha256=UNSIGNED_ATTESTATION_SHA256,
+        )
+        signature = self._mac(
+            _GENERATION_CONTEXT_DOMAIN,
+            unsigned.model_dump(
+                mode="python", exclude={"context_id", "attestation_sha256"}
+            ),
+        )
+        return make_proposal_generation_context_v1(
+            opportunity=opportunity,
+            failure=failure,
+            proposal_receipt=proposal_receipt,
+            source=source,
+            source_factor=source_factor,
+            source_manifest_sha256=source_manifest_sha256,
+            train_update_source_catalog_sha256=(
+                self.protocol.source_manifest.source_catalog_sha256
+            ),
+            train_update_policy_sha256=(
+                self.protocol.source_manifest.source_policy_sha256
+            ),
+            generation_policy_sha256=generation_policy_sha256,
+            prompt_template_sha256=prompt_template_sha256,
+            scalar_output_schema_sha256=scalar_output_schema_sha256,
+            budget=self.generation_budget,
+            verifier_epoch=self.verifier_epoch,
+            attestation_sha256=signature,
+        )
+
+    def verify_generation_context(
+        self,
+        context: ProposalGenerationContextV1,
+        opportunity: RepairOpportunityV2,
+        proposal_receipt: Any,
+        source: CompositionRevisionV2,
+        source_factor: FactorRevisionV2,
+        state: FactorBankStateV2,
+    ) -> bool:
+        del opportunity, proposal_receipt, source_factor, state
+        try:
+            context = ProposalGenerationContextV1.model_validate(
+                context.model_dump(mode="python")
+            )
+            expected = self._mac(
+                _GENERATION_CONTEXT_DOMAIN,
+                context.model_dump(
+                    mode="python", exclude={"context_id", "attestation_sha256"}
+                ),
+            )
+            return bool(
+                context.verifier_epoch == self.verifier_epoch
+                and hmac.compare_digest(context.attestation_sha256, expected)
+                and context.namespace_digest == self.protocol.namespace.digest
+                and context.runtime_version
+                == self.protocol.namespace.runtime_version
+                and context.train_update_source_catalog_sha256
+                == self.protocol.source_manifest.source_catalog_sha256
+                and context.train_update_policy_sha256
+                == self.protocol.source_manifest.source_policy_sha256
+                and context.budget == self.generation_budget
+                and context.budget_sha256 == self.generation_budget.digest
+                and source.namespace.digest == self.protocol.namespace.digest
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def make_generation_lease(
+        self,
+        *,
+        action: ProposalActionV2,
+        runner_session_id: str,
+        runner_lease_token_sha256: str,
+        journal_anchor_sha256: str,
+    ) -> ProposalGenerationLeaseV1:
+        """Grant the single generation-1 model-call lease for one action."""
+
+        unsigned = make_proposal_generation_lease_v1(
+            action=action,
+            runner_session_id=runner_session_id,
+            runner_lease_token_sha256=runner_lease_token_sha256,
+            journal_anchor_sha256=journal_anchor_sha256,
+            verifier_epoch=self.verifier_epoch,
+            attestation_sha256=UNSIGNED_ATTESTATION_SHA256,
+        )
+        signature = self._mac(
+            _GENERATION_LEASE_DOMAIN,
+            unsigned.model_dump(
+                mode="python",
+                exclude={"lease_id", "attestation_sha256", "started_seq"},
+            ),
+            action_sha256=action.digest,
+        )
+        return make_proposal_generation_lease_v1(
+            action=action,
+            runner_session_id=runner_session_id,
+            runner_lease_token_sha256=runner_lease_token_sha256,
+            journal_anchor_sha256=journal_anchor_sha256,
+            verifier_epoch=self.verifier_epoch,
+            attestation_sha256=signature,
+        )
+
+    def verify_generation_lease(
+        self,
+        lease: ProposalGenerationLeaseV1,
+        action: ProposalActionV2,
+        state: FactorBankStateV2,
+    ) -> bool:
+        del state
+        try:
+            lease = ProposalGenerationLeaseV1.model_validate(
+                lease.model_dump(mode="python")
+            )
+            if action.generation_request is None:
+                return False
+            expected = self._mac(
+                _GENERATION_LEASE_DOMAIN,
+                lease.model_dump(
+                    mode="python",
+                    exclude={"lease_id", "attestation_sha256", "started_seq"},
+                ),
+                action_sha256=lease.expected_prepared_action_sha256,
+            )
+            return bool(
+                lease.verifier_epoch == self.verifier_epoch
+                and hmac.compare_digest(lease.attestation_sha256, expected)
+                and lease.action_id == action.action_id
+                and lease.generation_request_sha256
+                == action.generation_request.digest
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def make_abort_receipt(
+        self,
+        *,
+        action: ProposalActionV2,
+        reason: str,
+        safe_failure_code: str,
+        phase_terminal_sha256: str | None = None,
+        cleanup_transition: DirectFactorTransitionV2 | None = None,
+        cleanup_admission: ProposalCarrierAdmissionV1 | None = None,
+    ) -> ProposalActionAbortReceiptV2:
+        """Fence one honest abort; a success can never be forged from it."""
+
+        unsigned = make_proposal_action_abort_receipt_v2(
+            action=action,
+            reason=reason,
+            safe_failure_code=safe_failure_code,
+            verifier_epoch=self.verifier_epoch,
+            attestation_sha256=UNSIGNED_ATTESTATION_SHA256,
+            phase_terminal_sha256=phase_terminal_sha256,
+            cleanup_transition=cleanup_transition,
+            cleanup_admission=cleanup_admission,
+        )
+        signature = self._mac(
+            _PROPOSAL_ABORT_DOMAIN,
+            unsigned.model_dump(
+                mode="python",
+                exclude={"abort_id", "attestation_sha256", "emitted_seq"},
+            ),
+        )
+        return make_proposal_action_abort_receipt_v2(
+            action=action,
+            reason=reason,
+            safe_failure_code=safe_failure_code,
+            verifier_epoch=self.verifier_epoch,
+            attestation_sha256=signature,
+            phase_terminal_sha256=phase_terminal_sha256,
+            cleanup_transition=cleanup_transition,
+            cleanup_admission=cleanup_admission,
+        )
+
+    def verify_abort_receipt(
+        self,
+        receipt: ProposalActionAbortReceiptV2,
+        action: ProposalActionV2,
+        state: FactorBankStateV2,
+    ) -> bool:
+        del state
+        try:
+            receipt = ProposalActionAbortReceiptV2.model_validate(
+                receipt.model_dump(mode="python")
+            )
+            expected = self._mac(
+                _PROPOSAL_ABORT_DOMAIN,
+                receipt.model_dump(
+                    mode="python",
+                    exclude={"abort_id", "attestation_sha256", "emitted_seq"},
+                ),
+            )
+            return bool(
+                receipt.verifier_epoch == self.verifier_epoch
+                and hmac.compare_digest(receipt.attestation_sha256, expected)
+                and receipt.action_id == action.action_id
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def proposal_action_attestation(
+        self,
+        *,
+        opportunity_id: str,
+        proposal_receipt_sha256: str,
+    ) -> str:
+        """Attest one screen-and-allocate call before its action exists."""
+
+        require_sha256(
+            proposal_receipt_sha256, field_name="proposal_receipt_sha256"
+        )
+        return self._mac(
+            _PROPOSAL_ACTION_DOMAIN,
+            {
+                "opportunity_id": opportunity_id,
+                "proposal_receipt_sha256": proposal_receipt_sha256,
+            },
+        )
+
     def capabilities(self, registry: PhaseArtifactRegistry) -> dict[str, Any]:
         """Return the implemented verifier set, with no permissive callbacks."""
 
@@ -1059,6 +1388,11 @@ class SFTPilotFactorAuthority:
             "arm_receipt_verifier": arm_receipt_verifier,
             "pair_execution_receipt_verifier": self.verify_pair_execution,
             "cancellation_verifier": self.verify_cancellation,
+            "proposal_generation_context_verifier": (
+                self.verify_generation_context
+            ),
+            "proposal_generation_lease_verifier": self.verify_generation_lease,
+            "proposal_abort_verifier": self.verify_abort_receipt,
             "base_snapshot_verifier": self.verify_base_snapshot,
             "gate_verifier": self.verify_gate,
             "rollback_verifier": self.verify_rollback,

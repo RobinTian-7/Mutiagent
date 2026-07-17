@@ -608,6 +608,7 @@ class PilotComponentCoordinator:
         factor_bank_key: bytes,
         manifest_verifier: Callable[[SourceManifest], bool],
         factor_capabilities_factory: FactorCapabilitiesFactory = phase_factor_capabilities,
+        branch_receipt_verifier: Callable[[Any], bool] | None = None,
     ) -> None:
         if not store.protocol.component_bundle_required:
             raise PilotStateTransitionError(
@@ -622,6 +623,10 @@ class PilotComponentCoordinator:
         )
         self._manifest_verifier = manifest_verifier
         self._factor_capabilities_factory = factor_capabilities_factory
+        # None keeps the registry read-only for branch receipts (mechanics
+        # profiles); the executable profile installs a host verifier so
+        # sealed generation actions can materialize.
+        self._branch_receipt_verifier = branch_receipt_verifier
         self.phase_path = store.state_dir / PHASE_WORKING_FILENAME
         self.factor_path = store.state_dir / FACTOR_WORKING_FILENAME
 
@@ -632,6 +637,7 @@ class PilotComponentCoordinator:
             self.phase_path,
             registry_key=self._phase_key,
             manifest_verifier=self._manifest_verifier,
+            branch_receipt_verifier=self._branch_receipt_verifier,
         )
         bank = FactorBankV2.load(
             self.factor_path,

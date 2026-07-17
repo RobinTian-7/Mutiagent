@@ -9,6 +9,7 @@ not durably recorded.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 from typing import Protocol
@@ -148,6 +149,51 @@ def _sha256_bytes(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+class FakeDeterministicPilotTransport:
+    """Offline transport for mechanics tests and ``--llm fake`` runs.
+
+    The reply is produced by a host-supplied factory from the prompt digest
+    only — the transport can never read a benchmark answer, and nothing
+    guarantees the generated value beats its source.  Usage is derived from
+    real byte lengths so budget accounting stays honest.
+    """
+
+    def __init__(
+        self,
+        *,
+        reply_factory: "Callable[[str], str]",
+    ) -> None:
+        if not callable(reply_factory):
+            raise TypeError("fake transport requires a callable reply factory")
+        self._reply_factory = reply_factory
+
+    def complete_bounded(
+        self,
+        prompt: str,
+        *,
+        model_name: str,
+        temperature: float,
+        json_mode: bool,
+        max_completion_tokens: int,
+    ) -> PilotTransportResult:
+        del json_mode
+        if model_name != "gpt-4o-mini":
+            raise ValueError("SFT pilot transport is frozen to gpt-4o-mini")
+        if temperature != 0.0:
+            raise ValueError("SFT pilot transport requires temperature 0")
+        if max_completion_tokens < 1:
+            raise ValueError("completion cap must be positive")
+        text = self._reply_factory(_sha256_bytes(prompt))
+        if not isinstance(text, str):
+            raise TypeError("fake transport reply must be text")
+        return PilotTransportResult(
+            text=text,
+            input_tokens=max(1, len(prompt.encode("utf-8")) // 4),
+            output_tokens=max(1, len(text.encode("utf-8")) // 4),
+            provider_usage_known=True,
+        )
+
+
 def _opaque(prefix: str, value: object) -> str:
     return f"{prefix}:{canonical_sha256(value)[:32]}"
 
@@ -167,6 +213,8 @@ class PilotMeteredLLMClient:
         transport: PilotBoundedTransport,
         logical_execution_key: str,
         call_budgets: tuple[PilotCallBudget, ...],
+        scheduled_request_envelopes: tuple[str, ...] | None = None,
+        expected_component_recovery_root_sha256: str | None = None,
     ) -> None:
         if not call_budgets:
             raise ValueError("metered execution requires at least one call budget")
@@ -181,10 +229,30 @@ class PilotMeteredLLMClient:
             raise ValueError("input call budgets exceed the execution reservation")
         if sum(item.output_tokens for item in call_budgets) > lease.output_tokens_reserved:
             raise ValueError("output call budgets exceed the execution reservation")
+        # A store-derived schedule pins one outcome-before request envelope
+        # per call slot; the client must reserve under exactly that identity
+        # (the runtime prompt-bytes commitment travels in the durable
+        # operation payloads instead).
+        if store.protocol.store_derived_schedule_required:
+            if scheduled_request_envelopes is None or len(
+                scheduled_request_envelopes
+            ) != len(call_budgets):
+                raise ValueError(
+                    "store-derived schedule requires one frozen request "
+                    "envelope per call budget"
+                )
+        elif scheduled_request_envelopes is not None:
+            raise ValueError(
+                "frozen request envelopes require a store-derived schedule"
+            )
         self._store = store
         self._transport = transport
         self._logical_execution_key = logical_execution_key
         self._call_budgets = call_budgets
+        self._scheduled_request_envelopes = scheduled_request_envelopes
+        # Checkpoint-saga protocols fence every provider crossing to one
+        # exact component recovery root; None keeps legacy protocols intact.
+        self._expected_recovery_root = expected_component_recovery_root_sha256
         self._next_slot = 0
         self._terminal_failure = False
         self._finalized = False
@@ -267,19 +335,22 @@ class PilotMeteredLLMClient:
                 "prompt exceeds the conservative pre-transport input bound"
             )
         prompt_sha256 = _sha256_bytes(prompt)
-        call_request = {
-            "domain": "sft-pilot-model-call-v1",
-            "protocol_sha256": self._store.protocol.digest,
-            "logical_execution_key": self._logical_execution_key,
-            "call_slot": slot,
-            "prompt_sha256": prompt_sha256,
-            "model_name": model_name,
-            "temperature": resolved_temperature,
-            "json_mode": json_mode,
-            "input_tokens_reserved": budget.input_tokens,
-            "max_completion_tokens": budget.output_tokens,
-        }
-        call_request_sha256 = canonical_sha256(call_request)
+        if self._scheduled_request_envelopes is not None:
+            call_request_sha256 = self._scheduled_request_envelopes[slot]
+        else:
+            call_request = {
+                "domain": "sft-pilot-model-call-v1",
+                "protocol_sha256": self._store.protocol.digest,
+                "logical_execution_key": self._logical_execution_key,
+                "call_slot": slot,
+                "prompt_sha256": prompt_sha256,
+                "model_name": model_name,
+                "temperature": resolved_temperature,
+                "json_mode": json_mode,
+                "input_tokens_reserved": budget.input_tokens,
+                "max_completion_tokens": budget.output_tokens,
+            }
+            call_request_sha256 = canonical_sha256(call_request)
         call_key = _opaque(
             "call",
             {
@@ -293,6 +364,9 @@ class PilotMeteredLLMClient:
             "domain": "sft-pilot-reserve-call-v1",
             "call_key": call_key,
             "call_request_sha256": call_request_sha256,
+            # The exact runtime prompt commitment is durable in the operation
+            # payload even when the reservation identity is schedule-pinned.
+            "prompt_sha256": prompt_sha256,
         }
         self._store.reserve_call(
             operation_id=_opaque("op-reserve-call", reserve_payload),
@@ -303,17 +377,20 @@ class PilotMeteredLLMClient:
             call_request_sha256=call_request_sha256,
             input_tokens_reserved=budget.input_tokens,
             output_tokens_reserved=budget.output_tokens,
+            expected_component_recovery_root_sha256=self._expected_recovery_root,
         )
         start_payload = {
             "domain": "sft-pilot-start-call-v1",
             "call_key": call_key,
             "call_request_sha256": call_request_sha256,
+            "prompt_sha256": prompt_sha256,
         }
         authorization = self._store.start_call(
             call_key,
             operation_id=_opaque("op-start-call", start_payload),
             operation_request_sha256=canonical_sha256(start_payload),
             call_request_sha256=call_request_sha256,
+            expected_component_recovery_root_sha256=self._expected_recovery_root,
         )
         if not authorization.may_invoke_sdk:
             self._terminal_failure = True
@@ -416,6 +493,7 @@ class PilotMeteredLLMClient:
 
 
 __all__ = [
+    "FakeDeterministicPilotTransport",
     "OpenAIPilotTransport",
     "PilotBoundedTransport",
     "PilotCallBoundaryError",
