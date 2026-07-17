@@ -18,6 +18,17 @@ class RunConfig:
     benchmark: str = "silo_bench"
     use_planner: bool = False
     use_skill_evolution: bool = False
+    # SFT is an independent, causally audited experiment path.  The default
+    # must not import its prototype, read a key, create state, or add calls.
+    # ``phase_v3_shadow_register`` opens only authenticated empty Phase/Bank
+    # stores; it deliberately performs no probe, gate, or efficacy claim.
+    sft_profile: str = "off"
+    sft_state_dir: str | None = None
+    # ``phase_v4_single_writer_preliminary`` additionally requires one closed,
+    # externally frozen PilotProtocolV1 JSON file.  Keeping this path separate
+    # from the mutable state directory prevents a run from inventing its own
+    # protocol after seeing outcomes.
+    sft_protocol_path: str | None = None
     # 中文：B2（可选开启）：让 LLM 设计洞察 minister（大臣）审阅进化证据，在留出集上
     #   证伪洞察，把通过验证的洞察并入技能库（形成更丰富、驱动生成的设计规则）。
     #   默认关闭（额外 LLM 调用）。

@@ -43,6 +43,9 @@ def _cfg_from_args(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         benchmark=args.benchmark,
         use_planner=getattr(args, "planner", False),
+        sft_profile=getattr(args, "sft_profile", "off"),
+        sft_state_dir=getattr(args, "sft_state_dir", None),
+        sft_protocol_path=getattr(args, "sft_protocol", None),
         planner_mode=getattr(args, "planner_mode", "topology_select"),
         topology=args.topology,
         objective=getattr(args, "objective", "balanced"),
@@ -180,10 +183,22 @@ def _cmd_report(args: argparse.Namespace) -> int:
 # - 打印门控接受与否、J_before/J_after、训练/验证成功率与技能库变化。
 def _cmd_evolve(args: argparse.Namespace) -> int:
     adapter = _adapter(args.benchmark, args.benchmarks_dir)
+    sft_profile = getattr(args, "sft_profile", "off")
+    sft_state_dir = getattr(args, "sft_state_dir", None)
+    sft_protocol_path = getattr(args, "sft_protocol", None)
+    if sft_profile != "off" and sft_state_dir is None:
+        sft_state_dir = str((Path(args.out).resolve() / "sft").resolve())
+    elif sft_profile != "off":
+        sft_state_dir = str(Path(sft_state_dir).resolve())
+    if sft_protocol_path is not None:
+        sft_protocol_path = str(Path(sft_protocol_path).resolve())
     cfg = RunConfig(
         benchmark=args.benchmark,
         use_planner=True,
         use_skill_evolution=True,
+        sft_profile=sft_profile,
+        sft_state_dir=sft_state_dir,
+        sft_protocol_path=sft_protocol_path,
         planner_mode=getattr(args, "planner_mode", "topology_select"),
         evolved_mode=getattr(args, "planner_mode", "topology_select"),
         objective=args.objective,
@@ -216,6 +231,24 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
         hot_start_seed_count=args.hot_start_seed_count,
         hot_start_dual_branch=args.hot_start_dual_branch,
         hot_start_innovation_mode=args.hot_start_innovation_mode,
+        failure_policy=(
+            "honest_v2"
+            if sft_profile != "off"
+            else getattr(args, "failure_policy", "legacy_drop")
+        ),
+        evolution_gate_policy=(
+            "strict_dense_v2"
+            if sft_profile != "off"
+            else getattr(
+                args,
+                "evolution_gate_policy",
+                "legacy_non_regression",
+            )
+        ),
+        evolve_explore=0 if sft_profile != "off" else 1,
+        evidence_portfolio="" if sft_profile != "off" else "chain",
+        recipe_search_budget=0 if sft_profile != "off" else 18,
+        exemplar_search_budget=0 if sft_profile != "off" else 6,
     )
     # 中文：离线(fake LLM)的 Silo 运行在成功时与拓扑无关，故默认注入一个合成的
     #   多拓扑留出集加一个基线 incumbent，让门控判定变真实(见 masbench.evolve)。
@@ -229,7 +262,11 @@ def _cmd_evolve(args: argparse.Namespace) -> int:
     # held-out Silo runs; in that mode we do NOT seed the synthetic baseline
     # incumbent (it has no real held-out measurement), so the gate compares the
     # planner's real-evidence fallback against the evolved skills.
-    use_synth = getattr(args, "synthetic_held_out", True)
+    use_synth = (
+        False
+        if sft_profile != "off"
+        else getattr(args, "synthetic_held_out", True)
+    )
     incumbent = getattr(args, "seed_incumbent_topology", None) or None
     summary = run_evolution(
         adapter,
@@ -622,6 +659,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_evolve.add_argument("--cases", nargs="+", default=None)
     p_evolve.add_argument("--train-seeds", nargs="+", default=["0"])
     p_evolve.add_argument("--val-seeds", nargs="+", default=["0"])
+    p_evolve.add_argument(
+        "--sft-profile",
+        choices=[
+            "off",
+            "phase_v3_shadow_register",
+            "phase_v4_single_writer_preliminary",
+        ],
+        default="off",
+        help=(
+            "opt into the isolated Phase SFT control plane; v3 creates/loads "
+            "empty authenticated state and v4 restores a pre-provisioned "
+            "SQLite component bundle; neither runs probes or claims efficacy"
+        ),
+    )
+    p_evolve.add_argument(
+        "--sft-state-dir",
+        default=None,
+        help="authoritative SFT state directory (active default: OUT/sft)",
+    )
+    p_evolve.add_argument(
+        "--sft-protocol",
+        default=None,
+        help=(
+            "absolute path to a frozen PilotProtocolV1 JSON file; required "
+            "only by phase_v4_single_writer_preliminary"
+        ),
+    )
     p_evolve.add_argument(
         "--seed-incumbent-topology",
         default=INCUMBENT_BASELINE_TOPOLOGY,

@@ -116,6 +116,9 @@ class OpenAIChatClient:
         api_key_env: str | None = None,
         platform: str = "openai",
         thinking_enabled: bool | None = None,
+        max_retries: int | None = None,
+        max_completion_tokens: int | None = None,
+        require_provider_usage: bool = False,
     ) -> None:
         try:
             from openai import OpenAI
@@ -175,12 +178,32 @@ class OpenAIChatClient:
         # 中文：httpx 随 openai SDK 一并安装，此分支实际不会走到；兜底为仅用总超时数值。
         except Exception:  # pragma: no cover - httpx ships with the openai SDK
             timeout = timeout_total
-        max_retries = int(os.environ.get("OPENAI_MAX_RETRIES", "2"))
+        resolved_max_retries = (
+            int(os.environ.get("OPENAI_MAX_RETRIES", "2"))
+            if max_retries is None
+            else max_retries
+        )
+        if (
+            isinstance(resolved_max_retries, bool)
+            or not isinstance(resolved_max_retries, int)
+            or resolved_max_retries < 0
+        ):
+            raise ValueError("max_retries must be a non-negative integer")
+        if max_completion_tokens is not None and (
+            isinstance(max_completion_tokens, bool)
+            or not isinstance(max_completion_tokens, int)
+            or max_completion_tokens < 1
+        ):
+            raise ValueError("max_completion_tokens must be a positive integer")
+        if not isinstance(require_provider_usage, bool):
+            raise TypeError("require_provider_usage must be boolean")
         self._platform = platform.lower()
         self._thinking_enabled = thinking_enabled
+        self._max_completion_tokens = max_completion_tokens
+        self._require_provider_usage = require_provider_usage
         client_kwargs: dict[str, object] = {
             "timeout": timeout,
-            "max_retries": max_retries,
+            "max_retries": resolved_max_retries,
         }
         if http_client is not None:
             client_kwargs["http_client"] = http_client
@@ -230,6 +253,11 @@ class OpenAIChatClient:
                 **request_options,
                 "response_format": {"type": "json_object"},
             }
+        if self._max_completion_tokens is not None:
+            request_options = {
+                **request_options,
+                "max_completion_tokens": self._max_completion_tokens,
+            }
         response = self._client.chat.completions.create(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
@@ -238,14 +266,35 @@ class OpenAIChatClient:
         )
         text = response.choices[0].message.content or ("{}" if json_mode else "")
         usage = response.usage
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
+        prompt_usage_known = bool(
+            isinstance(prompt_tokens, int)
+            and not isinstance(prompt_tokens, bool)
+            and prompt_tokens >= 0
+        )
+        completion_usage_known = bool(
+            isinstance(completion_tokens, int)
+            and not isinstance(completion_tokens, bool)
+            and completion_tokens >= 0
+        )
+        provider_usage_known = prompt_usage_known and completion_usage_known
+        if self._require_provider_usage and not provider_usage_known:
+            raise RuntimeError(
+                "provider-authoritative prompt/completion usage is required"
+            )
         return LLMResponse(
             text=text,
             usage=LLMUsage(
-                prompt_tokens=getattr(usage, "prompt_tokens", estimate_tokens(prompt)),
-                completion_tokens=getattr(
-                    usage,
-                    "completion_tokens",
-                    estimate_tokens(text),
+                prompt_tokens=(
+                    prompt_tokens
+                    if prompt_usage_known
+                    else estimate_tokens(prompt)
+                ),
+                completion_tokens=(
+                    completion_tokens
+                    if completion_usage_known
+                    else estimate_tokens(text)
                 ),
             ),
         )

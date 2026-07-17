@@ -7,9 +7,13 @@ from exp_graph.llm import factory
 from exp_graph.llm.openai_client import OpenAIChatClient
 
 
+_DEFAULT_USAGE = object()
+
+
 def _request_for_model(
     monkeypatch,
     model_name: str,
+    response_usage=_DEFAULT_USAGE,
     **client_kwargs,
 ) -> dict[str, object]:
     request: dict[str, object] = {}
@@ -21,7 +25,11 @@ def _request_for_model(
                 choices=[
                     SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))
                 ],
-                usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2),
+                usage=(
+                    SimpleNamespace(prompt_tokens=3, completion_tokens=2)
+                    if response_usage is _DEFAULT_USAGE
+                    else response_usage
+                ),
             )
 
     class FakeOpenAI:
@@ -143,6 +151,52 @@ def test_json_completion_does_not_send_thinking_option_to_non_thinking_model(
     request = _request_for_model(monkeypatch, "deepseek-v3")
 
     assert "extra_body" not in request
+
+
+def test_bounded_client_disables_sdk_retry_and_requires_real_usage(monkeypatch) -> None:
+    request = _request_for_model(
+        monkeypatch,
+        "gpt-4o-mini",
+        max_retries=0,
+        max_completion_tokens=1024,
+        require_provider_usage=True,
+    )
+
+    assert request["__init__"]["max_retries"] == 0
+    assert request["max_completion_tokens"] == 1024
+
+
+def test_bounded_client_rejects_missing_provider_usage(monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="provider-authoritative"):
+        _request_for_model(
+            monkeypatch,
+            "gpt-4o-mini",
+            response_usage=None,
+            max_retries=0,
+            max_completion_tokens=1024,
+            require_provider_usage=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("client_kwargs", "message"),
+    [
+        ({"max_retries": -1}, "max_retries"),
+        ({"max_completion_tokens": 0}, "max_completion_tokens"),
+        ({"require_provider_usage": 1}, "require_provider_usage"),
+    ],
+)
+def test_bounded_client_options_reject_invalid_values(
+    monkeypatch,
+    client_kwargs: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises((TypeError, ValueError), match=message):
+        _request_for_model(
+            monkeypatch,
+            "gpt-4o-mini",
+            **client_kwargs,
+        )
 
 
 @pytest.mark.parametrize("model_name", ["deepseek-r1", "kimi-k2-thinking"])

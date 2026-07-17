@@ -232,6 +232,71 @@ def _validate_v2_config(cfg: RunConfig) -> None:
         raise ValueError("strict_gate_partial_tolerance must be non-negative")
     if int(getattr(cfg, "strict_gate_bootstrap_samples", 2000)) < 1:
         raise ValueError("strict_gate_bootstrap_samples must be at least 1")
+    sft_profile = getattr(cfg, "sft_profile", "off") or "off"
+    if sft_profile not in {
+        "off",
+        "phase_v3_shadow_register",
+        "phase_v4_single_writer_preliminary",
+    }:
+        raise ValueError(f"unknown sft_profile {sft_profile!r}")
+    if sft_profile == "off":
+        return
+    state_dir = getattr(cfg, "sft_state_dir", None)
+    if not (
+        cfg.use_planner
+        and cfg.use_skill_evolution
+        and cfg.planner_mode == "program_generate"
+        and cfg.evolved_mode == "program_generate"
+    ):
+        raise ValueError(
+            "active SFT Phase profile requires planner/evolution and exact "
+            "program_generate mode"
+        )
+    if not state_dir or not os.path.isabs(state_dir):
+        raise ValueError("active SFT profile requires an absolute sft_state_dir")
+    protocol_path = getattr(cfg, "sft_protocol_path", None)
+    if sft_profile == "phase_v4_single_writer_preliminary":
+        if not protocol_path or not os.path.isabs(protocol_path):
+            raise ValueError(
+                "phase_v4_single_writer_preliminary requires an absolute "
+                "sft_protocol_path"
+            )
+        if cfg.llm_provider not in {"fake", "openai"}:
+            raise ValueError(
+                "phase_v4 real mode requires the openai provider"
+            )
+        if cfg.llm_provider == "openai" and cfg.model_name != "gpt-4o-mini":
+            raise ValueError(
+                "phase_v4 real mode requires model_name gpt-4o-mini"
+            )
+        if cfg.llm_provider == "openai" and getattr(cfg, "base_url", None):
+            raise ValueError(
+                "phase_v4 real mode requires the official OpenAI endpoint"
+            )
+        planner_model = getattr(cfg, "planner_model_name", None)
+        if planner_model not in {None, "gpt-4o-mini"}:
+            raise ValueError(
+                "phase_v4 forbids a planner model outside frozen gpt-4o-mini"
+            )
+    elif protocol_path is not None:
+        raise ValueError("sft_protocol_path is only valid for the phase_v4 profile")
+    if failure_policy != "honest_v2" or gate_policy != "strict_dense_v2":
+        raise ValueError(
+            "active SFT profile requires honest_v2 failures and strict_dense_v2 gate"
+        )
+    incompatible = {
+        "hot_start_enabled": bool(getattr(cfg, "hot_start_enabled", False)),
+        "use_llm_insights": bool(getattr(cfg, "use_llm_insights", False)),
+        "evolve_explore": int(getattr(cfg, "evolve_explore", 0)) != 0,
+        "evidence_portfolio": bool(getattr(cfg, "evidence_portfolio", "")),
+        "recipe_search_budget": int(getattr(cfg, "recipe_search_budget", 0)) != 0,
+        "exemplar_search_budget": int(getattr(cfg, "exemplar_search_budget", 0)) != 0,
+    }
+    enabled = sorted(name for name, active in incompatible.items() if active)
+    if enabled:
+        raise ValueError(
+            "active SFT profile forbids legacy confounders: " + ", ".join(enabled)
+        )
 
 
 def _failed_generation_row(
@@ -4169,6 +4234,48 @@ def run_evolution(
     honesty caveat about ``held_out_rows``.
     """
     _validate_v2_config(cfg)
+    if getattr(cfg, "sft_profile", "off") != "off":
+        # Reject missing authority and legacy evidence before importing the
+        # experimental implementation or touching its state directory.  Key
+        # decoding/length validation remains inside the isolated module.
+        if not os.environ.get("MASBENCH_SFT_STATE_KEY"):
+            raise RuntimeError(
+                "MASBENCH_SFT_STATE_KEY is required for an active SFT profile"
+            )
+        if held_out_rows is not None or initial_skills:
+            raise ValueError(
+                "active SFT profile rejects synthetic held-out rows and "
+                "initial skills"
+            )
+        if (
+            getattr(cfg, "sft_profile", "off")
+            == "phase_v4_single_writer_preliminary"
+            and workers != 1
+        ):
+            raise ValueError("phase_v4 requires workers=1 for single-writer authority")
+        # Lazy import is a tested invariant: the legacy/default path must not
+        # import SFT modules, read a key, create files, or add model calls.
+        from masbench.sft_phase_pilot import run_sft_phase_evolution
+
+        return run_sft_phase_evolution(
+            adapter,
+            cases=cases,
+            validation_cases=validation_cases,
+            agent_counts=agent_counts,
+            train_seeds=train_seeds,
+            val_seeds=val_seeds,
+            cfg=cfg,
+            levels=levels,
+            held_out_rows=held_out_rows,
+            seed_incumbent_topology=seed_incumbent_topology,
+            initial_skills=initial_skills,
+            objective_variants=objective_variants,
+            epsilon=epsilon,
+            batch_id=batch_id,
+            llm_client=llm_client,
+            workers=workers,
+            progress=progress,
+        )
     objective = evolution_objective_spec(cfg)
     client = llm_client or _build_llm_client(cfg)
 

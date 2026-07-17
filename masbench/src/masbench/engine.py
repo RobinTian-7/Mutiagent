@@ -85,6 +85,472 @@ CLEAN_PROGRAM_PROVENANCE = ("program_generated", "skill_replay")
 CLEAN_PYTHON_PROVENANCE = ("llm_generated_python", "skill_replay")
 
 
+# The token never crosses the exact engine registration boundary.  The
+# capability also carries an HMAC, so object allocation tricks cannot turn a
+# caller-authored model into execution authority.
+_EXACT_PHASE_CAPABILITY_TOKEN = object()
+
+
+class ExactRegisteredPhaseExecution:
+    """Opaque result of the verifier-only exact Phase engine entry.
+
+    Construction is intentionally unavailable to normal call sites.  The SFT
+    attestor can only export a body after rechecking its protocol and HMAC.
+    """
+
+    __slots__ = ("_body", "_capability_sha256")
+
+    def __init__(
+        self,
+        body: Any,
+        capability_sha256: str,
+        *,
+        _token: object | None = None,
+    ) -> None:
+        if _token is not _EXACT_PHASE_CAPABILITY_TOKEN:
+            raise ValueError(
+                "exact Phase execution capabilities are engine-owned"
+            )
+        self._body = body
+        self._capability_sha256 = capability_sha256
+
+    def _export_for_attestation(
+        self,
+        *,
+        protocol_sha256: str,
+        engine_key: bytes,
+    ) -> tuple[Any, str]:
+        import hmac
+
+        from masbench.sft_pilot.execution_attestation import (
+            PilotExecutionCapabilityBodyV1,
+        )
+        from masbench.sft_pilot.schema import pilot_hmac_sha256
+
+        body = PilotExecutionCapabilityBodyV1.model_validate(
+            self._body.model_dump(mode="python")
+        )
+        expected = pilot_hmac_sha256(
+            engine_key,
+            domain="sft-pilot-engine-exact-phase-capability-v1",
+            value=body,
+        )
+        if body.protocol_sha256 != protocol_sha256 or not hmac.compare_digest(
+            self._capability_sha256, expected
+        ):
+            raise ValueError("exact Phase capability protocol/HMAC mismatch")
+        return body, self._capability_sha256
+
+
+def exact_phase_arm_commitment_v1(
+    protocol: Any,
+    logical_arm: Any,
+    *,
+    proof_id: str,
+    proof_sha256: str,
+    artifact_sha256: str,
+) -> str:
+    """Return the outcome-before journal commitment for one exact Phase arm."""
+
+    from masbench.sft_pilot.schema import (
+        PilotLogicalArmCoordinatesV1,
+        PilotProtocolV1,
+        canonical_sha256,
+        require_opaque_id,
+        require_sha256,
+    )
+
+    checked_protocol = PilotProtocolV1.model_validate(
+        protocol.model_dump(mode="python")
+    )
+    checked_arm = PilotLogicalArmCoordinatesV1.model_validate(
+        logical_arm.model_dump(mode="python")
+    )
+    if checked_arm not in checked_protocol.authorized_logical_arms:
+        raise ValueError("Phase arm is absent from the frozen protocol")
+    if checked_arm.pair_arm not in {"source", "target"}:
+        raise ValueError("exact Phase journal supports source/target arms only")
+    require_opaque_id(proof_id, field_name="proof_id")
+    require_sha256(proof_sha256, field_name="proof_sha256")
+    require_sha256(artifact_sha256, field_name="artifact_sha256")
+    return canonical_sha256(
+        {
+            "domain": "sft-pilot-exact-phase-arm-commitment-v1",
+            "protocol_sha256": checked_protocol.digest,
+            "namespace_sha256": checked_protocol.namespace.digest,
+            "logical_arm": checked_arm,
+            "logical_arm_key": checked_arm.derive_logical_arm_key(
+                checked_protocol
+            ),
+            "proof_id": proof_id,
+            "proof_sha256": proof_sha256,
+            "artifact_sha256": artifact_sha256,
+        }
+    )
+
+
+def register_exact_phase_execution_result(
+    *,
+    protocol: Any,
+    logical_arm: Any,
+    registry: Any,
+    registered_edge: Any,
+    store: Any,
+    logical_execution_key: str,
+    call_keys: tuple[str, ...],
+    journal_snapshot: Any,
+    engine_key: bytes,
+) -> ExactRegisteredPhaseExecution:
+    """Verify exact Phase/store/journal state and mint one opaque capability.
+
+    This is deliberately a verifier-only entry rather than a second planner.
+    The selected and loaded artifact commitments are resolved from the
+    registry proof; completed call rows are re-read from SQLite; and physical
+    order is taken from a freshly authenticated journal snapshot.  No outcome,
+    answer, raw task input, model text, or caller activation root is accepted.
+
+    The current minimal boundary accepts only registry loci whose activation
+    requirement is ``execution_image_load``.  Step/submission loci fail closed
+    until ProtocolRunner exposes a trusted event capability for those events.
+    """
+
+    import hmac
+
+    from exp_graph.mas.phase_artifact_registry import (
+        PhaseArtifactRegistry,
+        phase_materialization_event_sha256_v1,
+    )
+    from exp_graph.mas.phase_factor_binding_v2 import (
+        RegisteredPhaseFactorEdgeV2,
+        make_phase_v2_binding_verifier,
+    )
+    from exp_graph.mas.sft_journal import (
+        PairCompletePayloadV2,
+        PreparePayloadV2,
+    )
+    from exp_graph.mas.sft_journal_snapshot import VerifiedJournalSnapshot
+    from masbench.sft_pilot.execution_attestation import (
+        PilotExecutionCapabilityBodyV1,
+    )
+    from masbench.sft_pilot.schema import (
+        PilotCallReceiptV1,
+        PilotLogicalArmCoordinatesV1,
+        PilotProtocolV1,
+        canonical_sha256,
+        pilot_hmac_sha256,
+    )
+    from masbench.sft_pilot.store import SingleWriterPilotStore
+
+    checked_protocol = PilotProtocolV1.model_validate(
+        protocol.model_dump(mode="python")
+    )
+    checked_arm = PilotLogicalArmCoordinatesV1.model_validate(
+        logical_arm.model_dump(mode="python")
+    )
+    checked_edge = RegisteredPhaseFactorEdgeV2.model_validate(
+        registered_edge.model_dump(mode="python")
+    )
+    if not isinstance(registry, PhaseArtifactRegistry):
+        raise TypeError("exact Phase execution requires a live registry")
+    if not isinstance(store, SingleWriterPilotStore):
+        raise TypeError("exact Phase execution requires the SQLite pilot store")
+    if type(journal_snapshot) is not VerifiedJournalSnapshot:
+        raise TypeError("exact Phase execution requires a freshly verified journal")
+    if not isinstance(engine_key, bytes) or len(engine_key) < 32:
+        raise ValueError("exact Phase engine key must contain at least 32 bytes")
+    if not (
+        checked_protocol.namespace.planner_mode == "program_generate"
+        and checked_protocol.namespace.payload_format
+        == "phase_program_skill_v1"
+        and checked_protocol.namespace.worker_contract == "not_applicable"
+    ):
+        raise ValueError("exact Phase execution rejects mode/worker aliases")
+    if store.protocol.digest != checked_protocol.digest:
+        raise ValueError("SQLite store belongs to another frozen protocol")
+    if checked_arm not in checked_protocol.authorized_logical_arms:
+        raise ValueError("logical arm is absent from the frozen protocol")
+    if checked_arm.split != "TRAIN_UPDATE" or checked_arm.pair_arm not in {
+        "source",
+        "target",
+    }:
+        raise ValueError(
+            "exact Phase edge execution supports TRAIN_UPDATE probe arms only"
+        )
+    expected_operation = (
+        "source_probe" if checked_arm.pair_arm == "source" else "target_probe"
+    )
+    if checked_arm.operation_kind != expected_operation:
+        raise ValueError("logical arm operation differs from its split/physical arm")
+
+    counterpart = [
+        item
+        for item in checked_protocol.authorized_logical_arms
+        if item.pair_id == checked_arm.pair_id
+        and item.split == checked_arm.split
+        and item.pair_arm
+        == ("target" if checked_arm.pair_arm == "source" else "source")
+        and item.case_commitment_sha256 == checked_arm.case_commitment_sha256
+        and item.unit_commitment == checked_arm.unit_commitment
+        and item.execution_ordinal == checked_arm.execution_ordinal
+    ]
+    if len(counterpart) != 1:
+        raise ValueError("logical arm lacks one exact frozen pair counterpart")
+    other_arm = counterpart[0]
+    expected_other_operation = (
+        "source_probe" if other_arm.pair_arm == "source" else "target_probe"
+    )
+    if other_arm.operation_kind != expected_other_operation:
+        raise ValueError("paired logical arm operation is invalid")
+
+    verified = registry.verify_phase_materialization_proof(
+        checked_edge.proof,
+        expected_namespace=checked_protocol.namespace,
+    )
+    proof = verified.proof
+    if proof.handle != checked_edge.proof:
+        raise ValueError("registered edge does not own the exact Phase proof")
+    binding_verifier = make_phase_v2_binding_verifier(registry)
+    if not binding_verifier(
+        checked_edge.transition,
+        checked_edge.source_composition,
+        checked_edge.target_composition,
+        checked_edge.source_factor,
+        checked_edge.target_factor,
+        (checked_edge.background_factor,),
+    ):
+        raise ValueError("registered edge differs from its canonical Phase bundle")
+
+    source_artifact = registry.resolve_artifact(proof.source_artifact)
+    target_artifact = registry.resolve_artifact(proof.target_artifact)
+    source_factor = registry.resolve_factor(proof.source_factor)
+    target_factor = registry.resolve_factor(proof.target_factor)
+    manifests = [
+        item
+        for item in registry.to_state().manifests
+        if item.manifest_sha256 == proof.source_manifest_sha256
+    ]
+    if len(manifests) != 1 or not (
+        manifests[0].split in {"PUBLIC", "TRAIN_UPDATE"}
+        and manifests[0].source_catalog_sha256
+        == checked_protocol.source_manifest.source_catalog_sha256
+        and manifests[0].policy_sha256
+        == checked_protocol.source_manifest.source_policy_sha256
+    ):
+        raise ValueError("Phase proof crosses the frozen sanitized source authority")
+
+    artifacts = {"source": source_artifact, "target": target_artifact}
+    factors = {"source": source_factor, "target": target_factor}
+    compositions = {
+        "source": checked_edge.source_composition,
+        "target": checked_edge.target_composition,
+    }
+    requirements = {
+        "source": proof.source_activation,
+        "target": proof.target_activation,
+    }
+    for arm_name in ("source", "target"):
+        artifact = artifacts[arm_name]
+        factor = factors[arm_name]
+        composition = compositions[arm_name]
+        requirement = requirements[arm_name]
+        if not (
+            artifact.execution_image_commitment == composition.artifact_sha256
+            and artifact.handle.handle_id == requirement.artifact_id
+            and factor.handle.handle_id == requirement.factor_content_id
+            and artifact.runtime_profile.handle_id == requirement.runtime_profile_id
+        ):
+            raise ValueError("Phase execution image/activation requirement is not exact")
+        if requirement.mode != "image_loaded":
+            raise ValueError(
+                "trusted step/submission activation capability is not implemented"
+            )
+
+    snapshot_receipt = journal_snapshot.receipt
+    state = journal_snapshot.state
+    if not (
+        state.scope.namespace == checked_protocol.namespace
+        and state.scope.namespace_sha256 == checked_protocol.namespace.digest
+        and state.scope.planner_mode == "program_generate"
+        and state.scope.worker_contract == "not_applicable"
+        and state.scope.mode_payload_source in {"PUBLIC", "TRAIN_UPDATE"}
+        and state.scope.mode_payload_manifest_sha256
+        == proof.source_manifest_sha256
+        and len(state.events) == 6
+    ):
+        raise ValueError("journal snapshot crosses Phase mode/source authority")
+    prepare_event = state.events[0]
+    terminal_event = state.events[-1]
+    if not isinstance(prepare_event.payload, PreparePayloadV2) or not isinstance(
+        terminal_event.payload, PairCompletePayloadV2
+    ):
+        raise ValueError("journal snapshot is not one complete non-overlap pair")
+    prepare = prepare_event.payload
+    terminal = terminal_event.payload
+    source_logical = (
+        checked_arm if checked_arm.pair_arm == "source" else other_arm
+    )
+    target_logical = (
+        checked_arm if checked_arm.pair_arm == "target" else other_arm
+    )
+    source_commitment = exact_phase_arm_commitment_v1(
+        checked_protocol,
+        source_logical,
+        proof_id=proof.handle.handle_id,
+        proof_sha256=proof.handle.proof_sha256,
+        artifact_sha256=source_artifact.execution_image_commitment,
+    )
+    target_commitment = exact_phase_arm_commitment_v1(
+        checked_protocol,
+        target_logical,
+        proof_id=proof.handle.handle_id,
+        proof_sha256=proof.handle.proof_sha256,
+        artifact_sha256=target_artifact.execution_image_commitment,
+    )
+    if not (
+        prepare.ordinal == checked_arm.execution_ordinal
+        and prepare.source_arm_commitment_sha256 == source_commitment
+        and prepare.target_arm_commitment_sha256 == target_commitment
+        and terminal.observed_arm_order == prepare.scheduled_arm_order
+    ):
+        raise ValueError("journal pair differs from exact frozen Phase arms")
+
+    lease = store.get_execution(logical_execution_key)
+    if not (
+        lease.state == "completed"
+        and lease.logical_execution_key == logical_execution_key
+        and lease.logical_arm_key == checked_arm.derive_logical_arm_key(checked_protocol)
+        and lease.operation_kind == checked_arm.operation_kind
+        and lease.namespace_sha256 == checked_protocol.namespace.digest
+        and lease.split == checked_arm.split
+        and lease.unit_commitment == checked_arm.unit_commitment
+    ):
+        raise ValueError("SQLite execution lease differs from the exact logical arm")
+    if len(call_keys) != lease.call_slots_reserved or len(set(call_keys)) != len(
+        call_keys
+    ):
+        raise ValueError("call-key set does not cover the exact execution reservation")
+    calls = tuple(
+        sorted(
+            (store.get_call(call_key) for call_key in call_keys),
+            key=lambda item: item.call_slot,
+        )
+    )
+    if tuple(item.call_slot for item in calls) != tuple(range(len(calls))) or any(
+        not (
+            isinstance(item, PilotCallReceiptV1)
+            and item.logical_execution_key == logical_execution_key
+            and item.state == "completed"
+            and item.provider_usage_known
+        )
+        for item in calls
+    ):
+        raise ValueError("SQLite call receipts are incomplete, reordered, or foreign")
+    call_root = canonical_sha256(
+        {
+            "domain": "sft-pilot-exact-call-receipt-root-v1",
+            "protocol_sha256": checked_protocol.digest,
+            "lease": lease,
+            "calls": calls,
+        }
+    )
+
+    selected_arm = checked_arm.pair_arm
+    selected_artifact = artifacts[selected_arm]
+    selected_factor = factors[selected_arm]
+    selected_composition = compositions[selected_arm]
+    physical_root = (
+        terminal.source_root_id
+        if selected_arm == "source"
+        else terminal.target_root_id
+    )
+    nonoverlap_root = canonical_sha256(
+        {
+            "domain": "sft-pilot-verified-nonoverlap-journal-v1",
+            "snapshot_receipt": snapshot_receipt,
+            "prepare_event": prepare_event,
+            "terminal_event": terminal_event,
+        }
+    )
+    physical_execution_root = canonical_sha256(
+        {
+            "domain": "sft-pilot-physical-exact-phase-execution-v1",
+            "artifact_sha256": selected_artifact.execution_image_commitment,
+            "proof_sha256": proof.handle.proof_sha256,
+            "call_receipt_root_sha256": call_root,
+            "nonoverlap_event_root_sha256": nonoverlap_root,
+            "journal_physical_root_sha256": physical_root,
+        }
+    )
+    activation_root = canonical_sha256(
+        {
+            "domain": "sft-pilot-image-load-activation-v1",
+            "physical_execution_root_sha256": physical_execution_root,
+            "artifact_id": selected_artifact.handle.handle_id,
+            "artifact_sha256": selected_artifact.execution_image_commitment,
+            "factor_revision_id": selected_factor.handle.handle_id,
+            "activation_requirement": requirements[selected_arm],
+        }
+    )
+    materialization_event = registry.resolve_materialization_event(proof.event)
+    body = PilotExecutionCapabilityBodyV1(
+        protocol_sha256=checked_protocol.digest,
+        method_arm=checked_protocol.method_arm,
+        namespace_sha256=checked_protocol.namespace.digest,
+        information_goal=checked_protocol.namespace.information_goal,
+        logical_arm_key=checked_arm.derive_logical_arm_key(checked_protocol),
+        logical_arm_sha256=canonical_sha256(checked_arm),
+        split=checked_arm.split,
+        pair_id=checked_arm.pair_id,
+        pair_arm=selected_arm,
+        unit_commitment=checked_arm.unit_commitment,
+        execution_ordinal=checked_arm.execution_ordinal,
+        proof_id=proof.handle.handle_id,
+        proof_sha256=proof.handle.proof_sha256,
+        materialization_event_id=proof.event.handle_id,
+        materialization_event_sha256=phase_materialization_event_sha256_v1(
+            materialization_event
+        ),
+        runtime_profile_id=proof.runtime_profile.handle_id,
+        composition_id=selected_composition.composition_id,
+        selected_artifact_sha256=selected_artifact.execution_image_commitment,
+        loaded_artifact_sha256=selected_artifact.execution_image_commitment,
+        call_receipt_root_sha256=call_root,
+        nonoverlap_event_root_sha256=nonoverlap_root,
+        physical_execution_root_sha256=physical_execution_root,
+        retrieved_factor_revision_ids=tuple(
+            sorted(
+                {
+                    source_factor.handle.handle_id,
+                    target_factor.handle.handle_id,
+                }
+            )
+        ),
+        activated_factor_revision_ids=(selected_factor.handle.handle_id,),
+        activation_trace_root_sha256=activation_root,
+    )
+    capability_sha256 = pilot_hmac_sha256(
+        engine_key,
+        domain="sft-pilot-engine-exact-phase-capability-v1",
+        value=body,
+    )
+    # A comparison here makes accidental aliasing visible during construction;
+    # export repeats it under the caller-pinned engine key.
+    if not hmac.compare_digest(
+        capability_sha256,
+        pilot_hmac_sha256(
+            engine_key,
+            domain="sft-pilot-engine-exact-phase-capability-v1",
+            value=body,
+        ),
+    ):
+        raise RuntimeError("exact Phase capability HMAC is unstable")
+    return ExactRegisteredPhaseExecution(
+        body,
+        capability_sha256,
+        _token=_EXACT_PHASE_CAPABILITY_TOKEN,
+    )
+
+
 # 【职责】为一个实例选择协议适配器：jssp 用 JSSPProtocolAdapter，默认走 SiloProtocolAdapter。
 # - 延迟 import，使纯 silo 路径与改动前逐字节一致。
 # - information_goal 决定适配器使用哪套提示词模板（sink / all_agents）。
