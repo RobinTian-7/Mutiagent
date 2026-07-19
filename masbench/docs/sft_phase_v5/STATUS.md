@@ -17,4 +17,4 @@ Method status ceiling for this effort: `mechanics_ready` (no efficacy claim).
 | 9 | done | e989e852+ | PASS | result ledger 4P | 0 | roots-identical TEST; chained external ledger |
 | 10 | done | ed07b60a+ | PASS | controls 3P | 0 | policy-gated backends; equal all-in verifier |
 | 11 | done | 28b1c997+ | PASS | masbench full 677P; exp-graph full 783P | 0 | docs synced; order-dependence fixed |
-| 12 | NOT RUN (prepared) | — | — | — | 0 | guard+preview+template ready; needs human authorization |
+| 12 | RUN (pilot_usable) | a1ee8941+dirty | PASS | masbench full 680P (incl 3 offline-pilot); exp-graph full 791P | 1,542 calls / ~$0.45 | 2026-07-17 real pilot: 3 replicates, gpt-4o-mini, n_agents=5, see stage_12_real_pilot.md |

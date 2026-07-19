@@ -62,7 +62,9 @@ class PairwiseExchangePhase(_PhaseBase):
     """Bounded peer exchange with no model-authored endpoint expressions."""
 
     kind: Literal["pairwise_exchange"] = "pairwise_exchange"
-    pattern: Literal["ring", "bidirectional_ring", "rotating"] = "rotating"
+    pattern: Literal["ring", "bidirectional_ring", "rotating", "exponential"] = (
+        "rotating"
+    )
     max_rounds: int = Field(default=4, ge=1, le=64)
     stop_when: StopCondition = "fixed_rounds"
 
@@ -71,7 +73,7 @@ class ConsensusPhase(_PhaseBase):
     """A full-dissemination phase using a dense or rotating construction."""
 
     kind: Literal["consensus"] = "consensus"
-    pattern: Literal["all_to_all", "rotating"] = "rotating"
+    pattern: Literal["all_to_all", "rotating", "exponential"] = "rotating"
     max_rounds: int = Field(default=8, ge=1, le=64)
     stop_when: StopCondition = "all_agents_full_information"
 
@@ -278,6 +280,16 @@ class _PhaseProgramCompiler:
             ]
         self._append_phase_steps(phase_index, phase, steps)
 
+    def _exponential_offset(self, round_idx: int) -> int:
+        """Doubling one-peer offset (1, 2, 4, ...), the exponential
+        dissemination schedule of the static_exponential /
+        one_peer_exponential_dag family: every agent's known set doubles per
+        round, reaching full information in ceil(log2(n)) rounds. Offsets are
+        reduced mod n with a floor of 1 so over-long plans stay legal."""
+
+        offset = pow(2, round_idx, max(1, self.n_agents))
+        return offset if offset else 1
+
     def _compile_exchange(
         self,
         phase_index: int,
@@ -290,6 +302,8 @@ class _PhaseProgramCompiler:
                 edges = self._offset_edges(1)
             elif phase.pattern == "bidirectional_ring":
                 edges = [*self._offset_edges(1), *self._offset_edges(-1)]
+            elif phase.pattern == "exponential":
+                edges = self._offset_edges(self._exponential_offset(round_idx))
             else:
                 offset = (round_idx % max(1, self.n_agents - 1)) + 1
                 edges = self._offset_edges(offset)
@@ -315,6 +329,8 @@ class _PhaseProgramCompiler:
                     for dst in range(self.n_agents)
                     if src != dst
                 ]
+            elif phase.pattern == "exponential":
+                edges = self._offset_edges(self._exponential_offset(round_idx))
             else:
                 offset = (round_idx % max(1, self.n_agents - 1)) + 1
                 edges = self._offset_edges(offset)

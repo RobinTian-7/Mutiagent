@@ -60,6 +60,7 @@ PilotOperationKind = Literal[
 PilotComponentCheckpointKind = Literal[
     "action_prepared",
     "generation_start_authorized",
+    "whole_edge_registered",
     "probe_attempt_open",
     "probe_terminal",
     "gate_terminal",
@@ -228,7 +229,7 @@ class PilotProtocolV1(ClosedPilotModel):
     schema_version: Literal[PILOT_SCHEMA_VERSION] = PILOT_SCHEMA_VERSION
     protocol_id: str
     method_arm: PilotMethodArm
-    model_name: Literal["gpt-4o-mini"] = "gpt-4o-mini"
+    model_name: Literal["gpt-4o-mini", "gpt-5-mini"] = "gpt-4o-mini"
     temperature: Literal[0.0] = 0.0
     sdk_max_retries: Literal[0] = 0
     application_max_retries: Literal[0] = 0
@@ -461,7 +462,7 @@ class PilotCallReceiptV1(ClosedPilotModel):
     logical_execution_key: str
     call_slot: int = Field(ge=0)
     request_sha256: str
-    model_name: Literal["gpt-4o-mini"] = "gpt-4o-mini"
+    model_name: Literal["gpt-4o-mini", "gpt-5-mini"] = "gpt-4o-mini"
     input_tokens_reserved: int = Field(ge=0)
     output_tokens_reserved: int = Field(ge=1)
     max_completion_tokens: int = Field(ge=1)
@@ -691,6 +692,15 @@ class PilotCheckpointSemanticWitnessV1(ClosedPilotModel):
         "sft_pilot_checkpoint_semantics_v1"
     )
     checkpoint_kind: PilotComponentCheckpointKind
+    # Which scientific chain this checkpoint belongs to.  Direct chains are
+    # owned by one Bank ProposalAction; whole-composition chains are owned by
+    # one ordinary WholeCompositionTransition, and the action_* fields carry
+    # its exact surrogates: action_id = transition_id, action_branch =
+    # origin_branch, action_intent_sha256 = operation_receipt_sha256,
+    # action_producer_epoch = operation_verifier_epoch, and the
+    # proposal_action_after commitments bind the transition row itself
+    # (state "committed" — an installed ordinary edge has no other state).
+    owner_kind: Literal["direct_factor", "whole_composition"] = "direct_factor"
     protocol_sha256: str
     action_id: str
     action_branch: Literal["reuse", "mutate", "fresh"]
@@ -847,7 +857,28 @@ class PilotCheckpointSemanticWitnessV1(ClosedPilotModel):
             value is not None
             for value in (*assessment_values, *opportunity_values, *gate_values)
         )
-        if kind == "action_prepared":
+        if kind in {"action_prepared", "generation_start_authorized"}:
+            if self.owner_kind != "direct_factor":
+                raise ValueError(
+                    "proposal-action checkpoint kinds require the direct chain"
+                )
+        if kind == "whole_edge_registered":
+            if not (
+                self.owner_kind == "whole_composition"
+                and self.proposal_action_before_sha256 is None
+                and self.proposal_action_before_state is None
+                and self.proposal_action_after_state == "committed"
+                and self.action_branch in {"mutate", "fresh"}
+                and self.proposal_generation_lease_sha256 is None
+                and self.expected_stage_operation_kind == "proposal_generation"
+                and no_probe
+                and no_gate
+                and self.terminal_execution_receipt_sha256 is None
+            ):
+                raise ValueError(
+                    "whole-edge semantic witness has extra state"
+                )
+        elif kind == "action_prepared":
             if not (
                 self.proposal_action_before_sha256 is None
                 and self.proposal_action_before_state is None

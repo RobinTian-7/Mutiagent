@@ -249,8 +249,12 @@ _CHECKPOINT_PREDECESSORS: dict[
 ] = {
     "action_prepared": frozenset(),
     "generation_start_authorized": frozenset({"action_prepared"}),
+    # A whole-composition chain has no pre-generation Bank record: its one
+    # generation call produces the edge, so its FIRST checkpoint is the
+    # registered edge itself.
+    "whole_edge_registered": frozenset(),
     "probe_attempt_open": frozenset(
-        {"generation_start_authorized", "probe_terminal"}
+        {"generation_start_authorized", "whole_edge_registered", "probe_terminal"}
     ),
     "probe_terminal": frozenset({"probe_attempt_open"}),
     # The additional predecessors are safe failure settlement paths after a
@@ -259,6 +263,7 @@ _CHECKPOINT_PREDECESSORS: dict[
         {
             "action_prepared",
             "generation_start_authorized",
+            "whole_edge_registered",
             "probe_attempt_open",
             "probe_terminal",
         }
@@ -413,6 +418,7 @@ CREATE TABLE IF NOT EXISTS component_checkpoint(
     operation_id TEXT NOT NULL UNIQUE,
     checkpoint_kind TEXT NOT NULL CHECK(checkpoint_kind IN (
         'action_prepared', 'generation_start_authorized',
+        'whole_edge_registered',
         'probe_attempt_open', 'probe_terminal', 'gate_terminal'
     )),
     protocol_sha256 TEXT NOT NULL,
@@ -479,7 +485,7 @@ CREATE TABLE IF NOT EXISTS call_receipt(
     ),
     call_slot INTEGER NOT NULL CHECK(call_slot >= 0),
     request_sha256 TEXT NOT NULL,
-    model_name TEXT NOT NULL CHECK(model_name = 'gpt-4o-mini'),
+    model_name TEXT NOT NULL CHECK(model_name IN ('gpt-4o-mini', 'gpt-5-mini')),
     input_tokens_reserved INTEGER NOT NULL CHECK(input_tokens_reserved >= 0),
     output_tokens_reserved INTEGER NOT NULL CHECK(output_tokens_reserved >= 1),
     max_completion_tokens INTEGER NOT NULL CHECK(max_completion_tokens >= 1),
@@ -1649,11 +1655,19 @@ class SingleWriterPilotStore:
                 self._connection,
                 metadata.action_owner_logical_execution_key,
             )
+            # Whole chains reserve their generation lease before the edge
+            # (and therefore its surrogate action id) exists, so the owner
+            # lease legitimately carries no action id.
+            expected_owner_action_id = (
+                None
+                if metadata.semantic_witness.owner_kind == "whole_composition"
+                else metadata.action_id
+            )
             if not (
                 owner.state == "completed"
                 and owner.split == "TRAIN_UPDATE"
                 and owner.operation_kind == "proposal_generation"
-                and owner.action_id == metadata.action_id
+                and owner.action_id == expected_owner_action_id
                 and owner.logical_arm_key
                 == metadata.action_owner_logical_arm_key
                 and metadata.logical_execution_key
@@ -1760,11 +1774,22 @@ class SingleWriterPilotStore:
             raise PilotStoreIntegrityError(
                 "checkpoint semantic witness belongs to another protocol"
             )
-        owner_rows = connection.execute(
-            "SELECT * FROM execution_lease WHERE action_id=? "
-            "AND operation_kind='proposal_generation' AND split='TRAIN_UPDATE'",
-            (witness.action_id,),
-        ).fetchall()
+        if witness.owner_kind == "whole_composition":
+            # A whole chain's generation lease is reserved before its edge
+            # (and therefore its surrogate action id) exists, so it carries
+            # action_id NULL; the sealed schedule authorizes exactly one
+            # proposal-generation lease per experiment.
+            owner_rows = connection.execute(
+                "SELECT * FROM execution_lease WHERE action_id IS NULL "
+                "AND operation_kind='proposal_generation' "
+                "AND split='TRAIN_UPDATE'",
+            ).fetchall()
+        else:
+            owner_rows = connection.execute(
+                "SELECT * FROM execution_lease WHERE action_id=? "
+                "AND operation_kind='proposal_generation' AND split='TRAIN_UPDATE'",
+                (witness.action_id,),
+            ).fetchall()
         if len(owner_rows) != 1:
             raise PilotStoreIntegrityError(
                 "checkpoint action must have one exact proposal owner"
@@ -1830,6 +1855,15 @@ class SingleWriterPilotStore:
             if owner.state != "reserved" or stage != owner:
                 raise PilotStateTransitionError(
                     "proposal checkpoint must precede its provider crossing"
+                )
+        elif kind == "whole_edge_registered":
+            # The whole chain's first checkpoint lands AFTER its one metered
+            # generation call (the edge is content of that call), so the
+            # owner lease must already be terminal.
+            if owner.state != "completed" or stage != owner:
+                raise PilotStateTransitionError(
+                    "whole-edge checkpoint requires its completed structural "
+                    "generation"
                 )
         elif kind == "probe_attempt_open":
             if stage.state != "reserved":
@@ -1995,7 +2029,12 @@ class SingleWriterPilotStore:
 
             prior_row = self._unpromoted_checkpoint_row(connection)
             if prior_row is None:
-                if checkpoint_kind != "action_prepared":
+                expected_first = (
+                    "whole_edge_registered"
+                    if semantic_witness.owner_kind == "whole_composition"
+                    else "action_prepared"
+                )
+                if checkpoint_kind != expected_first:
                     raise PilotStateTransitionError(
                         "a checkpoint action must begin with action_prepared"
                     )
@@ -2730,6 +2769,25 @@ class SingleWriterPilotStore:
                     "FINAL_VAL cannot run while a TRAIN stage is in flight"
                 )
             return
+        if (
+            lease.operation_kind == "proposal_generation"
+            and lease.action_id is None
+        ):
+            # Whole-composition chains have no pre-generation Bank record —
+            # the one generation call PRODUCES the edge — so this crossing
+            # runs against the genesis recovery head (pinned above by the
+            # expected recovery root).  A crash between this call and the
+            # whole_edge_registered checkpoint ends the experiment as an
+            # honest degenerate, the same terminal semantics as a direct
+            # chain crashing between its generation call and reconcile.
+            # Direct chains always reserve their generation lease with the
+            # Bank action id, so this branch is unreachable for them.
+            if recovery.checkpoint is not None:
+                raise PilotStateTransitionError(
+                    "structural generation must precede its chain's first "
+                    "checkpoint"
+                )
+            return
         checkpoint = recovery.checkpoint
         if checkpoint is None:
             raise PilotStateTransitionError(
@@ -2953,7 +3011,7 @@ class SingleWriterPilotStore:
                         logical_execution_key,
                         call_slot,
                         call_request_sha256,
-                        "gpt-4o-mini",
+                        self.protocol.model_name,
                         input_tokens_reserved,
                         output_tokens_reserved,
                         output_tokens_reserved,
@@ -3681,11 +3739,20 @@ class SingleWriterPilotStore:
     def _component_scientific_owner_is_eligible(
         self,
         owner: PilotExecutionLeaseV1,
+        *,
+        actionless_owner: bool = False,
     ) -> bool:
+        """Direct owners carry their Bank action id; whole owners carry none.
+
+        ``actionless_owner`` selects the whole-composition law: the one
+        generation lease was reserved before the edge existed, so its
+        action_id must be NULL (a direct lease there would be an alias).
+        """
+
         if (
             owner.split != "TRAIN_UPDATE"
             or owner.operation_kind != "proposal_generation"
-            or owner.action_id is None
+            or (owner.action_id is None) != actionless_owner
         ):
             return False
         return owner.state == "completed"
@@ -3844,11 +3911,8 @@ class SingleWriterPilotStore:
             if ordinal > policy.max_scientific_commits:
                 raise PilotCapacityError("scientific commit capacity is exhausted")
             owner = self._load_execution(connection, owner_logical_execution_key)
-            if not self._component_scientific_owner_is_eligible(owner):
-                raise PilotStoreIntegrityError(
-                    "scientific commit requires an eligible terminal TRAIN_UPDATE proposal owner"
-                )
             promotion_checkpoint: PilotComponentCheckpointSnapshotV1 | None = None
+            whole_owner = False
             if self.protocol.component_checkpoint_saga_required:
                 checkpoint_row = self._unpromoted_checkpoint_row(connection)
                 if checkpoint_row is None:
@@ -3859,13 +3923,27 @@ class SingleWriterPilotStore:
                     checkpoint_row
                 )
                 self._verify_component_checkpoint_snapshot(promotion_checkpoint)
+                whole_owner = (
+                    promotion_checkpoint.metadata.semantic_witness.owner_kind
+                    == "whole_composition"
+                )
+            if not self._component_scientific_owner_is_eligible(
+                owner, actionless_owner=whole_owner
+            ):
+                raise PilotStoreIntegrityError(
+                    "scientific commit requires an eligible terminal TRAIN_UPDATE proposal owner"
+                )
+            if promotion_checkpoint is not None:
                 checkpoint_metadata = promotion_checkpoint.metadata
+                expected_owner_action_id = (
+                    None if whole_owner else checkpoint_metadata.action_id
+                )
                 if (
                     checkpoint_metadata.checkpoint_sha256
                     != settled_checkpoint_sha256
                     or not checkpoint_metadata.settled
                     or checkpoint_metadata.checkpoint_kind != "gate_terminal"
-                    or checkpoint_metadata.action_id != owner.action_id
+                    or owner.action_id != expected_owner_action_id
                     or checkpoint_metadata.action_owner_logical_execution_key
                     != owner.logical_execution_key
                     or checkpoint_metadata.action_owner_logical_arm_key
@@ -3892,11 +3970,20 @@ class SingleWriterPilotStore:
             previous_commit_sha = (
                 ZERO_SHA256 if previous_commit is None else str(previous_commit[0])
             )
+            # A whole chain's commit carries the surrogate owner id (the
+            # transition id from its settled checkpoint) — the promotion row
+            # re-verifies this equality; a direct chain carries the Bank
+            # action id (== the checkpoint's action id, verified above).
+            owner_action_id = (
+                promotion_checkpoint.metadata.action_id
+                if whole_owner and promotion_checkpoint is not None
+                else owner.action_id
+            )
             body = {
                 "commit_ordinal": ordinal,
                 "operation_id": operation_id,
                 "owner_logical_execution_key": owner_logical_execution_key,
-                "owner_action_id": owner.action_id,
+                "owner_action_id": owner_action_id,
                 "owner_split": owner.split,
                 "request_sha256": request_sha256,
                 "before_state_sha256": before_state_sha256,
@@ -3915,7 +4002,7 @@ class SingleWriterPilotStore:
                 commit_ordinal=ordinal,
                 operation_id=operation_id,
                 owner_logical_execution_key=owner_logical_execution_key,
-                owner_action_id=owner.action_id,
+                owner_action_id=owner_action_id,
                 owner_split="TRAIN_UPDATE",
                 request_sha256=request_sha256,
                 before_state_sha256=before_state_sha256,
@@ -3945,7 +4032,7 @@ class SingleWriterPilotStore:
                     ordinal,
                     operation_id,
                     owner_logical_execution_key,
-                    owner.action_id,
+                    owner_action_id,
                     owner.split,
                     request_sha256,
                     before_state_sha256,
@@ -3994,9 +4081,19 @@ class SingleWriterPilotStore:
             owner = self._load_execution(
                 self._connection, commit.owner_logical_execution_key
             )
+            # A whole chain's owner lease carries no action id; its commit's
+            # surrogate owner id is bound to the settled checkpoint by the
+            # promotion-row authentication instead.
+            actionless_owner = owner.action_id is None
             if (
-                not self._component_scientific_owner_is_eligible(owner)
-                or owner.action_id != commit.owner_action_id
+                not self._component_scientific_owner_is_eligible(
+                    owner, actionless_owner=actionless_owner
+                )
+                or (
+                    not commit.owner_action_id
+                    if actionless_owner
+                    else owner.action_id != commit.owner_action_id
+                )
             ):
                 raise PilotStoreIntegrityError("scientific owner closure failed")
             body = {

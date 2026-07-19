@@ -70,6 +70,13 @@ from exp_graph.mas.phase_factor_binding_v3 import (
     make_phase_v3_repair_opportunity_verifier,
     make_registered_phase_arm_receipt_v3,
 )
+from exp_graph.mas.phase_structural_ops import (
+    PhaseStructuralOperationProofV1,
+    RegisteredPhaseWholeCompositionEdgeV1,
+    make_phase_whole_arm_receipt_verifier,
+    make_phase_whole_operation_verifier,
+    make_registered_phase_whole_arm_receipt_v1,
+)
 
 from masbench.sft_pilot.schema import (
     PilotLogicalArmCoordinatesV1,
@@ -326,6 +333,16 @@ class SFTPilotFactorAuthority:
     # stays as the explicit (empty) record of that closure.
     uncovered_capabilities: tuple[str, ...] = ()
 
+    # The one owner kind this experiment's probe plans may carry, frozen by
+    # the host before any plan is sealed (direct scalar rounds by default;
+    # a structural round pins "whole_composition" instead).
+    expected_owner_kind: str = "direct_factor"
+
+    # Host capability resolving operation_receipt_sha256 -> structural proof.
+    # The default resolves nothing, so whole registration/verification fails
+    # closed until the host installs its persisted proof store.
+    structural_proof_resolver: Any = staticmethod(lambda _receipt_sha256: None)
+
     def __init__(
         self,
         protocol: PilotProtocolV1,
@@ -520,7 +537,7 @@ class SFTPilotFactorAuthority:
                 transition_id=plan.transition_id,
             )
             return bool(
-                plan.owner_kind == "direct_factor"
+                plan.owner_kind == self.expected_owner_kind
                 and plan.split == "TRAIN_UPDATE"
                 and plan.namespace_digest == self.protocol.namespace.digest
                 and plan.model_name == self.protocol.model_name
@@ -750,7 +767,11 @@ class SFTPilotFactorAuthority:
         self,
         *,
         registry: PhaseArtifactRegistry,
-        registered: RegisteredPhaseFactorEdgeV2 | RegisteredPhaseFactorEdgeV3,
+        registered: (
+            RegisteredPhaseFactorEdgeV2
+            | RegisteredPhaseFactorEdgeV3
+            | RegisteredPhaseWholeCompositionEdgeV1
+        ),
         plan: ProbePlanV2,
         attempt: ProbeAttemptV3,
         arm: Literal["source", "target"],
@@ -796,18 +817,27 @@ class SFTPilotFactorAuthority:
             safe_failure_code=safe_failure_code,
             failed_stage_rank=failed_stage_rank,
         )
-        proof = registry.resolve_proof(registered.proof)
+        if isinstance(registered, RegisteredPhaseWholeCompositionEdgeV1):
+            phase_proof_sha256 = registered.proof.receipt_sha256
+        else:
+            phase_proof_sha256 = registry.resolve_proof(
+                registered.proof
+            ).handle.proof_sha256
         return self._mac(
             _PHASE_ARM_DOMAIN,
             _without_field(unsigned, "attestation_sha256"),
-            phase_proof_sha256=proof.handle.proof_sha256,
+            phase_proof_sha256=phase_proof_sha256,
         )
 
     def make_phase_arm_receipt(
         self,
         *,
         registry: PhaseArtifactRegistry,
-        registered: RegisteredPhaseFactorEdgeV2 | RegisteredPhaseFactorEdgeV3,
+        registered: (
+            RegisteredPhaseFactorEdgeV2
+            | RegisteredPhaseFactorEdgeV3
+            | RegisteredPhaseWholeCompositionEdgeV1
+        ),
         plan: ProbePlanV2,
         attempt: ProbeAttemptV3,
         arm: Literal["source", "target"],
@@ -852,11 +882,21 @@ class SFTPilotFactorAuthority:
 
     def _phase_arm_receipt_factory(
         self,
-        registered: RegisteredPhaseFactorEdgeV2 | RegisteredPhaseFactorEdgeV3,
+        registered: (
+            RegisteredPhaseFactorEdgeV2
+            | RegisteredPhaseFactorEdgeV3
+            | RegisteredPhaseWholeCompositionEdgeV1
+        ),
     ) -> Any:
         """Select one exact receipt codec; cross-version objects fail closed."""
 
         binder = self.protocol.namespace.binder_version
+        if isinstance(registered, RegisteredPhaseWholeCompositionEdgeV1):
+            if binder != PHASE_FULL_FACTOR_BINDER_VERSION:
+                raise ValueError(
+                    "whole-composition edges require the full-factor-v3 binder"
+                )
+            return make_registered_phase_whole_arm_receipt_v1
         if binder == PHASE_FULL_FACTOR_BINDER_VERSION:
             if not isinstance(registered, RegisteredPhaseFactorEdgeV3):
                 raise ValueError("full-factor-v3 protocol rejects a leaf-v2 edge")
@@ -870,12 +910,17 @@ class SFTPilotFactorAuthority:
     def _verify_phase_runner_receipt(
         self,
         receipt: ArmReceiptV2,
-        proof: PhaseMaterializationProofRecord,
+        proof: PhaseMaterializationProofRecord | PhaseStructuralOperationProofV1,
     ) -> bool:
+        phase_proof_sha256 = (
+            proof.receipt_sha256
+            if isinstance(proof, PhaseStructuralOperationProofV1)
+            else proof.handle.proof_sha256
+        )
         expected = self._mac(
             _PHASE_ARM_DOMAIN,
             _without_field(receipt, "attestation_sha256"),
-            phase_proof_sha256=proof.handle.proof_sha256,
+            phase_proof_sha256=phase_proof_sha256,
         )
         return bool(
             receipt.producer_epoch == self.verifier_epoch
@@ -1347,6 +1392,20 @@ class SFTPilotFactorAuthority:
             },
         )
 
+    def _resolve_structural_proof(
+        self,
+        receipt_sha256: str,
+    ) -> PhaseStructuralOperationProofV1 | None:
+        resolver = self.structural_proof_resolver
+        proof = resolver(receipt_sha256) if callable(resolver) else None
+        if proof is None:
+            return None
+        return PhaseStructuralOperationProofV1.model_validate(
+            proof.model_dump(mode="python")
+            if hasattr(proof, "model_dump")
+            else proof
+        )
+
     def capabilities(self, registry: PhaseArtifactRegistry) -> dict[str, Any]:
         """Return the implemented verifier set, with no permissive callbacks."""
 
@@ -1359,10 +1418,21 @@ class SFTPilotFactorAuthority:
             repair_opportunity_verifier = (
                 make_phase_v3_repair_opportunity_verifier(registry)
             )
-            arm_receipt_verifier = make_phase_v3_arm_receipt_verifier(
+            direct_arm_receipt_verifier = make_phase_v3_arm_receipt_verifier(
                 registry,
                 trusted_runner_verifier=self._verify_phase_runner_receipt,
             )
+            whole_arm_receipt_verifier = make_phase_whole_arm_receipt_verifier(
+                registry,
+                self._resolve_structural_proof,
+                trusted_runner_verifier=self._verify_phase_runner_receipt,
+            )
+
+            def arm_receipt_verifier(receipt, plan, assignment):
+                if plan.owner_kind == "whole_composition":
+                    return whole_arm_receipt_verifier(receipt, plan, assignment)
+                return direct_arm_receipt_verifier(receipt, plan, assignment)
+
         elif binder == PHASE_FACTOR_BINDER_VERSION:
             direct_binding_verifier = make_phase_v2_binding_verifier(registry)
             proposal_action_terminal_verifier = (
@@ -1378,7 +1448,7 @@ class SFTPilotFactorAuthority:
         else:
             raise RuntimeError("unreachable Phase binder dispatch")
 
-        return {
+        capabilities: dict[str, Any] = {
             "direct_binding_verifier": direct_binding_verifier,
             "proposal_action_terminal_verifier": proposal_action_terminal_verifier,
             "repair_opportunity_verifier": repair_opportunity_verifier,
@@ -1398,6 +1468,14 @@ class SFTPilotFactorAuthority:
             "rollback_verifier": self.verify_rollback,
             "archive_verifier": self.verify_archive,
         }
+        if binder == PHASE_FULL_FACTOR_BINDER_VERSION:
+            capabilities["whole_operation_verifier"] = (
+                make_phase_whole_operation_verifier(
+                    registry,
+                    self._resolve_structural_proof,
+                )
+            )
+        return capabilities
 
 
 __all__ = [

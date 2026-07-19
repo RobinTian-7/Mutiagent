@@ -119,6 +119,7 @@ class OpenAIChatClient:
         max_retries: int | None = None,
         max_completion_tokens: int | None = None,
         require_provider_usage: bool = False,
+        reasoning_effort: str | None = None,
     ) -> None:
         try:
             from openai import OpenAI
@@ -199,6 +200,9 @@ class OpenAIChatClient:
             raise TypeError("require_provider_usage must be boolean")
         self._platform = platform.lower()
         self._thinking_enabled = thinking_enabled
+        # OpenAI reasoning models take reasoning_effort and reject sampling
+        # temperature; when an effort is pinned the request omits temperature.
+        self._reasoning_effort = reasoning_effort
         self._max_completion_tokens = max_completion_tokens
         self._require_provider_usage = require_provider_usage
         client_kwargs: dict[str, object] = {
@@ -258,12 +262,23 @@ class OpenAIChatClient:
                 **request_options,
                 "max_completion_tokens": self._max_completion_tokens,
             }
-        response = self._client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=request_temperature,
-            **request_options,
-        )
+        if self._reasoning_effort is not None:
+            request_options = {
+                **request_options,
+                "reasoning_effort": self._reasoning_effort,
+            }
+            response = self._client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                **request_options,
+            )
+        else:
+            response = self._client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=request_temperature,
+                **request_options,
+            )
         text = response.choices[0].message.content or ("{}" if json_mode else "")
         usage = response.usage
         prompt_tokens = getattr(usage, "prompt_tokens", None)

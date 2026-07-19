@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 
 from exp_graph.llm.base import LLMClient
+from exp_graph.llm.concurrency import maybe_limit_concurrency
 from exp_graph.llm.fake import FakeLLMClient
 from exp_graph.llm.openai_client import OpenAIChatClient
 from exp_graph.llm.timeout import TimeoutLLMClient
@@ -85,24 +86,32 @@ def create_llm_client(
     :class:`~exp_graph.llm.timeout.TimeoutLLMClient` when a budget is configured
     (``timeout_s`` arg or the ``EXP_GRAPH_LLM_WALLCLOCK_TIMEOUT`` env var), so a
     hung provider call fails fast instead of freezing the run -- no matter which
-    code path constructed the client. The fake client is never wrapped.
+    code path constructed the client. When a process-wide concurrency cap is
+    active (:func:`exp_graph.llm.concurrency.configure_global_llm_concurrency`
+    or the ``EXP_GRAPH_LLM_MAX_CONCURRENCY`` env var) the guarded client is
+    additionally admission-limited, OUTSIDE the timeout guard so an abandoned
+    hung call can never leak a slot. The fake client is never wrapped.
     """
     if provider == "fake":
         return FakeLLMClient()
     if provider in _REAL_PROVIDERS:
-        return _guarded(
-            OpenAIChatClient(
-                base_url=base_url,
-                api_key_env=api_key_env,
-                platform=provider,
-                thinking_enabled=thinking_enabled,
-            ),
-            timeout_s,
+        return maybe_limit_concurrency(
+            _guarded(
+                OpenAIChatClient(
+                    base_url=base_url,
+                    api_key_env=api_key_env,
+                    platform=provider,
+                    thinking_enabled=thinking_enabled,
+                ),
+                timeout_s,
+            )
         )
     if provider == "auto":
         if os.environ.get("OPENAI_API_KEY"):
-            return _guarded(
-                OpenAIChatClient(thinking_enabled=thinking_enabled), timeout_s
+            return maybe_limit_concurrency(
+                _guarded(
+                    OpenAIChatClient(thinking_enabled=thinking_enabled), timeout_s
+                )
             )
         return FakeLLMClient()
     raise ValueError(

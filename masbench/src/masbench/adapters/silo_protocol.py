@@ -183,6 +183,11 @@ Your duties this round:
 - Work out everything your private shard tells you.
 - Prepare it for broadcast: peers must be able to absorb your information and
   you must be ready to absorb theirs in later rounds.
+- Your proposal MUST state your shard's contribution as a compact ledger
+  entry "A<your id>: <raw data>" carrying the RAW shard values (or exact
+  sufficient statistics) that a peer would need to recompute the global
+  answer from scratch — a lossy summary makes tasks like deviations,
+  simulations or sorted merges unsolvable for everyone.
 - Track what you are still missing; you cannot finish until you have absorbed
   information originating from every other agent.
 
@@ -230,8 +235,15 @@ def format_sink_protocol_merge_prompt(
     inbox_answers: list[Any],
     verified_answer: Any,
     task_ref: str,
+    own_belief: dict[str, Any] | None = None,
+    inbox_messages: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Sink-mode merge prompt: merge losslessly, forward toward the sink."""
+    """Sink-mode merge prompt: full-message relay, sink computes.
+
+    Propagation parity with the paper transports: every receiver sees the
+    FULL incoming messages (proposal ledger + structured payload), never just
+    the extracted answer channel, for every topology.
+    """
     return f"""You are a relay agent in a sink-oriented multi-agent system.
 Only the designated sink agent is responsible for forming the FINAL global
 answer. Your job as a receiver is to merge incoming partial information
@@ -239,11 +251,23 @@ LOSSLESSLY with your own and pass the combined artifact further toward the
 sink. If you happen to be the sink, form the best global answer you can from
 everything that has reached you.
 
-Mode={merge_mode}. Merge YOUR_ANSWER_JSON with the incoming artifacts in
-INBOX_ANSWERS_JSON. Preserve every distinct contribution: dropping or double
-counting a shard's information corrupts the sink's final answer. Do not invent
-data; only combine what is given plus your own shard. If a deterministic check
-is provided in VERIFIED_ANSWER_JSON and is not null, prefer it.
+Mode={merge_mode}. INBOX_MESSAGES_JSON contains each sender's FULL message:
+their current answer, proposal text, supporting notes and structured payload.
+YOUR_BELIEF_JSON is your own full prior state. Do the following, in order:
+1. EXTRACT every per-agent shard contribution you can find in
+   INBOX_MESSAGES_JSON and in YOUR_BELIEF_JSON (contributions you absorbed
+   in earlier rounds live in your own proposal ledger — keep them).
+2. RECORD the accumulated ledger in your outgoing proposal as compact
+   per-agent entries like "A0: <contribution>; A3: <contribution>" so the
+   next relay (and finally the sink) can reconstruct every contribution.
+3. If you are positioned to determine it, COMPUTE the global answer from the
+   accumulated contributions according to the task definition; otherwise
+   carry the merged partial artifact forward with its per-agent parts
+   explicit. Preserve every distinct contribution: dropping or double
+   counting a shard corrupts the sink's final answer.
+Do not invent data; only combine what is given plus your own shard. If a
+deterministic check is provided in VERIFIED_ANSWER_JSON and is not null,
+prefer it.
 
 Rules: output exactly one JSON object (a belief_state) and nothing outside it.
 Put the merged answer (or merged partial artifact) in structured_state.answer
@@ -252,19 +276,25 @@ canonical form, or "UNKNOWN" if the global answer is still not determined at
 your position. Non-sink agents are NOT required to reach the final answer.
 
 Self-check before answering: (1) is every incoming contribution reflected
-exactly once, (2) is the artifact still forwardable toward the sink, (3) did
-you avoid inventing unseen data?
+exactly once in your ledger, (2) is the artifact still forwardable toward
+the sink, (3) did you avoid inventing unseen data?
 
 TASK_FOR_AGENT:
 {prompt_context}
 Return belief_state:
-{_belief_shape(task_ref, proposal_hint="merged artifact now covering these contributions")}
+{_belief_shape(task_ref, proposal_hint="ledger: A<id>: <contribution> for every agent absorbed so far")}
 
 TASK_CONTEXT_JSON:
 {json.dumps(task_context, ensure_ascii=True, sort_keys=True)}
 
+YOUR_BELIEF_JSON:
+{json.dumps(own_belief or {}, ensure_ascii=True, sort_keys=True)}
+
 YOUR_ANSWER_JSON:
 {json.dumps(own_answer, ensure_ascii=True)}
+
+INBOX_MESSAGES_JSON:
+{json.dumps(inbox_messages or [], ensure_ascii=True, sort_keys=True)}
 
 INBOX_ANSWERS_JSON:
 {json.dumps(inbox_answers, ensure_ascii=True)}
@@ -286,42 +316,71 @@ def format_all_agents_protocol_merge_prompt(
     inbox_answers: list[Any],
     verified_answer: Any,
     task_ref: str,
+    own_belief: dict[str, Any] | None = None,
+    inbox_messages: list[dict[str, Any]] | None = None,
 ) -> str:
-    """All-agents merge prompt: absorb, rebroadcast, everyone must finish."""
+    """All-agents merge prompt: absorb full messages, compute, rebroadcast.
+
+    The pre-upgrade template exposed only the extracted answer channel, which
+    starved the merge of the actual shard data carried in message proposals
+    and structured payloads (the paper transports show agents full message
+    content; this closes that execution-surface gap).
+    """
     return f"""You are one agent in a fully-accountable multi-agent system.
 EVERY agent must END holding the complete, correct GLOBAL answer and will
 submit it independently. Merging is not enough: whatever NEW information you
 learn this round must keep spreading in later rounds until every agent has
 everything. Do not treat any single agent as the final answer holder.
 
-Mode={merge_mode}. Absorb the incoming artifacts in INBOX_ANSWERS_JSON into
-YOUR_ANSWER_JSON. Keep the union of all information you have seen so far and
-make your outgoing state maximally informative for peers who have not seen
-what you have. Do not invent data; only combine what is given plus your own
-shard. If a deterministic check is provided in VERIFIED_ANSWER_JSON and is not
-null, prefer it.
+Mode={merge_mode}. INBOX_MESSAGES_JSON contains each sender's FULL message:
+their current answer, proposal text, supporting notes and structured payload.
+YOUR_BELIEF_JSON is your own full prior state. Do the following, in order:
+1. EXTRACT every per-agent shard contribution you can find in
+   INBOX_MESSAGES_JSON and in YOUR_BELIEF_JSON (earlier rounds' absorbed
+   contributions live in your own proposal ledger — keep them).
+2. RECORD the accumulated ledger in your outgoing proposal as compact
+   per-agent entries like "A0: <raw values>; A3: <raw values>" so any peer
+   can reconstruct every contribution you have absorbed. Entries must carry
+   the RAW shard data (or exact sufficient statistics), never a lossy
+   summary — global recomputation (deviations, simulations, sorted merges)
+   must stay possible from your ledger alone.
+3. COMPUTE the global answer from the accumulated contributions according to
+   the task definition (sum per-shard counts, extremum of shard extrema,
+   merge partial maps/lists — whatever the task asks). If contributions from
+   some agents are still missing, compute the best partial artifact and keep
+   its per-agent parts explicit.
+Do not invent data; only combine what is given plus your own shard. If a
+deterministic check is provided in VERIFIED_ANSWER_JSON and is not null,
+prefer it.
 
 Rules: output exactly one JSON object (a belief_state) and nothing outside it.
-Put your current best GLOBAL answer in structured_state.answer using its
-natural JSON type; if you can now determine the full global answer, commit to
-it. Set consensus_key to the same value in compact canonical form, or
-"UNKNOWN" only if information from some agents has still never reached you.
+Put the COMPUTED global answer (or the merged partial artifact) in
+structured_state.answer using its natural JSON type; commit to a value —
+never leave it null once any contribution has reached you. Set consensus_key
+to the same value in compact canonical form, or "UNKNOWN" only if information
+from some agents has still never reached you.
 
-Self-check before answering: (1) does your state now include every
-contribution you have ever received, (2) would a peer reading your message
-learn everything you know, (3) are you ready to submit this answer yourself
-without relying on any other agent?
+Self-check before answering: (1) does your ledger now include every
+contribution you have ever received, (2) did you actually COMPUTE the merged
+answer from the ledger rather than echoing one shard, (3) would a peer
+reading your proposal learn every contribution you know?
 
 TASK_FOR_AGENT:
 {prompt_context}
 Return belief_state:
-{_belief_shape(task_ref, proposal_hint="union of everything I have absorbed so far")}
+{_belief_shape(task_ref, proposal_hint="ledger: A<id>: <contribution> for every agent absorbed so far")}
 
 TASK_CONTEXT_JSON:
 {json.dumps(task_context, ensure_ascii=True, sort_keys=True)}
 
+YOUR_BELIEF_JSON:
+{json.dumps(own_belief or {}, ensure_ascii=True, sort_keys=True)}
+
 YOUR_ANSWER_JSON:
 {json.dumps(own_answer, ensure_ascii=True)}
+
+INBOX_MESSAGES_JSON:
+{json.dumps(inbox_messages or [], ensure_ascii=True, sort_keys=True)}
 
 INBOX_ANSWERS_JSON:
 {json.dumps(inbox_answers, ensure_ascii=True)}
@@ -642,6 +701,35 @@ class SiloProtocolAdapter(BenchmarkTaskAdapter, ProtocolTaskAdapter):
             if deterministic_belief is not None
             else None
         )
+        # Propagation parity with the paper transports, for EVERY topology and
+        # goal: the merge model reads each sender's FULL message (proposal
+        # ledger + structured payload), never just the extracted answer
+        # channel (which starves until coverage completes).  Lookupable case
+        # ids are transport identity, not information — masked per the
+        # leakage law before anything reaches model-visible context.
+        def _masked(value: Any) -> Any:
+            if not isinstance(value, dict):
+                return value
+            return {k: v for k, v in value.items() if k != "case_id"}
+
+        inbox_messages = [
+            {
+                "from_agent": message.agent_id,
+                "answer": _answer_from_message(message),
+                "proposal": message.proposal,
+                "support": list(message.support or []),
+                "structured_payload": _masked(message.structured_payload),
+                "consensus_key": message.consensus_key,
+            }
+            for message in inbox
+        ]
+        own_belief = {
+            "answer": own_answer,
+            "proposal": old_belief_state.proposal,
+            "support": list(old_belief_state.support or []),
+            "structured_state": _masked(old_belief_state.structured_state),
+            "consensus_key": old_belief_state.consensus_key,
+        }
         formatter = (
             format_all_agents_protocol_merge_prompt
             if self.information_goal == "all_agents"
@@ -657,6 +745,8 @@ class SiloProtocolAdapter(BenchmarkTaskAdapter, ProtocolTaskAdapter):
             inbox_answers=inbox_answers,
             verified_answer=verified_answer,
             task_ref=self._task_ref(),
+            own_belief=own_belief,
+            inbox_messages=inbox_messages,
         )
         return assert_prompt_clean(prompt, context="silo merge prompt")
 

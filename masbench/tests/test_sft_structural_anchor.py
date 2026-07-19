@@ -314,3 +314,65 @@ def test_paths_and_exact_envelope_bytes_fail_closed(tmp_path: Path) -> None:
     # the loader can be tricked into treating changed bytes as authoritative.
     with pytest.raises(ValidationError, match="root is not reproducible"):
         type(built.bundle).model_validate(changed.model_dump(mode="python"))
+
+
+def test_anchorize_source_program_override(tmp_path: Path) -> None:
+    """S4: an accepted whole composition anchors the next round's genesis."""
+
+    accepted = {
+        "format": "phase_program_v1",
+        "information_goal": "sink",
+        "selected_primary": 0,
+        "state_retention": "keep",
+        "allow_no_send": True,
+        "submit_when": "coverage_complete",
+        "phases": [
+            {"kind": "gather", "hub": 0, "pattern": "tree"},
+            {
+                "kind": "pairwise_exchange",
+                "pattern": "rotating",
+                "max_rounds": 2,
+            },
+            {"kind": "broadcast", "hub": 0, "pattern": "tree"},
+        ],
+    }
+    plan = StructuralAnchorPlanV1(
+        namespace=_namespace("sink"),
+        source_catalog_sha256=_h("anchorize-catalog"),
+        source_policy_sha256=_h("anchorize-policy"),
+        base_structure="broadcast",
+        source_program_override=accepted,
+    )
+    # Frozen genesis-locus rule: phase 0 pattern flip.
+    assert plan.anchor_locus == "/phases/0/pattern"
+    assert plan.anchor_field_name == "pattern"
+    assert plan.anchor_scalar_type == "string"
+    assert plan.anchor_target_value == "star"
+    assert [item.kind for item in plan.source_program.phases] == [
+        "gather",
+        "pairwise_exchange",
+        "broadcast",
+    ]
+    assert plan.target_program.phases[0].pattern == "star"
+    assert plan.digest != StructuralAnchorPlanV1(
+        namespace=_namespace("sink"),
+        source_catalog_sha256=_h("anchorize-catalog"),
+        source_policy_sha256=_h("anchorize-policy"),
+        base_structure="broadcast",
+    ).digest
+
+    runtime = build_structural_anchor_v1(
+        (tmp_path / "anchorized").resolve(),
+        plan=plan,
+        source_authority_key=SOURCE_KEY,
+        phase_registry_key=PHASE_KEY,
+        factor_bank_key=FACTOR_KEY,
+    )
+    edge = runtime.bundle
+    assert edge is not None
+    state = runtime.registry.to_state()
+    programs = {
+        tuple(item.kind for item in artifact.program.phases)
+        for artifact in state.artifacts
+    }
+    assert ("gather", "pairwise_exchange", "broadcast") in programs

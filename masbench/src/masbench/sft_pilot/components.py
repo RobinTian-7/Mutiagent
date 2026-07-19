@@ -162,6 +162,50 @@ def derive_checkpoint_semantic_witness(
             for item in factor_after.proposal_actions
             if item.action_id not in before_ids
         )
+        before_whole_ids = {
+            item.transition_id for item in factor_before.whole_transitions
+        }
+        new_whole = tuple(
+            item
+            for item in factor_after.whole_transitions
+            if item.transition_id not in before_whole_ids
+        )
+        if not new_actions and new_whole:
+            # Whole-composition chain: there is no pre-generation Bank record
+            # — the one metered generation call produced the edge, so the
+            # first checkpoint is the registered ordinary whole transition
+            # (with its projected rows) and nothing else scientific.
+            transition = _one(
+                new_whole,
+                "first whole checkpoint must add exactly one whole transition",
+            )
+            before_direct_ids = {
+                item.transition_id for item in factor_before.direct_transitions
+            }
+            if any(
+                item.transition_id not in before_direct_ids
+                for item in factor_after.direct_transitions
+            ):
+                raise PilotStateTransitionError(
+                    "whole-edge checkpoint cannot also add a direct transition"
+                )
+            if transition.namespace.digest != protocol.namespace.digest:
+                raise PilotStateTransitionError(
+                    "first checkpoint lacks one whole transition in the "
+                    "frozen namespace"
+                )
+            return PilotCheckpointSemanticWitnessV1(
+                checkpoint_kind="whole_edge_registered",
+                owner_kind="whole_composition",
+                action_id=transition.transition_id,
+                action_branch=transition.origin_branch,
+                action_producer_epoch=transition.operation_verifier_epoch,
+                action_intent_sha256=transition.operation_receipt_sha256,
+                proposal_action_after_sha256=canonical_sha256(transition),
+                proposal_action_after_state="committed",
+                expected_stage_operation_kind="proposal_generation",
+                **common,
+            )
         action = _one(
             new_actions,
             "first checkpoint must add exactly one Factor ProposalAction",
@@ -186,29 +230,85 @@ def derive_checkpoint_semantic_witness(
 
     if prior.protocol_sha256 != protocol.digest:
         raise PilotStateTransitionError("prior checkpoint belongs to another protocol")
-    action_before = _action_by_id(factor_before, prior.action_id)
-    action_after = _action_by_id(factor_after, prior.action_id)
-    if not (
-        canonical_sha256(action_before) == prior.proposal_action_after_sha256
-        and action_before.action_intent_sha256 == prior.action_intent_sha256
-        and action_after.action_intent_sha256 == prior.action_intent_sha256
-        and action_after.producer_epoch == prior.action_producer_epoch
-        and action_after.branch == prior.action_branch
-        and action_after.namespace_digest == protocol.namespace.digest
-    ):
-        raise PilotStateTransitionError(
-            "checkpoint action/epoch does not continue its exact predecessor"
+    if prior.owner_kind == "whole_composition":
+        if prior.checkpoint_kind not in {
+            "whole_edge_registered",
+            "probe_attempt_open",
+            "probe_terminal",
+            "gate_terminal",
+        }:
+            raise PilotStateTransitionError(
+                "whole chain predecessor carries a direct-only checkpoint kind"
+            )
+        whole_before = _indexed(
+            factor_before.whole_transitions, "transition_id"
+        ).get(prior.action_id)
+        whole_after = _indexed(
+            factor_after.whole_transitions, "transition_id"
+        ).get(prior.action_id)
+        if whole_before is None or whole_after is None or not (
+            canonical_sha256(whole_before) == prior.proposal_action_after_sha256
+            and canonical_sha256(whole_after) == prior.proposal_action_after_sha256
+            and whole_after.operation_receipt_sha256 == prior.action_intent_sha256
+            and whole_after.operation_verifier_epoch
+            == prior.action_producer_epoch
+            and whole_after.origin_branch == prior.action_branch
+            and whole_after.namespace.digest == protocol.namespace.digest
+        ):
+            raise PilotStateTransitionError(
+                "checkpoint whole transition does not continue its exact "
+                "predecessor"
+            )
+        action_before = None
+        action_after = None
+        action_values = {
+            "owner_kind": "whole_composition",
+            "action_id": whole_after.transition_id,
+            "action_branch": whole_after.origin_branch,
+            "action_producer_epoch": whole_after.operation_verifier_epoch,
+            "action_intent_sha256": whole_after.operation_receipt_sha256,
+            "proposal_action_before_sha256": canonical_sha256(whole_before),
+            "proposal_action_after_sha256": canonical_sha256(whole_after),
+            "proposal_action_before_state": "committed",
+            "proposal_action_after_state": "committed",
+        }
+        owner_transition_id = whole_after.transition_id
+        owner_committed_before = True
+        owner_committed = True
+        owner_generation_lease_sha256 = None
+    else:
+        action_before = _action_by_id(factor_before, prior.action_id)
+        action_after = _action_by_id(factor_after, prior.action_id)
+        if not (
+            canonical_sha256(action_before) == prior.proposal_action_after_sha256
+            and action_before.action_intent_sha256 == prior.action_intent_sha256
+            and action_after.action_intent_sha256 == prior.action_intent_sha256
+            and action_after.producer_epoch == prior.action_producer_epoch
+            and action_after.branch == prior.action_branch
+            and action_after.namespace_digest == protocol.namespace.digest
+        ):
+            raise PilotStateTransitionError(
+                "checkpoint action/epoch does not continue its exact predecessor"
+            )
+        action_values = {
+            "owner_kind": "direct_factor",
+            "action_id": action_after.action_id,
+            "action_branch": action_after.branch,
+            "action_producer_epoch": action_after.producer_epoch,
+            "action_intent_sha256": action_after.action_intent_sha256,
+            "proposal_action_before_sha256": canonical_sha256(action_before),
+            "proposal_action_after_sha256": canonical_sha256(action_after),
+            "proposal_action_before_state": action_before.state,
+            "proposal_action_after_state": action_after.state,
+        }
+        owner_transition_id = action_after.transition_id
+        owner_committed_before = action_before.state == "committed"
+        owner_committed = action_after.state == "committed"
+        owner_generation_lease_sha256 = (
+            canonical_sha256(action_after.generation_lease)
+            if action_after.generation_lease is not None
+            else None
         )
-    action_values = {
-        "action_id": action_after.action_id,
-        "action_branch": action_after.branch,
-        "action_producer_epoch": action_after.producer_epoch,
-        "action_intent_sha256": action_after.action_intent_sha256,
-        "proposal_action_before_sha256": canonical_sha256(action_before),
-        "proposal_action_after_sha256": canonical_sha256(action_after),
-        "proposal_action_before_state": action_before.state,
-        "proposal_action_after_state": action_after.state,
-    }
 
     if prior.checkpoint_kind == "action_prepared":
         if action_before.state != "prepared":
@@ -241,7 +341,7 @@ def derive_checkpoint_semantic_witness(
         )
 
     if prior.checkpoint_kind in {
-        "generation_start_authorized", "probe_terminal"
+        "generation_start_authorized", "whole_edge_registered", "probe_terminal"
     }:
         before_gate_ids = {
             item.decision_id for item in factor_before.gate_receipts
@@ -260,7 +360,7 @@ def derive_checkpoint_semantic_witness(
                 new_gates,
                 "gate checkpoint must consume exactly one GateReceipt",
             )
-            if action_before.state != "committed" or action_after.state != "committed":
+            if not (owner_committed_before and owner_committed):
                 raise PilotStateTransitionError(
                     "gate checkpoint requires a committed proposal action"
                 )
@@ -284,7 +384,7 @@ def derive_checkpoint_semantic_witness(
                 assessment.settled
                 and assessment.digest == receipt.settled_assessment_sha256
                 and assessment.digest == opportunity.settled_assessment_sha256
-                and plan.transition_id == action_after.transition_id
+                and plan.transition_id == owner_transition_id
                 and plan.epoch_id == prior.plan_epoch_id
                 and plan.plan_id == prior.plan_id
             ):
@@ -307,11 +407,7 @@ def derive_checkpoint_semantic_witness(
             ) = _probe_stage_coordinates(protocol, attempt, terminal=True)
             return PilotCheckpointSemanticWitnessV1(
                 checkpoint_kind="gate_terminal",
-                proposal_generation_lease_sha256=(
-                    canonical_sha256(action_after.generation_lease)
-                    if action_after.generation_lease is not None
-                    else None
-                ),
+                proposal_generation_lease_sha256=owner_generation_lease_sha256,
                 plan_id=plan.plan_id,
                 plan_sha256=plan.digest,
                 plan_epoch_id=plan.epoch_id,
@@ -347,10 +443,10 @@ def derive_checkpoint_semantic_witness(
             "probe-open checkpoint must add exactly one Factor attempt",
         )
         plan = _indexed(factor_after.plans, "plan_id").get(attempt.plan_id)
-        if action_after.state != "committed" or plan is None or not (
+        if not owner_committed or plan is None or not (
             attempt.state == "open"
-            and action_after.transition_id is not None
-            and plan.transition_id == action_after.transition_id
+            and owner_transition_id is not None
+            and plan.transition_id == owner_transition_id
         ):
             raise PilotStateTransitionError(
                 "probe-open checkpoint does not join its committed action edge"
@@ -368,11 +464,7 @@ def derive_checkpoint_semantic_witness(
         ) = _probe_stage_coordinates(protocol, attempt, terminal=False)
         return PilotCheckpointSemanticWitnessV1(
             checkpoint_kind="probe_attempt_open",
-            proposal_generation_lease_sha256=(
-                canonical_sha256(action_after.generation_lease)
-                if action_after.generation_lease is not None
-                else None
-            ),
+            proposal_generation_lease_sha256=owner_generation_lease_sha256,
             plan_id=plan.plan_id,
             plan_sha256=plan.digest,
             plan_epoch_id=plan.epoch_id,
@@ -406,9 +498,9 @@ def derive_checkpoint_semantic_witness(
             or attempt_before.state != "open"
             or attempt_after.state
             not in {"complete", "incomplete", "quarantine", "cancelled"}
-            or action_before.state != "committed"
-            or action_after.state != "committed"
-            or plan.transition_id != action_after.transition_id
+            or not owner_committed_before
+            or not owner_committed
+            or plan.transition_id != owner_transition_id
             or plan.epoch_id != prior.plan_epoch_id
         ):
             raise PilotStateTransitionError(
@@ -426,11 +518,7 @@ def derive_checkpoint_semantic_witness(
         )
         return PilotCheckpointSemanticWitnessV1(
             checkpoint_kind="probe_terminal",
-            proposal_generation_lease_sha256=(
-                canonical_sha256(action_after.generation_lease)
-                if action_after.generation_lease is not None
-                else None
-            ),
+            proposal_generation_lease_sha256=owner_generation_lease_sha256,
             plan_id=plan.plan_id,
             plan_sha256=plan.digest,
             plan_epoch_id=plan.epoch_id,

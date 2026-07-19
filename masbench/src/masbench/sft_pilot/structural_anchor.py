@@ -119,6 +119,184 @@ class _ClosedModel(BaseModel):
     )
 
 
+# Per-base anchor law: source phase list, host target one-scalar diff, and the
+# single mutable locus (path, field, scalar type, host target value, legal
+# domain description).  The five user-directed bases are the phase-carrier
+# equivalents of the named/paper propagation structures (see
+# docs/sft_phase_v5/multi_base_design.md); "gather_broadcast" is the legacy
+# default and stays byte-identical for existing anchors.
+ANCHOR_BASE_STRUCTURES = (
+    "gather_broadcast",
+    "one_peer_exponential_dag",
+    "static_exponential",
+    "p2p",
+    "broadcast",
+    "sfs",
+    "one_peer_instruction",
+)
+
+# Strategy-A instruction seeds: the source states the current implicit relay
+# duty; the host target states the global-merge duty (validated by the
+# strategy-C barrier A/B).  Both are answer-free process instructions.
+ANCHOR_INSTRUCTION_SOURCE = (
+    "Merge the incoming contributions losslessly with your own and keep "
+    "relaying anything new."
+)
+ANCHOR_INSTRUCTION_TARGET = (
+    "Combine every distinct per-agent contribution you have received into "
+    "the task's single global answer: sum per-shard counts, take extrema "
+    "over shard extrema, and merge partial maps or lists into one complete "
+    "structure before answering."
+)
+
+
+def _base_phases(base: str) -> list[dict]:
+    if base in ("gather_broadcast", "sfs"):
+        return [
+            {
+                "kind": "gather",
+                "hub": 0,
+                "pattern": "tree",
+                "instruction": None,
+                "send_mode": "delta_or_no_send",
+            },
+            {
+                "kind": "broadcast",
+                "hub": 0,
+                "pattern": "tree",
+                "instruction": None,
+                "send_mode": "delta_or_no_send",
+            },
+        ]
+    if base == "one_peer_instruction":
+        return [
+            {
+                "kind": "consensus",
+                "pattern": "exponential",
+                "max_rounds": 8,
+                "stop_when": "all_agents_full_information",
+                "instruction": ANCHOR_INSTRUCTION_SOURCE,
+                "send_mode": "delta_or_no_send",
+            }
+        ]
+    if base == "one_peer_exponential_dag":
+        return [
+            {
+                "kind": "consensus",
+                "pattern": "exponential",
+                "max_rounds": 8,
+                "stop_when": "all_agents_full_information",
+                "instruction": None,
+                "send_mode": "delta_or_no_send",
+            }
+        ]
+    if base == "static_exponential":
+        return [
+            {
+                "kind": "pairwise_exchange",
+                "pattern": "exponential",
+                "max_rounds": 3,
+                "stop_when": "fixed_rounds",
+                "instruction": None,
+                "send_mode": "delta_or_no_send",
+            }
+        ]
+    if base == "p2p":
+        return [
+            {
+                "kind": "pairwise_exchange",
+                "pattern": "rotating",
+                "max_rounds": 4,
+                "stop_when": "fixed_rounds",
+                "instruction": None,
+                "send_mode": "delta_or_no_send",
+            }
+        ]
+    if base == "broadcast":
+        return [
+            {
+                "kind": "consensus",
+                "pattern": "all_to_all",
+                "max_rounds": 2,
+                "stop_when": "all_agents_full_information",
+                "instruction": None,
+                "send_mode": "delta_or_no_send",
+            }
+        ]
+    raise ValueError(f"unknown anchor base structure {base!r}")
+
+
+# Anchorize (S4) genesis-locus rule for override programs: flip phase 0's
+# pattern to a kind-legal alternate.  Every alternate compiles to a different
+# schedule at any n_agents >= 2, so the genesis target never aliases the
+# source image.
+_OVERRIDE_PATTERN_ALTERNATES: dict[str, dict[str, str]] = {
+    "gather": {"star": "tree", "tree": "star"},
+    "broadcast": {"star": "tree", "tree": "star"},
+    "pairwise_exchange": {
+        "ring": "bidirectional_ring",
+        "bidirectional_ring": "ring",
+        "rotating": "ring",
+        "exponential": "rotating",
+    },
+    "consensus": {
+        "all_to_all": "rotating",
+        "rotating": "all_to_all",
+        "exponential": "rotating",
+    },
+}
+
+_ANCHOR_BASE_LOCI: dict[str, dict[str, object]] = {
+    "gather_broadcast": {
+        "locus": "/phases/1/hub",
+        "field": "hub",
+        "scalar_type": "int",
+        "target_value": 1,
+    },
+    "one_peer_exponential_dag": {
+        "locus": "/phases/0/pattern",
+        "field": "pattern",
+        "scalar_type": "string",
+        "target_value": "rotating",
+    },
+    "static_exponential": {
+        # The compiler elides rounds past full coverage, so values >= the
+        # coverage point alias the source image; the movable direction is
+        # fewer rounds (under-provisioned schedules).
+        "locus": "/phases/0/max_rounds",
+        "field": "max_rounds",
+        "scalar_type": "int",
+        "target_value": 2,
+    },
+    "p2p": {
+        "locus": "/phases/0/pattern",
+        "field": "pattern",
+        "scalar_type": "string",
+        "target_value": "ring",
+    },
+    "broadcast": {
+        "locus": "/phases/0/pattern",
+        "field": "pattern",
+        "scalar_type": "string",
+        "target_value": "rotating",
+    },
+    "one_peer_instruction": {
+        "locus": "/phases/0/instruction",
+        "field": "instruction",
+        "scalar_type": "string",
+        "target_value": ANCHOR_INSTRUCTION_TARGET,
+    },
+    "sfs": {
+        # gather/broadcast pattern domain is exhausted by genesis (star|tree),
+        # so sfs mutates WHICH agent hosts the shared store (the gather hub).
+        "locus": "/phases/0/hub",
+        "field": "hub",
+        "scalar_type": "int",
+        "target_value": 1,
+    },
+}
+
+
 class StructuralAnchorPlanV1(_ClosedModel):
     """Closed, answer-free inputs from which the canonical anchor is derived."""
 
@@ -127,6 +305,29 @@ class StructuralAnchorPlanV1(_ClosedModel):
     limits: PhaseProgramLimits = Field(default_factory=PhaseProgramLimits)
     source_catalog_sha256: str
     source_policy_sha256: str
+    base_structure: Literal[
+        "gather_broadcast",
+        "one_peer_exponential_dag",
+        "static_exponential",
+        "p2p",
+        "broadcast",
+        "sfs",
+        "one_peer_instruction",
+    ] = "gather_broadcast"
+    # Chained-evolution overrides (strategy B): round k+1 anchors at round
+    # k's accepted deployment by overriding the locus source value (and the
+    # host genesis target, which must stay a different legal value).  None
+    # keeps the base law byte-identical.
+    source_value_override: int | str | None = None
+    target_value_override: int | str | None = None
+    # Anchorize (S4): a gate-accepted whole composition becomes the next
+    # round's anchor by overriding the ENTIRE source program (a validated
+    # PhaseProgram JSON dump).  The genesis direct edge still needs one
+    # scalar locus; for override programs it follows a frozen deterministic
+    # rule — flip phase 0's pattern to its kind-legal alternate (every phase
+    # kind carries a pattern, and a pattern flip always changes the compiled
+    # image, so the genesis target can never alias the source).
+    source_program_override: dict | None = None
 
     @model_validator(mode="after")
     def validate_plan(self) -> "StructuralAnchorPlanV1":
@@ -140,7 +341,7 @@ class StructuralAnchorPlanV1(_ClosedModel):
             and namespace.planner_mode == "program_generate"
             and namespace.payload_format == "phase_program_skill_v1"
             and namespace.worker_contract == "not_applicable"
-            and namespace.model_name == "gpt-4o-mini"
+            and namespace.model_name in ("gpt-4o-mini", "gpt-5-mini")
             and namespace.binder_version == PHASE_FULL_FACTOR_BINDER_VERSION
             and namespace.compiler_version == PHASE_PROGRAM_COMPILER_VERSION
         ):
@@ -171,9 +372,49 @@ class StructuralAnchorPlanV1(_ClosedModel):
         return self
 
     @property
+    def anchor_locus(self) -> str:
+        if self.source_program_override is not None:
+            return "/phases/0/pattern"
+        return str(_ANCHOR_BASE_LOCI[self.base_structure]["locus"])
+
+    @property
+    def anchor_field_name(self) -> str:
+        if self.source_program_override is not None:
+            return "pattern"
+        return str(_ANCHOR_BASE_LOCI[self.base_structure]["field"])
+
+    @property
+    def anchor_scalar_type(self) -> str:
+        if self.source_program_override is not None:
+            return "string"
+        return str(_ANCHOR_BASE_LOCI[self.base_structure]["scalar_type"])
+
+    @property
+    def anchor_target_value(self):
+        if self.target_value_override is not None:
+            return self.target_value_override
+        if self.source_program_override is not None:
+            phase = self.source_program.phases[0]
+            return _OVERRIDE_PATTERN_ALTERNATES[phase.kind][phase.pattern]
+        return _ANCHOR_BASE_LOCI[self.base_structure]["target_value"]
+
+    @property
     def source_program(self) -> PhaseProgram:
         """Return the sole, text-free generation-zero source carrier."""
 
+        if self.source_program_override is not None:
+            program = PhaseProgram.model_validate(self.source_program_override)
+            if program.information_goal != self.namespace.information_goal:
+                raise ValueError(
+                    "anchor override program crosses the namespace goal"
+                )
+            return program
+        phases = _base_phases(self.base_structure)
+        if self.source_value_override is not None:
+            phase_index = int(self.anchor_locus.split("/")[2])
+            phases[phase_index][self.anchor_field_name] = (
+                self.source_value_override
+            )
         return PhaseProgram.model_validate(
             {
                 "format": "phase_program_v1",
@@ -182,22 +423,7 @@ class StructuralAnchorPlanV1(_ClosedModel):
                 "state_retention": "keep",
                 "allow_no_send": True,
                 "submit_when": "coverage_complete",
-                "phases": [
-                    {
-                        "kind": "gather",
-                        "hub": 0,
-                        "pattern": "tree",
-                        "instruction": None,
-                        "send_mode": "delta_or_no_send",
-                    },
-                    {
-                        "kind": "broadcast",
-                        "hub": 0,
-                        "pattern": "tree",
-                        "instruction": None,
-                        "send_mode": "delta_or_no_send",
-                    },
-                ],
+                "phases": phases,
             }
         )
 
@@ -206,7 +432,10 @@ class StructuralAnchorPlanV1(_ClosedModel):
         """Return the sole image-changing anchor target used by the host."""
 
         payload = self.source_program.model_dump(mode="python")
-        payload["phases"][1]["hub"] = 1
+        phase_index = int(self.anchor_locus.split("/")[2])
+        payload["phases"][phase_index][self.anchor_field_name] = (
+            self.anchor_target_value
+        )
         return PhaseProgram.model_validate(payload)
 
     @property
@@ -239,7 +468,7 @@ class StructuralAnchorBundleV1(_ClosedModel):
     source_authority_sha256: str
     source_manifest_sha256: str
     namespace_sha256: str
-    locus: Literal[STRUCTURAL_ANCHOR_LOCATOR] = STRUCTURAL_ANCHOR_LOCATOR
+    locus: str = STRUCTURAL_ANCHOR_LOCATOR
     source_program_sha256: str
     target_program_sha256: str
     phase_registry_state_sha256: str
@@ -383,9 +612,14 @@ def _branch_verifier(
             body.branch == "mutate"
             and body.source_manifest_sha256 == manifest.manifest_sha256
             and body.runtime_profile.kind == "runtime_profile"
-            and body.descriptor.locator.path == STRUCTURAL_ANCHOR_LOCATOR
-            and body.descriptor.field_name == "hub"
-            and body.descriptor.activation_kind == "execution_image_load"
+            and body.descriptor.locator.path == plan.anchor_locus
+            and body.descriptor.field_name == plan.anchor_field_name
+            and body.descriptor.activation_kind
+            == (
+                "phase_step_executed"
+                if plan.anchor_field_name == "instruction"
+                else "execution_image_load"
+            )
             and body.mutation_parent_factor == body.source_factor
             and body.retrieved_target_factor is None
             and body.retrieved_target_attestation is None
@@ -636,7 +870,7 @@ def _bundle(
         "source_authority_sha256": _authority_commitment(source_authority_key),
         "source_manifest_sha256": manifest.manifest_sha256,
         "namespace_sha256": plan.namespace.digest,
-        "locus": STRUCTURAL_ANCHOR_LOCATOR,
+        "locus": plan.anchor_locus,
         "source_program_sha256": phase_program_digest(source_artifact.program),
         "target_program_sha256": phase_program_digest(target_artifact.program),
         "phase_registry_state_sha256": registry.scientific_state_sha256,
@@ -736,7 +970,7 @@ def build_structural_anchor_v1(
     )
     extracted = registry.extract_factor(
         source,
-        locator=STRUCTURAL_ANCHOR_LOCATOR,
+        locator=plan.anchor_locus,
     )
     branch_body = _canonical_branch_body(
         plan=plan,
@@ -750,7 +984,7 @@ def build_structural_anchor_v1(
     branch_receipt = registry.register_branch_receipt(
         branch="mutate",
         source_artifact=source,
-        locator=STRUCTURAL_ANCHOR_LOCATOR,
+        locator=plan.anchor_locus,
         mutation_parent_factor=extracted.factor,
         additional_input_root_commitments=(
             plan.digest,
@@ -761,7 +995,7 @@ def build_structural_anchor_v1(
     )
     seal = registry.seal_operation(branch_receipt=branch_receipt)
     generated = registry.register_generated_value(
-        1,
+        plan.anchor_target_value,
         operation_seal=seal,
         ingress=ingress,
     )

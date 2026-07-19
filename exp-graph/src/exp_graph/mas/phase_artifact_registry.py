@@ -1078,8 +1078,13 @@ def _descriptor(program: PhaseProgram, profile: PhaseRuntimeProfileRecord, path:
             patterns = {
                 "gather": ("star", "tree"),
                 "broadcast": ("star", "tree"),
-                "pairwise_exchange": ("ring", "bidirectional_ring", "rotating"),
-                "consensus": ("all_to_all", "rotating"),
+                "pairwise_exchange": (
+                    "ring",
+                    "bidirectional_ring",
+                    "rotating",
+                    "exponential",
+                ),
+                "consensus": ("all_to_all", "rotating", "exponential"),
             }
             enum_values = patterns[phase_kind]
             activation = "execution_image_load"

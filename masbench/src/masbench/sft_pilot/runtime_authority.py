@@ -160,7 +160,7 @@ class PilotRuntimeAuthorityManifestV1(ClosedPilotModel):
     execution_schedule_sha256: str
     method_policy_sha256: str
     authority_root_commitment_sha256: str
-    model_name: Literal["gpt-4o-mini"] = "gpt-4o-mini"
+    model_name: Literal["gpt-4o-mini", "gpt-5-mini"] = "gpt-4o-mini"
     temperature: Literal[0.0] = 0.0
     sdk_max_retries: Literal[0] = 0
     application_max_retries: Literal[0] = 0

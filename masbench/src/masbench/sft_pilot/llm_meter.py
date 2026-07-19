@@ -15,6 +15,7 @@ import hashlib
 from typing import Protocol
 
 from exp_graph.llm.base import LLMResponse, LLMUsage
+from exp_graph.llm.concurrency import global_llm_limiter
 from exp_graph.llm.openai_client import OpenAIChatClient
 
 from masbench.sft_pilot.schema import canonical_sha256
@@ -103,15 +104,19 @@ class OpenAIPilotTransport:
         *,
         max_completion_tokens: int,
         api_key_env: str | None = None,
+        expected_model: str = "gpt-4o-mini",
+        reasoning_effort: str | None = None,
     ) -> None:
         if isinstance(max_completion_tokens, bool) or max_completion_tokens < 1:
             raise ValueError("max_completion_tokens must be a positive integer")
         self._max_completion_tokens = max_completion_tokens
+        self._expected_model = expected_model
         self._client = OpenAIChatClient(
             api_key_env=api_key_env,
             max_retries=0,
             max_completion_tokens=max_completion_tokens,
             require_provider_usage=True,
+            reasoning_effort=reasoning_effort,
         )
 
     def complete_bounded(
@@ -123,18 +128,32 @@ class OpenAIPilotTransport:
         json_mode: bool,
         max_completion_tokens: int,
     ) -> PilotTransportResult:
-        if model_name != "gpt-4o-mini":
-            raise ValueError("SFT pilot transport is frozen to gpt-4o-mini")
+        if model_name != self._expected_model:
+            raise ValueError("SFT pilot transport is frozen to its protocol model")
         if temperature != 0.0:
             raise ValueError("SFT pilot transport requires temperature 0")
         if max_completion_tokens != self._max_completion_tokens:
             raise ValueError("call completion cap differs from the frozen transport")
-        response = self._client.complete(
-            prompt,
-            model_name=model_name,
-            temperature=temperature,
-            json_mode=json_mode,
-        )
+        # The pilot transport participates in the same process-wide admission
+        # gate as every factory-built client: when concurrent harness layers
+        # (parallel case runs, parallel sub-agents) are active, a sealed
+        # generation call still counts toward the global in-flight cap.
+        limiter = global_llm_limiter()
+        if limiter is None:
+            response = self._client.complete(
+                prompt,
+                model_name=model_name,
+                temperature=temperature,
+                json_mode=json_mode,
+            )
+        else:
+            with limiter:
+                response = self._client.complete(
+                    prompt,
+                    model_name=model_name,
+                    temperature=temperature,
+                    json_mode=json_mode,
+                )
         # ``require_provider_usage=True`` makes missing provider usage raise
         # inside OpenAIChatClient before a response can reach this boundary.
         return PilotTransportResult(
@@ -162,10 +181,12 @@ class FakeDeterministicPilotTransport:
         self,
         *,
         reply_factory: "Callable[[str], str]",
+        expected_model: str = "gpt-4o-mini",
     ) -> None:
         if not callable(reply_factory):
             raise TypeError("fake transport requires a callable reply factory")
         self._reply_factory = reply_factory
+        self._expected_model = expected_model
 
     def complete_bounded(
         self,
@@ -177,8 +198,8 @@ class FakeDeterministicPilotTransport:
         max_completion_tokens: int,
     ) -> PilotTransportResult:
         del json_mode
-        if model_name != "gpt-4o-mini":
-            raise ValueError("SFT pilot transport is frozen to gpt-4o-mini")
+        if model_name != self._expected_model:
+            raise ValueError("SFT pilot transport is frozen to its protocol model")
         if temperature != 0.0:
             raise ValueError("SFT pilot transport requires temperature 0")
         if max_completion_tokens < 1:

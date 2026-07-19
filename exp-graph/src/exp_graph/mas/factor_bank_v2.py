@@ -6056,21 +6056,193 @@ class FactorBankV2:
         operation_verifier_epoch: str,
         origin_branch: ScientificBranch,
     ) -> WholeCompositionTransitionV2:
-        source = self.compositions[source_composition_id]
-        target = self.compositions[target_composition_id]
+        return self._register_whole_transition_impl(
+            source_composition_id=source_composition_id,
+            target_composition_id=target_composition_id,
+            operation_receipt_sha256=operation_receipt_sha256,
+            operation_verifier_epoch=operation_verifier_epoch,
+            origin_branch=origin_branch,
+            working_state=None,
+            created_seq_override=None,
+        )
+
+    def _staged_bundle_state(
+        self,
+        *,
+        factors: Sequence[FactorRevisionV2],
+        compositions: Sequence[CompositionRevisionV2],
+    ) -> tuple[FactorBankStateV2, int]:
+        """Stage previously unseen rows exactly like ``register_direct_bundle``.
+
+        The staged rows exist only in the returned working state; nothing is
+        installed until the transition registrar accepts the complete bundle.
+        """
+
+        reserved = self._unmaterialized_carrier_reservations(self._state)
+        staged_factors = list(self._state.factors)
+        staged_compositions = list(self._state.compositions)
+        factor_ids = {item.revision_id for item in staged_factors}
+        composition_ids = {item.composition_id for item in staged_compositions}
+        next_seq = self._state.event_seq
+        for raw_factor in factors:
+            factor = FactorRevisionV2.model_validate(
+                raw_factor.model_dump(mode="python")
+            )
+            if factor.revision_id in factor_ids:
+                raise ValueError("whole bundle contains an existing factor")
+            if (
+                len(staged_factors) + len(reserved)
+                >= self._state.capacity_policy.max_factor_records
+            ):
+                raise RuntimeError("factor record capacity is exhausted")
+            next_seq += 1
+            if factor.created_seq != next_seq:
+                raise ValueError(
+                    "bundle factor created_seq must equal its next local event"
+                )
+            staged_factors.append(factor)
+            factor_ids.add(factor.revision_id)
+        for raw_composition in compositions:
+            composition = CompositionRevisionV2.model_validate(
+                raw_composition.model_dump(mode="python")
+            )
+            if composition.composition_id in composition_ids:
+                raise ValueError("whole bundle contains an existing composition")
+            policy = self._state.capacity_policy
+            if len(staged_compositions) + len(reserved) >= (
+                policy.max_composition_records
+            ):
+                raise RuntimeError("composition record capacity is exhausted")
+            scoped_live = [
+                item
+                for item in staged_compositions
+                if item.namespace == composition.namespace
+                and item.structural_state == "live"
+            ]
+            scoped_reserved = [
+                item
+                for item in reserved
+                if item.namespace_digest == composition.namespace.digest
+            ]
+            if len(scoped_live) + len(scoped_reserved) >= (
+                policy.max_hot_compositions_per_namespace
+                + policy.unknown_structural_reserve
+            ):
+                raise RuntimeError(
+                    "hot composition capacity is exhausted for this namespace"
+                )
+            if (
+                sum(item.canonical_metadata_bytes for item in scoped_live)
+                + sum(
+                    item.reserved_hot_metadata_bytes
+                    for item in scoped_reserved
+                )
+                + composition.canonical_metadata_bytes
+                > policy.max_hot_metadata_bytes
+            ):
+                raise RuntimeError(
+                    "hot composition metadata-byte capacity is exhausted"
+                )
+            if (
+                sum(item.artifact_bytes for item in scoped_live)
+                + sum(
+                    item.reserved_artifact_bytes
+                    for item in scoped_reserved
+                )
+                + composition.artifact_bytes
+                > policy.max_hot_artifact_bytes_per_namespace
+            ):
+                raise RuntimeError(
+                    "hot composition artifact-byte capacity is exhausted"
+                )
+            if (
+                sum(item.prompt_summary_tokens for item in scoped_live)
+                + sum(
+                    item.reserved_prompt_summary_tokens
+                    for item in scoped_reserved
+                )
+                + composition.prompt_summary_tokens
+                > policy.max_prompt_summary_tokens_per_namespace
+            ):
+                raise RuntimeError("prompt-summary token capacity is exhausted")
+            next_seq += 1
+            if composition.created_seq != next_seq:
+                raise ValueError(
+                    "bundle composition created_seq must equal its next local event"
+                )
+            staged_compositions.append(composition)
+            composition_ids.add(composition.composition_id)
+        working_payload = self._state.model_dump(mode="python")
+        working_payload.update(
+            {
+                "event_seq": next_seq,
+                "factors": tuple(staged_factors),
+                "compositions": tuple(staged_compositions),
+            }
+        )
+        return FactorBankStateV2.model_validate(working_payload), next_seq
+
+    @_atomic_bank_update
+    def register_whole_bundle(
+        self,
+        *,
+        factors: Sequence[FactorRevisionV2],
+        compositions: Sequence[CompositionRevisionV2],
+        transition_fields: Mapping[str, Any],
+    ) -> WholeCompositionTransitionV2:
+        """Install one operation-proved whole-composition bundle atomically.
+
+        The whole-composition analog of ``register_direct_bundle``: previously
+        unseen factor/composition rows and their ordinary whole transition
+        either all land or none do, and the trusted whole-operation verifier
+        judges the transaction against the complete staged bundle.
+        """
+
+        working_state, next_seq = self._staged_bundle_state(
+            factors=factors,
+            compositions=compositions,
+        )
+        return self._register_whole_transition_impl(
+            **dict(transition_fields),
+            working_state=working_state,
+            created_seq_override=next_seq + 1,
+        )
+
+    def _register_whole_transition_impl(
+        self,
+        *,
+        source_composition_id: str,
+        target_composition_id: str,
+        operation_receipt_sha256: str,
+        operation_verifier_epoch: str,
+        origin_branch: ScientificBranch,
+        working_state: FactorBankStateV2 | None,
+        created_seq_override: int | None,
+    ) -> WholeCompositionTransitionV2:
+        state = working_state if working_state is not None else self._state
+        compositions_by_id = {
+            item.composition_id: item for item in state.compositions
+        }
+        source = compositions_by_id[source_composition_id]
+        target = compositions_by_id[target_composition_id]
         if source.namespace != target.namespace:
             raise ValueError("whole transition crosses its execution namespace")
         if source.structural_state != "live" or target.structural_state != "live":
             raise ValueError("whole transition requires live source and target compositions")
-        authority_seq = self._state.event_seq + 1
+        created_seq = (
+            created_seq_override
+            if created_seq_override is not None
+            else self._state.event_seq + 1
+        )
+        authority_seq = created_seq
         if not self._row_can_receive_non_action_authority(
-            self._state,
+            state,
             row_kind="composition",
             row_id=target.composition_id,
             before_seq=authority_seq,
         ) or any(
             not self._row_can_receive_non_action_authority(
-                self._state,
+                state,
                 row_kind="factor",
                 row_id=factor_id,
                 before_seq=authority_seq,
@@ -6087,7 +6259,7 @@ class FactorBankV2:
             slot for slot in slots if source.binding_map.get(slot) != target.binding_map.get(slot)
         )
         self._assert_no_active_action_ordinary_owner(
-            self._state,
+            state,
             namespace_digest=source.namespace.digest,
             source_composition_id=source.composition_id,
             slot_ids_and_from_revisions=tuple(
@@ -6096,7 +6268,6 @@ class FactorBankV2:
                 if slot_id in source.binding_map
             ),
         )
-        created_seq = self._state.event_seq + 1
         transition_id = _opaque_id(
             "wt",
             {
@@ -6121,31 +6292,34 @@ class FactorBankV2:
             origin_branch=origin_branch,
             created_seq=created_seq,
         )
-        if transition.transition_id in self.whole_transitions:
+        if any(
+            item.transition_id == transition.transition_id
+            for item in state.whole_transitions
+        ):
             raise ValueError("whole transition already exists")
         canonical_edge_sha256 = self._canonical_scientific_edge_sha256(
-            self._state,
+            state,
             transition,
         )
         if any(
-            self._canonical_scientific_edge_sha256(self._state, item)
+            self._canonical_scientific_edge_sha256(state, item)
             == canonical_edge_sha256
             for item in (
-                *self._state.direct_transitions,
-                *self._state.whole_transitions,
+                *state.direct_transitions,
+                *state.whole_transitions,
             )
         ):
             raise ValueError(
                 "canonical scientific edge already has a credit owner"
             )
         reserved_transition_slots = len(
-            self._unmaterialized_carrier_reservations(self._state)
+            self._unmaterialized_carrier_reservations(state)
         )
         if (
-            len(self._state.direct_transitions)
-            + len(self._state.whole_transitions)
+            len(state.direct_transitions)
+            + len(state.whole_transitions)
             + reserved_transition_slots
-            >= self._state.capacity_policy.max_transition_records
+            >= state.capacity_policy.max_transition_records
         ):
             raise RuntimeError("scientific transition record capacity is exhausted")
         if self._whole_operation_verifier is None:
@@ -6157,8 +6331,11 @@ class FactorBankV2:
         if not verified:
             raise ValueError("trusted whole-operation verifier rejected the transaction")
         self._install(
-            self._next_state(
-                whole_transitions=(*self._state.whole_transitions, transition)
+            self._next_state_at(
+                created_seq,
+                factors=state.factors,
+                compositions=state.compositions,
+                whole_transitions=(*state.whole_transitions, transition),
             )
         )
         return transition

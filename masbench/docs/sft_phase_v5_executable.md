@@ -55,28 +55,35 @@ is set externally. `masbench.sft_pilot.experiment.preview_experiment_budget`
 prints the worst-case calls/tokens/cost upper bound for the frozen schedule
 so the budget can be frozen before any authorization.
 
-## Real pilot command template (Stage 12 — NOT run by this build)
+## Real pilot driver (Stage 12)
+
+The armed Stage-12 path is the standalone replicated driver
+`masbench.sft_pilot.run_real_pilot` (the `evolve` profile entry stays
+fail-closed; arming lives beside the driver, not in the default CLI path):
 
 ```bash
-# 1. Freeze manifests + budget preview (offline):
-uv run python -c "from masbench.sft_pilot.experiment import *; ..."  # preview_experiment_budget
-# 2. With explicit human authorization only:
-MASBENCH_SFT_STATE_KEY=... \
+# Offline mechanics rehearsal (zero cost, deterministic agents):
+uv run python -m masbench.sft_pilot.run_real_pilot --llm fake --replicates 1
+
+# Real pilot — explicit human authorization only:
 MASBENCH_SFT_PAID_PILOT_AUTHORIZED=yes-i-authorize-paid-gpt-4o-mini-calls \
-uv run masbench evolve --benchmarks-dir <dir> --planner-mode program_generate \
-  --llm openai --model-name gpt-4o-mini \
-  --sft-profile phase_v5_executable_sft \
-  --sft-state-dir <provisioned> --sft-protocol <frozen>.json \
-  --sft-experiment-manifest <seal>.json \
-  --sft-runtime-authority <runtime>.json \
-  --sft-bootstrap-authority <bootstrap>.json \
-  --sft-result-dir <results> --out <out>
+uv run python -m masbench.sft_pilot.run_real_pilot --llm openai \
+  --replicates 3 --test-cases 12 --agents 5 \
+  --parallel-tests 3 --max-parallel-agents 5 --max-concurrent 15
 ```
 
-The current build additionally keeps the scientific execution loop
-fail-closed at the profile entry (`"not authorized in this build"`): the
-Stage 0–11 closure is component-complete and test-driven end-to-end, and the
-loop is armed only together with the real-pilot authorization work.
+Per replicate the driver authors and provisions one sealed experiment over
+real Silo n-agent cases (`real_experiment.py`; case commitments are SHA-256
+of the raw benchmark file bytes), then drives mutate generation → six-unit
+real probe loop (whole-arm runs via `real_runner.py`, real pair journals,
+aggregate store metering per `plan_deviations.md` §8) → FINAL_VAL strict
+gate → frozen read-only TEST → external result ledger, and finally evaluates
+the anchor baseline on the same TEST cases and seeds.  Replicates run
+concurrently; a process-wide admission gate (§9) bounds total in-flight
+provider calls (default 15 = 3 concurrent tests × 5 parallel sub-agents).
+Outputs land under the pilot root: per-replicate `replicate-report.json`,
+chained `results/results.jsonl` ledgers, `pilot_report.json`, and
+`effect_table.md`.
 
 ## Honesty invariants (enforced, tested)
 
