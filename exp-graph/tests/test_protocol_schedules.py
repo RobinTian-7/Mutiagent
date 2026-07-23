@@ -59,6 +59,22 @@ def test_mesh_schedule_is_one_all_to_all_step() -> None:
     assert (1, 0) in schedule[0].transmissions
 
 
+def test_mesh_star_appends_sink_gather() -> None:
+    schedule = build_protocol_schedule("mesh_star", n_agents=4)
+
+    assert len(schedule) == 2
+    assert len(schedule[0].transmissions) == 12
+    assert schedule[1].transmissions == [(0, 3), (1, 3), (2, 3)]
+    assert [step.step_idx for step in schedule] == [0, 1]
+
+
+def test_mesh_sink_alias_matches_mesh_star() -> None:
+    assert build_protocol_schedule(
+        "mesh_sink",
+        n_agents=4,
+    ) == build_protocol_schedule("mesh_star", n_agents=4)
+
+
 def test_dag_mesh_schedule_sweeps_destinations_in_topological_order() -> None:
     schedule = build_protocol_schedule("dag_mesh", n_agents=4)
 
@@ -66,6 +82,29 @@ def test_dag_mesh_schedule_sweeps_destinations_in_topological_order() -> None:
         [(0, 1)],
         [(0, 2), (1, 2)],
         [(0, 3), (1, 3), (2, 3)],
+    ]
+
+
+def test_random_dag_schedule_is_seeded_sparse_forwarding() -> None:
+    schedule = build_protocol_schedule("random", n_agents=6, random_seed=7)
+    same = build_protocol_schedule("random_dag", n_agents=6, random_seed=7)
+    different = build_protocol_schedule("random", n_agents=6, random_seed=8)
+    edges = {
+        edge
+        for step in schedule
+        for edge in step.transmissions
+    }
+
+    assert schedule == same
+    assert [step.step_idx for step in schedule] == list(range(5))
+    assert all(src < dst for src, dst in edges)
+    assert {
+        (idx, idx + 1)
+        for idx in range(5)
+    }.issubset(edges)
+    assert [step.transmissions for step in schedule] != [
+        step.transmissions
+        for step in different
     ]
 
 
@@ -175,6 +214,31 @@ def test_static_exponential_repeats_fixed_edges_for_log_steps() -> None:
     assert (0, 1) in schedule[0].transmissions
     assert (0, 2) in schedule[0].transmissions
     assert (0, 4) in schedule[0].transmissions
+
+
+def test_static_exponential_star_appends_sink_gather() -> None:
+    schedule = build_protocol_schedule("static_exponential_star", n_agents=8)
+
+    assert len(schedule) == 4
+    assert schedule[0].transmissions == schedule[1].transmissions
+    assert schedule[1].transmissions == schedule[2].transmissions
+    assert schedule[-1].transmissions == [
+        (0, 7),
+        (1, 7),
+        (2, 7),
+        (3, 7),
+        (4, 7),
+        (5, 7),
+        (6, 7),
+    ]
+    assert [step.step_idx for step in schedule] == list(range(len(schedule)))
+
+
+def test_static_exponential_sink_alias_matches_static_star() -> None:
+    assert build_protocol_schedule(
+        "static_exponential_sink",
+        n_agents=8,
+    ) == build_protocol_schedule("static_exponential_star", n_agents=8)
 
 
 def test_one_peer_exponential_uses_global_distance_phases() -> None:

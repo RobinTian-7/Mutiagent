@@ -24,7 +24,12 @@ from exp_graph.metrics.cf_protocol import (
     CFGlobalStepMetric,
     build_cf_step_metrics,
 )
-from exp_graph.protocols import CommunicationStep, build_protocol_schedule
+from exp_graph.protocols import (
+    CommunicationStep,
+    ProtocolGraphSpec,
+    build_protocol_schedule,
+    build_protocol_schedule_from_spec,
+)
 from exp_graph.tasks.count_frequency import CountFrequencyTaskAdapter
 from exp_graph.tracing import AgentStepTrace, append_traces_jsonl, reset_trace_jsonl
 
@@ -66,6 +71,7 @@ class ProtocolRunnerConfig(BaseModel):
     selected_primary: Literal["topology_default", "vote", "average"] = "topology_default"
     verbose_events: bool = False
     run_id: str | None = None
+    protocol_spec: ProtocolGraphSpec | None = None
 
     @classmethod
     def from_experiment_config(
@@ -167,6 +173,7 @@ class ProtocolExperimentResult(BaseModel):
                 if self.final_result.average is not None
                 else 0
             ),
+            "AnswerAgentIds": self.final_result.answer_agent_ids,
             "VoteAverageDisagreementRMSE": (
                 self.final_result.vote_average_disagreement_rmse
             ),
@@ -194,12 +201,16 @@ class ProtocolRunner:
 
     def run(self) -> ProtocolExperimentResult:
         run_id = self._make_run_id()
-        schedule = build_protocol_schedule(
-            self.config.topology_name,
-            self.config.n_agents,
-            star_center=self.config.star_center,
-            include_star_broadcast=self.config.include_star_broadcast,
-        )
+        if self.config.protocol_spec is not None:
+            schedule = build_protocol_schedule_from_spec(self.config.protocol_spec)
+        else:
+            schedule = build_protocol_schedule(
+                self.config.topology_name,
+                self.config.n_agents,
+                star_center=self.config.star_center,
+                include_star_broadcast=self.config.include_star_broadcast,
+                random_seed=self.config.seed,
+            )
         step_logs: list[ProtocolStepLog] = []
         agent_step_metrics: list[CFAgentStepMetric] = []
         global_step_metrics: list[CFGlobalStepMetric] = []
@@ -379,6 +390,7 @@ class ProtocolRunner:
             star_center=self.config.star_center,
             average_include_min_coverage=self.config.average_include_min_coverage,
             selected_primary=self.config.selected_primary,
+            answer_agent_ids_override=self._metadata_answer_agent_ids(),
         )
         self._log_event(
             "run-done",
@@ -987,6 +999,26 @@ class ProtocolRunner:
         }
         compact["array_length"] = int(self.global_task["array_length"])
         return compact
+
+    def _metadata_answer_agent_ids(self) -> list[int] | None:
+        spec = self.config.protocol_spec
+        if spec is None:
+            return None
+        selected_primary = spec.metadata.get("selected_primary")
+        if selected_primary is None:
+            return None
+        try:
+            agent_id = int(selected_primary)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "protocol_spec.metadata.selected_primary must be an integer agent id"
+            ) from exc
+        if agent_id < 0 or agent_id >= self.config.n_agents:
+            raise ValueError(
+                "protocol_spec.metadata.selected_primary is outside valid "
+                f"range 0..{self.config.n_agents - 1}: {agent_id}"
+            )
+        return [agent_id]
 
     def _make_run_id(self) -> str:
         if self.config.run_id:

@@ -58,13 +58,20 @@ def run_cf_final_aggregation(
     star_center: int = 0,
     average_include_min_coverage: float = 1.0,
     selected_primary: str = "topology_default",
+    answer_agent_ids_override: list[int] | None = None,
 ) -> CFProtocolFinalResult:
     """Run holder/vote and average aggregation over final CF agent states."""
-    answer_agent_ids = answer_agents_for_topology(
-        topology_name=topology_name,
-        n_agents=len(agent_states),
-        star_center=star_center,
-    )
+    if answer_agent_ids_override is None:
+        answer_agent_ids = answer_agents_for_topology(
+            topology_name=topology_name,
+            n_agents=len(agent_states),
+            star_center=star_center,
+        )
+    else:
+        answer_agent_ids = normalize_answer_agent_ids(
+            answer_agent_ids_override,
+            n_agents=len(agent_states),
+        )
     vote = build_vote_head(
         agent_states=agent_states,
         agent_ids=answer_agent_ids,
@@ -242,6 +249,8 @@ def answer_agents_for_topology(
         "chain",
         "tree",
         "dag_mesh",
+        "random",
+        "random_dag",
         "static_exponential_dag",
         "two_stage",
         "two_stage_layer",
@@ -256,6 +265,14 @@ def answer_agents_for_topology(
         "one_peer_exponential_dag_star",
         "one_peer_exponential_dag_static",
         "one_peer_exponential_dag_static_exponential_dag",
+        "static_exponential_star",
+        "static_exponential_sink",
+        "static_exponential_dag_star",
+        "static_exponential_dag_sink",
+        "mesh_star",
+        "mesh_sink",
+        "mesh_dag_star",
+        "mesh_dag_sink",
     }:
         return [n_agents - 1]
     if topology in {"one_peer_exponential_dag", "one_peer_exponential_dag_vote"}:
@@ -263,6 +280,26 @@ def answer_agents_for_topology(
     if topology == "star":
         return [star_center]
     return list(range(n_agents))
+
+
+def normalize_answer_agent_ids(agent_ids: list[int], *, n_agents: int) -> list[int]:
+    """Return validated unique answer holders in caller-provided order."""
+    if n_agents <= 0:
+        return []
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for raw_agent_id in agent_ids:
+        agent_id = int(raw_agent_id)
+        if agent_id < 0 or agent_id >= n_agents:
+            raise ValueError(
+                f"answer agent id {agent_id} is outside valid range 0..{n_agents - 1}"
+            )
+        if agent_id not in seen:
+            normalized.append(agent_id)
+            seen.add(agent_id)
+    if not normalized:
+        raise ValueError("answer_agent_ids_override must include at least one agent")
+    return normalized
 
 
 def choose_primary(

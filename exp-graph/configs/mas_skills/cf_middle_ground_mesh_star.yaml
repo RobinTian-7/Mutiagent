@@ -1,0 +1,59 @@
+{
+  "counterexamples": [
+    {
+      "condition": "large n_agents with tight budget",
+      "recommendation": "prefer cf_budget_tree"
+    }
+  ],
+  "evidence": [
+    {
+      "mean_messages": 63.0,
+      "mean_rmse": 0.05,
+      "mean_token_cost": 2600.0,
+      "n_agents": 8,
+      "source": "cf_protocol_paper_agent_scaling_agents",
+      "std_rmse": 0.02,
+      "topology_name": "mesh_star"
+    }
+  ],
+  "expected_tradeoff": {
+    "lesson": "Mesh broadcast plus final star sink is a useful middle-ground skill when coverage matters but peer-star is not required.",
+    "mean_messages": 63.0,
+    "mean_rmse": 0.05,
+    "mean_token_cost": 2600.0,
+    "std_rmse": 0.02,
+    "strength": "simple full-context broadcast before sink aggregation",
+    "weakness": "quadratic messages as agent count grows"
+  },
+  "fallback": {
+    "accuracy_first": "cf_accuracy_peer_star",
+    "budget_first": "cf_budget_tree"
+  },
+  "objective": "balanced",
+  "organization_policy": {
+    "operators": [
+      "local_solve",
+      "mesh_broadcast",
+      "star_sink"
+    ],
+    "planner_mode": "topology_select",
+    "protocol_spec": null,
+    "selected_primary": "topology_default",
+    "topology_name": "mesh_star"
+  },
+  "skill_id": "cf_middle_ground_mesh_star",
+  "tags": [
+    "mas",
+    "emperor-skill",
+    "count-frequency",
+    "balanced"
+  ],
+  "task_family": "count_frequency",
+  "trigger": {
+    "max_agents": 16,
+    "min_agents": 3,
+    "task_family": "count_frequency"
+  },
+  "update_rule": "batch_consolidate",
+  "version": "0.1.0"
+}
